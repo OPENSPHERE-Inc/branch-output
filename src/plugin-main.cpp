@@ -22,57 +22,35 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/config-file.h>
 #include <util/deque.h>
 #include <util/threading.h>
+#include "plugin-main.hpp"
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-#define NO_AUDIO false
 
-struct filter_t {
-	bool output_active;
-
-	// Filter source
-	obs_source_t *source;
-	obs_weak_source_t *audio_source;
-
-	// User choosed encoder
-	obs_encoder_t *video_encoder;
-	obs_encoder_t *audio_encoder;
-	
-	obs_view_t *view;
-	video_t *video_output;
-	audio_t *audio_output;
-	obs_output_t *stream_output;
-	obs_service_t *service;
-
-	// Audio context
-	bool audio_enabled;
-	deque audio_buffer;
-	size_t audio_buffer_frames;
-	pthread_mutex_t audio_buffer_mutex;
-	uint8_t* audio_conv_buffer;
-	size_t audio_conv_buffer_size;
-};
-
-struct audio_buffer_chunk_header_t {
-	size_t data_idx[MAX_AUDIO_CHANNELS]; // Zero means unused channel
-	uint32_t frames;
-	uint64_t timestamp;
-	size_t offset;
-	size_t channels;
-};
-
-void audio_capture_callback(void *data, obs_source_t*, const audio_data *audio_data, bool muted)
+void push_audio_to_buffer(void* data, obs_audio_data *audio_data)
 {
 	auto filter = (filter_t *)data;
 
-	if (NO_AUDIO || !filter->output_active || !audio_data->frames || muted) {
+#ifdef NO_AUDIO
+	filter->audio_enabled = false;
+    return;
+#endif
+
+	if (!filter->output_active || !audio_data->frames) {
 		filter->audio_enabled = false;
 		return;
 	}
 
 	pthread_mutex_lock(&filter->audio_buffer_mutex);
 	{	
+		if (filter->audio_buffer_frames + audio_data->frames > MAX_AUDIO_BUFFER_FRAMES) {
+			obs_log(LOG_WARNING, "The audio buffer is full.");
+			deque_free(&filter->audio_buffer);
+			deque_init(&filter->audio_buffer);
+			filter->audio_buffer_frames = 0;
+		}
+
 		// Compute header
 		audio_buffer_chunk_header_t header = {0};
 		header.frames = audio_data->frames;
@@ -108,10 +86,42 @@ void audio_capture_callback(void *data, obs_source_t*, const audio_data *audio_d
 		filter->audio_enabled = true;
 	}
 	pthread_mutex_unlock(&filter->audio_buffer_mutex);
-
-	return;
 }
 
+// Callback from filter audio
+obs_audio_data* audio_filter_callback(void* data, obs_audio_data *audio_data)
+{
+	auto filter = (filter_t *)data;
+
+	if (filter->audio_source) {
+		// Omit filter's audio
+		return audio_data;
+	}
+
+	push_audio_to_buffer(filter, audio_data);
+
+	return audio_data;
+}
+
+// Callback from source's audio capture
+void audio_capture_callback(void *data, obs_source_t*, const audio_data *audio_data, bool muted)
+{
+	auto filter = (filter_t *)data;
+
+	if (muted || !filter->audio_source) {
+		filter->audio_enabled = false;
+		return;
+	}
+
+	obs_audio_data filter_audio_data = {0};
+	memcpy(filter_audio_data.data, audio_data->data, sizeof(audio_data::data));
+	filter_audio_data.frames = audio_data->frames;
+	filter_audio_data.timestamp = audio_data->timestamp;
+
+	push_audio_to_buffer(filter, &filter_audio_data);
+}
+
+// Callback from audio output
 bool audio_input_callback(void *param, uint64_t start_ts_in, uint64_t, uint64_t *out_ts, uint32_t mixers,
 	audio_output_data *mixes)
 {
@@ -129,6 +139,7 @@ bool audio_input_callback(void *param, uint64_t start_ts_in, uint64_t, uint64_t 
 	{
 		if (filter->audio_buffer_frames < AUDIO_OUTPUT_FRAMES) {
 			// Wait until enough frames are receved.
+			obs_log(LOG_DEBUG, "Wait for frames...");
 			pthread_mutex_unlock(&filter->audio_buffer_mutex);
 			return false;
 		}
@@ -143,15 +154,6 @@ bool audio_input_callback(void *param, uint64_t start_ts_in, uint64_t, uint64_t 
 
 			// Read chunk data
 			deque_peek_front(&filter->audio_buffer, filter->audio_conv_buffer, data_size);		
-
-			if (max_frames == AUDIO_OUTPUT_FRAMES) {
-				// FIXME: No timestamp modifications
-				*out_ts = start_ts_in;
-				/*
-				// Update timestamp with first chunk frame (+offset)
-				*out_ts = header->timestamp + audio_frames_to_ns(audio_info.samples_per_sec, header->offset);
-				*/
-			}
 
 			size_t chunk_frames = header->frames - header->offset;
 			size_t frames = (chunk_frames > max_frames) ? max_frames : chunk_frames;
@@ -196,7 +198,8 @@ bool audio_input_callback(void *param, uint64_t start_ts_in, uint64_t, uint64_t 
 		}
 	}	
 	pthread_mutex_unlock(&filter->audio_buffer_mutex);
-
+	
+	*out_ts = start_ts_in;
 	return true;
 }
 
@@ -225,11 +228,15 @@ void stop_output(filter_t* filter)
 	}
 
 	if (filter->audio_source) {
-		obs_source_remove_audio_capture_callback(parent, audio_capture_callback, filter);
+		auto source = obs_weak_source_get_source(filter->audio_source);
+		if (source) {
+			obs_source_remove_audio_capture_callback(source, audio_capture_callback, filter);
+			obs_source_release(source);
+		}
 		obs_weak_source_release(filter->audio_source);
 		filter->audio_source = NULL;
-		filter->audio_enabled = false;
 	}
+	filter->audio_enabled = false;
 
 	if (filter->view) {
 		obs_view_set_source(filter->view, 0, NULL);
@@ -341,14 +348,42 @@ void start_output(filter_t* filter, obs_data_t* settings)
 	}
 
 	// Retrieve audio source
-	filter->audio_source = obs_source_get_weak_source(parent);
-	if (!filter->audio_source) {
-		obs_log(LOG_ERROR, "Audio source retrieval failed.");
-		return;
-	}
+	if (obs_data_get_bool(settings, "custom_audio_source")) {
+		// Apply custom audio source
+		auto source_uuid = obs_data_get_string(settings, "audio_source");
+		if (!strlen(source_uuid)) {
+			// Use filter's audio
+			filter->audio_source = NULL;
+		} else {
+			auto source = obs_get_source_by_uuid(source_uuid);
+			if (source) {
+				// Use custom audio source
+				obs_log(LOG_INFO, "Use %s as an audio source.", obs_source_get_name(source));
+				filter->audio_source = obs_source_get_weak_source(source);
+				
+				if (!filter->audio_source) {
+					obs_log(LOG_ERROR, "Audio source retrieval failed.");
+					obs_source_release(source);
+					return;
+				}
+				
+				// Register audio capture callback (It forwards audio to output)
+				obs_source_add_audio_capture_callback(source, audio_capture_callback, filter);
 
-	// Register audio capture callback (It forwards audio to output)
-	obs_source_add_audio_capture_callback(parent, audio_capture_callback, filter);
+				obs_source_release(source);
+			} else {
+				// Use filter's audio
+				filter->audio_source = NULL;
+			}
+		}		
+	} else {
+		// Use filter's audio
+		filter->audio_source = NULL;
+	}
+	
+	if (!filter->audio_source) {
+		obs_log(LOG_INFO, "Use filter audio as an audio source.");
+	}
 
 	// Open audio output (Audio will be captured from filter source via audio_input_callback)
 	audio_output_info oi = {0};
@@ -395,21 +430,6 @@ void start_output(filter_t* filter, obs_data_t* settings)
 	}
 }
 
-void get_defaults(obs_data_t *defaults)
-{
-	auto config = obs_frontend_get_profile_config();
-	auto mode = config_get_string(config, "Output", "Mode");
-	bool advanced_out = strcmp(mode, "Advanced") == 0 || strcmp(mode, "advanced") == 0;
-
-	const char *encoder_id;
-	if (advanced_out) {
-		encoder_id = config_get_string(config, "AdvOut", "Encoder");
-	} else {
-		encoder_id = config_get_string(config, "SimpleOutput", "StreamEncoder");
-	}
-	obs_data_set_default_string(defaults, "encoder", encoder_id);
-}
-
 void update(void *data, obs_data_t *settings)
 {
 	obs_log(LOG_INFO, "Filter updating");
@@ -428,90 +448,6 @@ void update(void *data, obs_data_t *settings)
 	}
 
 	obs_log(LOG_INFO, "Filter updated");
-}
-
-bool encoder_available(const char *encoder)
-{
-	const char *val;
-	int i = 0;
-
-	while (obs_enum_encoder_types(i++, &val)) {
-		if (strcmp(val, encoder) == 0) {
-			return true;
-		}
-	}
-
-	return false;
-}
-
-void add_apply_button(obs_properties_t *props) {
-	obs_properties_add_button(
-		props, "apply",
-		obs_module_text("Apply"),
-		[](obs_properties_t *, obs_property_t *, void *data) {
-			auto filter = (filter_t *)data;
-			auto settings = obs_source_get_settings(filter->source);
-			update(filter, settings);
-			obs_data_release(settings);
-			return true;
-		});
-}
-
-bool encoder_changed(void *, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
-{
-	obs_properties_remove_by_name(props, "encoder_group");
-	obs_properties_remove_by_name(props, "apply");
-
-	const char *encoder_id = obs_data_get_string(settings, "encoder");;
-	obs_properties_t *encoder_props = obs_get_encoder_properties(encoder_id);
-	if (encoder_props) {
-		obs_properties_add_group(props, "encoder_group", obs_encoder_get_display_name(encoder_id), OBS_GROUP_NORMAL, encoder_props);
-	}
-
-	add_apply_button(props);
-
-	return true;
-}
-
-obs_properties_t *get_properties(void *data)
-{
-	auto props = obs_properties_create();
-	obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
-
-	// "Stream" group
-	auto stream_group = obs_properties_create();
-	obs_properties_add_text(stream_group, "server", obs_module_text("Server"), OBS_TEXT_DEFAULT);
-	obs_properties_add_text(stream_group, "key", obs_module_text("Key"), OBS_TEXT_PASSWORD);
-	obs_properties_add_group(props, "stream", obs_module_text("Stream"), OBS_GROUP_NORMAL, stream_group);
-
-	// "Encoder" prop
-	auto encoder_prop = obs_properties_add_list(
-		props, "encoder", obs_module_text("Encoder"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
-
-	const char *encoder_id = NULL;
-	size_t i = 0;
-	while (obs_enum_encoder_types(i++, &encoder_id)) {
-		if (obs_get_encoder_type(encoder_id) != OBS_ENCODER_VIDEO) {
-			continue;
-		}
-
-		auto caps = obs_get_encoder_caps(encoder_id);
-		if ((caps & (OBS_ENCODER_CAP_DEPRECATED | OBS_ENCODER_CAP_INTERNAL)) != 0) {
-			continue;
-		}
-
-		auto name = obs_encoder_get_display_name(encoder_id);
-		obs_property_list_add_string(encoder_prop, name, encoder_id);
-	}
-	obs_property_set_modified_callback2(encoder_prop, encoder_changed, data);
-
-	// "Encoder" group (Initially empty)
-	auto encoder_group = obs_properties_create();
-	obs_properties_add_group(props, "encoder_group", obs_module_text("Encoder"), OBS_GROUP_NORMAL, encoder_group);
-
-	add_apply_button(props);
-
-	return props;
 }
 
 void *create(obs_data_t *settings, obs_source_t *source)
@@ -549,6 +485,7 @@ void video_tick(void *data, float)
 
 	if (filter->output_active && !obs_source_enabled(filter->source)) {
 		stop_output(filter);
+
 	} else if (!filter->output_active && obs_source_enabled(filter->source)) {
 		auto settings = obs_source_get_settings(filter->source);
 		auto server = obs_data_get_string(settings, "server");
@@ -563,6 +500,7 @@ const char *get_name(void *)
 {
 	return "Source output";
 }
+
 
 obs_source_info create_filter_info()
 {
@@ -580,6 +518,7 @@ obs_source_info create_filter_info()
 	filter_info.destroy = destroy;
 	filter_info.update = update;
 
+	filter_info.filter_audio = audio_filter_callback;
 	filter_info.video_tick = video_tick;
 
 	return filter_info;
