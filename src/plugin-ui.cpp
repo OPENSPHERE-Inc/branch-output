@@ -68,6 +68,20 @@ bool encoder_changed(void *, obs_properties_t *props, obs_property_t *, obs_data
 	return true;
 }
 
+// Hardcoded in obs-studio/UI/window-basic-main.hpp
+#define SIMPLE_ENCODER_X264 "x264"
+#define SIMPLE_ENCODER_X264_LOWCPU "x264_lowcpu"
+#define SIMPLE_ENCODER_QSV "qsv"
+#define SIMPLE_ENCODER_QSV_AV1 "qsv_av1"
+#define SIMPLE_ENCODER_NVENC "nvenc"
+#define SIMPLE_ENCODER_NVENC_AV1 "nvenc_av1"
+#define SIMPLE_ENCODER_NVENC_HEVC "nvenc_hevc"
+#define SIMPLE_ENCODER_AMD "amd"
+#define SIMPLE_ENCODER_AMD_HEVC "amd_hevc"
+#define SIMPLE_ENCODER_AMD_AV1 "amd_av1"
+#define SIMPLE_ENCODER_APPLE_H264 "apple_h264"
+#define SIMPLE_ENCODER_APPLE_HEVC "apple_hevc"
+
 // Hardcoded in obs-studio/UI/window-basic-settings.cpp
 const char *get_simple_output_encoder(const char *encoder)
 {
