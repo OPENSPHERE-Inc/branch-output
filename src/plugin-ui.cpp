@@ -45,6 +45,10 @@ void add_apply_button(obs_properties_t *props)
 		obs_module_text("Apply"),
 		[](obs_properties_t *, obs_property_t *, void *data) {
 			auto filter = (filter_t *)data;
+
+            // Force filter activation
+            filter->filter_active = true;
+
 			auto settings = obs_source_get_settings(filter->source);
 			update(filter, settings);
 			obs_data_release(settings);
@@ -114,19 +118,68 @@ const char *get_simple_output_encoder(const char *encoder)
 	return "obs_x264";
 }
 
+
+void apply_defaults(obs_data_t *dest, obs_data_t *src)
+ {
+    for (auto item = obs_data_first(src); item; obs_data_item_next(&item)) {
+        auto name = obs_data_item_get_name(item);
+        auto type = obs_data_item_gettype(item);
+
+        switch (type) {
+            case OBS_DATA_STRING:
+                obs_data_set_default_string(dest, name, obs_data_item_get_string(item));
+                break;
+            case OBS_DATA_NUMBER:
+                {
+                    auto numtype = obs_data_item_numtype(item);
+                    if (numtype == OBS_DATA_NUM_DOUBLE) {
+                        obs_data_set_default_double(dest, name, obs_data_item_get_double(item));
+                    } else if (numtype == OBS_DATA_NUM_INT) {
+                        obs_data_set_default_int(dest, name, obs_data_item_get_int(item));
+                    }
+                }
+                break;
+            case OBS_DATA_BOOLEAN:
+                obs_data_set_default_bool(dest, name, obs_data_item_get_bool(item));
+                break;
+            case OBS_DATA_OBJECT:
+                obs_data_set_default_obj(dest, name, obs_data_item_get_obj(item));
+                break;
+            case OBS_DATA_ARRAY:
+                obs_data_set_default_array(dest, name, obs_data_item_get_array(item));
+                break;
+        }
+    }
+}
+
 void get_defaults(obs_data_t *defaults)
 {
-	auto config = obs_frontend_get_profile_config();
-	auto mode = config_get_string(config, "Output", "Mode");
-	bool advanced_out = stricmp(mode, "Advanced") == 0;
+    auto config = obs_frontend_get_profile_config();
+    auto mode = config_get_string(config, "Output", "Mode");
+    bool advanced_out = stricmp(mode, "Advanced") == 0;
 
-	const char *encoder_id;
-	if (advanced_out) {
-		encoder_id = config_get_string(config, "AdvOut", "Encoder");
-	} else {
-		encoder_id = get_simple_output_encoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
+    const char *encoder_id;
+    if (advanced_out) {
+        encoder_id = config_get_string(config, "AdvOut", "Encoder");
+    } else {
+        encoder_id = get_simple_output_encoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
+    }
+    obs_data_set_default_string(defaults, "encoder", encoder_id);
+
+    // Load recent.json and apply to defaults
+	auto path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
+	auto recently_settings = obs_data_create_from_json_file(path);
+
+	if (recently_settings) {
+   		obs_data_erase(recently_settings, "server");
+		obs_data_erase(recently_settings, "key");
+		obs_data_erase(recently_settings, "custom_audio_source");
+		obs_data_erase(recently_settings, "audio_source");       
+        apply_defaults(defaults, recently_settings);
 	}
-	obs_data_set_default_string(defaults, "encoder", encoder_id);
+
+	bfree(path);
+	obs_data_release(recently_settings);
 }
 
 obs_properties_t *get_properties(void *data)

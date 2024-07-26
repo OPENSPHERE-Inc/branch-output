@@ -292,18 +292,18 @@ void start_output(filter_t* filter, obs_data_t* settings)
 	}
 
 	// Round up to a multiple of 2
-	auto width = obs_source_get_width(parent);
-	width += (width & 1);
+	filter->width = obs_source_get_width(parent);
+	filter->width += (filter->width & 1);
 	// Round up to a multiple of 2
-	auto height = obs_source_get_height(parent);
-	height += (height & 1);
+	filter->height = obs_source_get_height(parent);
+	filter->height += (filter->height & 1);
 
-	ovi.base_width = width;
-	ovi.base_height = height;
-	ovi.output_width = width;
-	ovi.output_height = height;
+	ovi.base_width = filter->width;
+	ovi.base_height = filter->height;
+	ovi.output_width = filter->width;
+	ovi.output_height = filter->height;
 
-	if (width == 0 || height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
+	if (filter->width == 0 || filter->height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
 		// Abort when invalid video parameters situation
 		return;
 	}
@@ -432,9 +432,13 @@ void start_output(filter_t* filter, obs_data_t* settings)
 
 void update(void *data, obs_data_t *settings)
 {
-	obs_log(LOG_INFO, "Filter updating");
-
 	auto filter = (filter_t *)data;
+	// Block output initiation until filter is active.
+	if (!filter->filter_active) {
+		return;
+	}
+
+	obs_log(LOG_INFO, "Filter updating");
 
 	if (filter->output_active) {
 		// Stop output before
@@ -447,6 +451,11 @@ void update(void *data, obs_data_t *settings)
 		start_output(filter, settings);
 	}
 
+	// Save settings as default
+	auto path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
+	obs_data_save_json_safe(settings, path, "tmp", "bak");
+	bfree(path);
+
 	obs_log(LOG_INFO, "Filter updated");
 }
 
@@ -458,6 +467,10 @@ void *create(obs_data_t *settings, obs_source_t *source)
 	pthread_mutex_init(&filter->audio_buffer_mutex, NULL);
 
 	filter->source = source;
+
+	// Fiter activate immediately when "server" is exists.
+	auto server = obs_data_get_string(settings, "server");
+	filter->filter_active = strlen(server) > 0;
 
 	update(filter, settings);
 
@@ -482,6 +495,10 @@ void destroy(void *data)
 void video_tick(void *data, float)
 {
 	auto filter = (filter_t *)data;
+	// Block output initiation until filter is active.
+	if (!filter->filter_active) {
+		return;
+	}
 
 	if (filter->output_active && !obs_source_enabled(filter->source)) {
 		stop_output(filter);
@@ -493,6 +510,20 @@ void video_tick(void *data, float)
 			start_output(filter, settings);
 		}
 		obs_data_release(settings);
+
+	} else if (filter->output_active) {
+		auto parent = obs_filter_get_parent(filter->source);
+		auto width = obs_source_get_width(parent);
+		width += (width & 1);
+		uint32_t height = obs_source_get_height(parent);
+		height += (height & 1);
+
+		if (filter->width != width || filter->height != height) {
+			// Restart output when source resolution was changed.
+			auto settings = obs_source_get_settings(filter->source);
+			stop_output(filter);
+			start_output(filter, settings);
+		}
 	}
 }
 

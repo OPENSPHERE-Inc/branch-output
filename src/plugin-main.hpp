@@ -25,9 +25,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/threading.h>
 
 #define MAX_AUDIO_BUFFER_FRAMES 131071
-
+#define SETTINGS_JSON_NAME "recently.json"
 
 struct filter_t {
+    bool filter_active;  // Activate after first "Apply" click
 	bool output_active;
 
 	// Filter source
@@ -43,6 +44,10 @@ struct filter_t {
 	audio_t *audio_output;
 	obs_output_t *stream_output;
 	obs_service_t *service;
+
+    // Video context
+   	uint32_t width;
+	uint32_t height;
 
 	// Audio context
 	bool audio_enabled;
