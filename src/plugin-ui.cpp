@@ -239,6 +239,18 @@ obs_properties_t *get_properties(void *data)
 		},
 		audio_source_list);
 
+	for (int i = 1; i <= MAX_AUDIO_MIXES; i++) {
+		char trackTitle[] = "MasterTrack1";
+		char trackId[] = "master_track_1";
+
+		snprintf(trackTitle, sizeof(trackTitle), "MasterTrack%d", i);
+		snprintf(trackId, sizeof(trackId), "master_track_%d", i);
+
+		obs_property_list_add_string(audio_source_list,
+					     obs_module_text(trackTitle),
+					     trackId);
+	}
+
 	obs_properties_add_group(props, "custom_audio_source",
 				 obs_module_text("CustomAudioSource"),
 				 OBS_GROUP_CHECKABLE, audio_group);

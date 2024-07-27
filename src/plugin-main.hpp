@@ -30,6 +30,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define OUTPUT_RETRY_DELAY_SECS 1
 #define CONNECT_ATTEMPTING_TIMEOUT_NS 15000000000ULL
 
+enum AudioSourceType {
+	AUDIO_SOURCE_TYPE_SILENCE,
+	AUDIO_SOURCE_TYPE_FILTER,
+	AUDIO_SOURCE_TYPE_MASTER,
+	AUDIO_SOURCE_TYPE_CAPTURE,
+};
+
 struct filter_t {
 	bool filter_active; // Activate after first "Apply" click
 	bool output_active;
@@ -55,12 +62,15 @@ struct filter_t {
 	uint32_t height;
 
 	// Audio context
-	bool audio_enabled;
+	AudioSourceType audio_source_type;
 	deque audio_buffer;
 	size_t audio_buffer_frames;
 	pthread_mutex_t audio_buffer_mutex;
 	uint8_t *audio_conv_buffer;
 	size_t audio_conv_buffer_size;
+	size_t audio_mix_idx;
+	speaker_layout audio_channels;
+	uint32_t samples_per_sec;
 
 	// Stream context
 	uint64_t connect_attempting_at;

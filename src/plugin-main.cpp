@@ -28,15 +28,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-void push_audio_to_buffer(void *data, obs_audio_data *audio_data)
+inline void push_audio_to_buffer(void *param, obs_audio_data *audio_data)
 {
-	auto filter = (filter_t *)data;
+	auto filter = (filter_t *)param;
 
 #ifdef NO_AUDIO
 	return;
 #endif
 
-	if (!filter->output_active || !filter->audio_enabled ||
+	if (!filter->output_active ||
+	    filter->audio_source_type == AUDIO_SOURCE_TYPE_SILENCE ||
 	    !audio_data->frames) {
 		return;
 	}
@@ -55,7 +56,7 @@ void push_audio_to_buffer(void *data, obs_audio_data *audio_data)
 		audio_buffer_chunk_header_t header = {0};
 		header.frames = audio_data->frames;
 		header.timestamp = audio_data->timestamp;
-		for (int ch = 0; ch < MAX_AUDIO_CHANNELS; ch++) {
+		for (int ch = 0; ch < filter->audio_channels; ch++) {
 			if (!audio_data->data[ch]) {
 				continue;
 			}
@@ -68,7 +69,7 @@ void push_audio_to_buffer(void *data, obs_audio_data *audio_data)
 		// Push audio data to buffer
 		deque_push_back(&filter->audio_buffer, &header,
 				sizeof(audio_buffer_chunk_header_t));
-		for (int ch = 0; ch < MAX_AUDIO_CHANNELS; ch++) {
+		for (int ch = 0; ch < filter->audio_channels; ch++) {
 			if (!audio_data->data[ch]) {
 				continue;
 			}
@@ -96,11 +97,11 @@ void push_audio_to_buffer(void *data, obs_audio_data *audio_data)
 }
 
 // Callback from filter audio
-obs_audio_data *audio_filter_callback(void *data, obs_audio_data *audio_data)
+obs_audio_data *audio_filter_callback(void *param, obs_audio_data *audio_data)
 {
-	auto filter = (filter_t *)data;
+	auto filter = (filter_t *)param;
 
-	if (filter->audio_source) {
+	if (filter->audio_source_type != AUDIO_SOURCE_TYPE_FILTER) {
 		// Omit filter's audio
 		return audio_data;
 	}
@@ -110,22 +111,35 @@ obs_audio_data *audio_filter_callback(void *data, obs_audio_data *audio_data)
 	return audio_data;
 }
 
+inline void convert_audio_data(obs_audio_data *dest, const audio_data *src)
+{
+	memcpy(dest->data, src->data, sizeof(audio_data::data));
+	dest->frames = src->frames;
+	dest->timestamp = src->timestamp;
+}
+
 // Callback from source's audio capture
-void audio_capture_callback(void *data, obs_source_t *,
+void audio_capture_callback(void *param, obs_source_t *,
 			    const audio_data *audio_data, bool muted)
 {
-	auto filter = (filter_t *)data;
+	auto filter = (filter_t *)param;
 
 	if (muted || !filter->audio_source) {
 		return;
 	}
 
 	obs_audio_data filter_audio_data = {0};
-	memcpy(filter_audio_data.data, audio_data->data,
-	       sizeof(audio_data::data));
-	filter_audio_data.frames = audio_data->frames;
-	filter_audio_data.timestamp = audio_data->timestamp;
+	convert_audio_data(&filter_audio_data, audio_data);
+	push_audio_to_buffer(filter, &filter_audio_data);
+}
 
+// Callback from master audio output
+void master_audio_callback(void *param, size_t mix_idx, audio_data *audio_data)
+{
+	auto filter = (filter_t *)param;
+
+	obs_audio_data filter_audio_data = {0};
+	convert_audio_data(&filter_audio_data, audio_data);
 	push_audio_to_buffer(filter, &filter_audio_data);
 }
 
@@ -137,7 +151,8 @@ bool audio_input_callback(void *param, uint64_t start_ts_in, uint64_t,
 	auto filter = (filter_t *)param;
 
 	obs_audio_info audio_info;
-	if (!filter->output_active || !filter->audio_enabled ||
+	if (!filter->output_active ||
+	    filter->audio_source_type == AUDIO_SOURCE_TYPE_SILENCE ||
 	    !obs_get_audio_info(&audio_info)) {
 		// Silence
 		*out_ts = start_ts_in;
@@ -182,7 +197,7 @@ bool audio_input_callback(void *param, uint64_t start_ts_in, uint64_t,
 				if ((mixers & (1 << mix_idx)) == 0) {
 					continue;
 				}
-				for (size_t ch = 0; ch < MAX_AUDIO_CHANNELS;
+				for (size_t ch = 0; ch < filter->audio_channels;
 				     ch++) {
 					auto out = mixes[mix_idx].data[ch] +
 						   out_offset;
@@ -260,17 +275,24 @@ void stop_output(filter_t *filter)
 		filter->video_encoder = NULL;
 	}
 
-	if (filter->audio_source) {
-		auto source = obs_weak_source_get_source(filter->audio_source);
-		if (source) {
-			obs_source_remove_audio_capture_callback(
-				source, audio_capture_callback, filter);
-			obs_source_release(source);
+	if (filter->audio_source_type == AUDIO_SOURCE_TYPE_CAPTURE) {
+		if (filter->audio_source) {
+			auto source = obs_weak_source_get_source(
+				filter->audio_source);
+			if (source) {
+				obs_source_remove_audio_capture_callback(
+					source, audio_capture_callback, filter);
+				obs_source_release(source);
+			}
+			obs_weak_source_release(filter->audio_source);
+			filter->audio_source = NULL;
 		}
-		obs_weak_source_release(filter->audio_source);
-		filter->audio_source = NULL;
+
+	} else if (filter->audio_source_type == AUDIO_SOURCE_TYPE_MASTER) {
+		obs_remove_raw_audio_callback(filter->audio_mix_idx,
+					      master_audio_callback, filter);
 	}
-	filter->audio_enabled = false;
+	filter->audio_source_type = AUDIO_SOURCE_TYPE_SILENCE;
 
 	if (filter->audio_output) {
 		audio_output_close(filter->audio_output);
@@ -390,64 +412,93 @@ void start_output(filter_t *filter, obs_data_t *settings)
 	}
 
 	// Retrieve audio source
+	filter->audio_source_type = AUDIO_SOURCE_TYPE_SILENCE;
+	filter->audio_source = NULL;
+	filter->audio_mix_idx = 0;
+	filter->audio_channels =
+		(speaker_layout)audio_output_get_channels(obs_get_audio());
+	filter->samples_per_sec = audio_output_get_sample_rate(obs_get_audio());
+
 	if (obs_data_get_bool(settings, "custom_audio_source")) {
 		// Apply custom audio source
 		auto source_uuid =
 			obs_data_get_string(settings, "audio_source");
-		filter->audio_enabled = !!strcmp(source_uuid, "no_audio");
 
-		if (!filter->audio_enabled || !strlen(source_uuid)) {
-			// Use filter's audio
-			filter->audio_source = NULL;
+		if (strlen(source_uuid) && strcmp(source_uuid, "no_audio")) {
+			if (!strncmp(source_uuid, "master_track_",
+				     strlen("master_track_"))) {
+				// Use master audio track
+				size_t trackNo = 0;
+				sscanf(source_uuid, "master_track_%llu",
+				       &trackNo);
+				obs_log(LOG_INFO, "Use master track %llu",
+					trackNo);
 
-		} else {
-			auto source = obs_get_source_by_uuid(source_uuid);
-			if (source) {
-				// Use custom audio source
-				obs_log(LOG_INFO, "Use %s as an audio source.",
-					obs_source_get_name(source));
-				filter->audio_source =
-					obs_source_get_weak_source(source);
+				if (trackNo <= MAX_AUDIO_MIXES) {
+					filter->audio_mix_idx = trackNo - 1;
 
-				if (!filter->audio_source) {
-					obs_log(LOG_ERROR,
-						"Audio source retrieval failed.");
-					obs_source_release(source);
-					return;
+					audio_convert_info conv = {0};
+					conv.format = AUDIO_FORMAT_FLOAT_PLANAR;
+					conv.samples_per_sec =
+						filter->samples_per_sec;
+					conv.speakers = filter->audio_channels;
+					conv.allow_clipping = true;
+
+					filter->audio_source_type =
+						AUDIO_SOURCE_TYPE_MASTER;
+
+					obs_add_raw_audio_callback(
+						filter->audio_mix_idx, &conv,
+						master_audio_callback, filter);
 				}
 
-				// Register audio capture callback (It forwards audio to output)
-				obs_source_add_audio_capture_callback(
-					source, audio_capture_callback, filter);
-
-				obs_source_release(source);
 			} else {
-				// Use filter's audio
-				filter->audio_source = NULL;
+				auto source =
+					obs_get_source_by_uuid(source_uuid);
+				if (source) {
+					// Use custom audio source
+					obs_log(LOG_INFO,
+						"Use %s as an audio source.",
+						obs_source_get_name(source));
+					filter->audio_source =
+						obs_source_get_weak_source(
+							source);
+					filter->audio_source_type =
+						AUDIO_SOURCE_TYPE_CAPTURE;
+
+					if (!filter->audio_source) {
+						obs_log(LOG_ERROR,
+							"Audio source retrieval failed.");
+						obs_source_release(source);
+						return;
+					}
+
+					// Register audio capture callback (It forwards audio to output)
+					obs_source_add_audio_capture_callback(
+						source, audio_capture_callback,
+						filter);
+
+					obs_source_release(source);
+				}
 			}
 		}
 
 	} else {
 		// Use filter's audio
-		filter->audio_enabled = true;
-		filter->audio_source = NULL;
+		obs_log(LOG_INFO, "Use filter audio as an audio source.");
+		filter->audio_source_type = AUDIO_SOURCE_TYPE_FILTER;
 	}
 
-	if (!filter->audio_source) {
-		if (filter->audio_enabled) {
-			obs_log(LOG_INFO,
-				"Use filter audio as an audio source.");
-		} else {
-			obs_log(LOG_INFO, "Audio is disabled.");
-		}
+	if (filter->audio_source_type == AUDIO_SOURCE_TYPE_SILENCE) {
+		obs_log(LOG_INFO, "Audio is disabled.");
 	}
 
 	// Open audio output (Audio will be captured from filter source via audio_input_callback)
 	audio_output_info oi = {0};
 
 	oi.name = obs_source_get_name(filter->source);
-	oi.speakers = SPEAKERS_STEREO;
-	oi.samples_per_sec = audio_output_get_sample_rate(obs_get_audio());
+	oi.speakers = filter->audio_channels;
+	oi.samples_per_sec = filter->samples_per_sec;
 	oi.format = AUDIO_FORMAT_FLOAT_PLANAR;
 	oi.input_param = filter;
 	oi.input_callback = audio_input_callback;
