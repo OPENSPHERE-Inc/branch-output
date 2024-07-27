@@ -134,7 +134,7 @@ void audio_capture_callback(void *param, obs_source_t *,
 }
 
 // Callback from master audio output
-void master_audio_callback(void *param, size_t mix_idx, audio_data *audio_data)
+void master_audio_callback(void *param, size_t, audio_data *audio_data)
 {
 	auto filter = (filter_t *)param;
 
@@ -429,9 +429,9 @@ void start_output(filter_t *filter, obs_data_t *settings)
 				     strlen("master_track_"))) {
 				// Use master audio track
 				size_t trackNo = 0;
-				sscanf(source_uuid, "master_track_%llu",
+				sscanf(source_uuid, "master_track_%zu",
 				       &trackNo);
-				obs_log(LOG_INFO, "Use master track %llu",
+				obs_log(LOG_INFO, "Use master track %zu",
 					trackNo);
 
 				if (trackNo <= MAX_AUDIO_MIXES) {
