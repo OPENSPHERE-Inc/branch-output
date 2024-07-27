@@ -22,6 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/config-file.h>
 #include <util/deque.h>
 #include <util/threading.h>
+#include <util/platform.h>
 #include "plugin-main.hpp"
 
 OBS_DECLARE_MODULE()
@@ -33,12 +34,10 @@ void push_audio_to_buffer(void* data, obs_audio_data *audio_data)
 	auto filter = (filter_t *)data;
 
 #ifdef NO_AUDIO
-	filter->audio_enabled = false;
     return;
 #endif
 
-	if (!filter->output_active || !audio_data->frames) {
-		filter->audio_enabled = false;
+	if (!filter->output_active || !filter->audio_enabled || !audio_data->frames) {
 		return;
 	}
 
@@ -82,8 +81,6 @@ void push_audio_to_buffer(void* data, obs_audio_data *audio_data)
 
 		// Increment buffer usage
 		filter->audio_buffer_frames += audio_data->frames;
-		// Enable audio
-		filter->audio_enabled = true;
 	}
 	pthread_mutex_unlock(&filter->audio_buffer_mutex);
 }
@@ -109,7 +106,6 @@ void audio_capture_callback(void *data, obs_source_t*, const audio_data *audio_d
 	auto filter = (filter_t *)data;
 
 	if (muted || !filter->audio_source) {
-		filter->audio_enabled = false;
 		return;
 	}
 
@@ -128,7 +124,7 @@ bool audio_input_callback(void *param, uint64_t start_ts_in, uint64_t, uint64_t 
 	auto filter = (filter_t *)param;
 
 	obs_audio_info audio_info;
-	if (!filter->audio_enabled || !filter->output_active || !obs_get_audio_info(&audio_info)) {
+	if (!filter->output_active || !filter->audio_enabled || !obs_get_audio_info(&audio_info)) {
 		// Silence
 		*out_ts = start_ts_in;
 		return true;
@@ -206,12 +202,23 @@ bool audio_input_callback(void *param, uint64_t start_ts_in, uint64_t, uint64_t 
 void stop_output(filter_t* filter)
 {
 	obs_source_t* parent = obs_filter_get_parent(filter->source);
+	filter->connect_attempting_at = 0;
 
-	if (filter->output_active) {
-		obs_source_dec_showing(parent);
-		obs_output_stop(filter->stream_output);
+	if (filter->stream_output) {
+		if (filter->output_active) {
+			obs_source_dec_showing(parent);
+			obs_output_stop(filter->stream_output);
+		}
+
+		obs_output_release(filter->stream_output);
+		filter->stream_output = NULL;
 	}
-		
+	
+	if (filter->service) {
+		obs_service_release(filter->service);
+		filter->service = NULL;
+	}
+
 	if (filter->audio_encoder) {
 		obs_encoder_release(filter->audio_encoder);
 		filter->audio_encoder = NULL;
@@ -222,11 +229,6 @@ void stop_output(filter_t* filter)
 		filter->video_encoder = NULL;
 	}
 	
-	if (filter->audio_output) {
-		audio_output_close(filter->audio_output);
-		filter->audio_output = NULL;
-	}
-
 	if (filter->audio_source) {
 		auto source = obs_weak_source_get_source(filter->audio_source);
 		if (source) {
@@ -238,21 +240,16 @@ void stop_output(filter_t* filter)
 	}
 	filter->audio_enabled = false;
 
+	if (filter->audio_output) {
+		audio_output_close(filter->audio_output);
+		filter->audio_output = NULL;
+	}
+
 	if (filter->view) {
 		obs_view_set_source(filter->view, 0, NULL);
 		obs_view_remove(filter->view);
 		obs_view_destroy(filter->view);
 		filter->view = NULL;
-	}
-	
-	if (filter->stream_output) {
-		obs_output_release(filter->stream_output);
-		filter->stream_output = NULL;
-	}
-	
-	if (filter->service) {
-		obs_service_release(filter->service);
-		filter->service = NULL;
 	}
 	
 	filter->audio_buffer_frames = 0;
@@ -308,6 +305,9 @@ void start_output(filter_t* filter, obs_data_t* settings)
 		return;
 	}
 
+	// Update active revision with stored settings.
+	filter->active_settings_rev = filter->stored_settings_rev;
+
 	// Create service - We always use "rtmp_custom" as service
 	filter->service = obs_service_create("rtmp_custom", obs_source_get_name(filter->source), settings, NULL);
 	if (!filter->service) {
@@ -334,7 +334,9 @@ void start_output(filter_t* filter, obs_data_t* settings)
 		obs_log(LOG_ERROR, "Stream output creation failed.");
 		return;
 	}
+	obs_output_set_reconnect_settings(filter->stream_output, OUTPUT_MAX_RETRIES, OUTPUT_RETRY_DELAY_SECS);
 	obs_output_set_service(filter->stream_output, filter->service);
+	filter->connect_attempting_at = os_gettime_ns();
 
 	// Open video output
 	// Create view and associate it with filter source
@@ -351,9 +353,12 @@ void start_output(filter_t* filter, obs_data_t* settings)
 	if (obs_data_get_bool(settings, "custom_audio_source")) {
 		// Apply custom audio source
 		auto source_uuid = obs_data_get_string(settings, "audio_source");
-		if (!strlen(source_uuid)) {
+		filter->audio_enabled = !!stricmp(source_uuid, "no_audio");
+
+		if (!filter->audio_enabled || !strlen(source_uuid)) {
 			// Use filter's audio
 			filter->audio_source = NULL;
+		
 		} else {
 			auto source = obs_get_source_by_uuid(source_uuid);
 			if (source) {
@@ -373,16 +378,22 @@ void start_output(filter_t* filter, obs_data_t* settings)
 				obs_source_release(source);
 			} else {
 				// Use filter's audio
-				filter->audio_source = NULL;
+				filter->audio_source = NULL;	
 			}
 		}		
+		
 	} else {
 		// Use filter's audio
+		filter->audio_enabled = true;
 		filter->audio_source = NULL;
 	}
 	
 	if (!filter->audio_source) {
-		obs_log(LOG_INFO, "Use filter audio as an audio source.");
+		if (filter->audio_enabled) {
+			obs_log(LOG_INFO, "Use filter audio as an audio source.");
+		} else {
+			obs_log(LOG_INFO, "Audio is disabled.");
+		}
 	}
 
 	// Open audio output (Audio will be captured from filter source via audio_input_callback)
@@ -433,25 +444,17 @@ void start_output(filter_t* filter, obs_data_t* settings)
 void update(void *data, obs_data_t *settings)
 {
 	auto filter = (filter_t *)data;
-	// Block output initiation until filter is active.
-	if (!filter->filter_active) {
-		return;
-	}
-
 	obs_log(LOG_INFO, "Filter updating");
 
-	if (filter->output_active) {
-		// Stop output before
-		stop_output(filter);
-	}
-
-	auto server = obs_data_get_string(settings, "server");
-	if (server && strlen(server)) {
-		// Start output again
-		start_output(filter, settings);
-	}
+	// It's unwelcome to do stopping output during attempting connect to service.
+	// So we just count up revision (Settings will be applied on video_tick())
+	filter->stored_settings_rev++;
 
 	// Save settings as default
+	auto config_dir_path = obs_module_get_config_path(obs_current_module(), "");
+	os_mkdirs(config_dir_path);
+	bfree(config_dir_path);
+
 	auto path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
 	obs_data_save_json_safe(settings, path, "tmp", "bak");
 	bfree(path);
@@ -470,7 +473,7 @@ void *create(obs_data_t *settings, obs_source_t *source)
 
 	// Fiter activate immediately when "server" is exists.
 	auto server = obs_data_get_string(settings, "server");
-	filter->filter_active = strlen(server) > 0;
+	filter->filter_active = !!strlen(server);
 
 	update(filter, settings);
 
@@ -492,6 +495,27 @@ void destroy(void *data)
 	obs_log(LOG_INFO, "Filter destroyed");
 }
 
+inline void restart_output(filter_t* filter)
+{
+	if (filter->output_active) {
+		stop_output(filter);
+	}
+
+	auto settings = obs_source_get_settings(filter->source);
+	auto server = obs_data_get_string(settings, "server");
+	if (strlen(server)) {
+		start_output(filter, settings);
+	}
+	obs_data_release(settings);
+}
+
+inline bool connect_attempting_timed_out(filter_t* filter) 
+{
+	return filter->connect_attempting_at && 
+		os_gettime_ns() - filter->connect_attempting_at > CONNECT_ATTEMPTING_TIMEOUT_NS;
+}
+
+// NOTE: Becareful this function is called so offen.
 void video_tick(void *data, float)
 {
 	auto filter = (filter_t *)data;
@@ -500,36 +524,68 @@ void video_tick(void *data, float)
 		return;
 	}
 
-	if (filter->output_active && !obs_source_enabled(filter->source)) {
-		stop_output(filter);
+	auto source_enabled = obs_source_enabled(filter->source);
 
-	} else if (!filter->output_active && obs_source_enabled(filter->source)) {
-		auto settings = obs_source_get_settings(filter->source);
-		auto server = obs_data_get_string(settings, "server");
-		if (server && strlen(server)) {
-			start_output(filter, settings);
+	if (filter->output_active) {
+		auto stream_active = obs_output_active(filter->stream_output);
+
+		if (source_enabled) {
+			if (connect_attempting_timed_out(filter)) {
+				if (!stream_active) {
+					// Retry connection
+					obs_log(LOG_INFO, "Attempting reactivate the stream output.");
+					auto settings = obs_source_get_settings(filter->source);
+					start_output(filter, settings);
+					obs_data_release(settings);
+					return;
+				}
+
+				if (filter->active_settings_rev < filter->stored_settings_rev) {
+					// Settings has been changed
+					obs_log(LOG_INFO, "Settings change detected, Attempting restart.");
+					restart_output(filter);
+					return;
+				}
+
+				if (stream_active) {
+					// Monitoring source resolution
+					auto parent = obs_filter_get_parent(filter->source);
+					auto width = obs_source_get_width(parent);
+					width += (width & 1);
+					uint32_t height = obs_source_get_height(parent);
+					height += (height & 1);
+
+					if (filter->width != width || filter->height != height) {
+						// Restart output when source resolution was changed.
+						obs_log(LOG_INFO, "Attempting restart the stream output.");
+						auto settings = obs_source_get_settings(filter->source);
+						start_output(filter, settings);
+						obs_data_release(settings);
+						return;
+					}
+				}				
+			}
+
+		} else {
+			if (stream_active) {
+				// Clicked filter's "Eye" icon (Hide)
+				stop_output(filter);
+				return;
+			} 
 		}
-		obs_data_release(settings);
 
-	} else if (filter->output_active) {
-		auto parent = obs_filter_get_parent(filter->source);
-		auto width = obs_source_get_width(parent);
-		width += (width & 1);
-		uint32_t height = obs_source_get_height(parent);
-		height += (height & 1);
-
-		if (filter->width != width || filter->height != height) {
-			// Restart output when source resolution was changed.
-			auto settings = obs_source_get_settings(filter->source);
-			stop_output(filter);
-			start_output(filter, settings);
-		}
+	} else {
+		if (source_enabled) {
+			// Clicked filter's "Eye" icon (Show)
+			restart_output(filter);
+			return;
+		} 
 	}
 }
 
 const char *get_name(void *)
 {
-	return "Source output";
+	return "Source Output";
 }
 
 
@@ -554,7 +610,6 @@ obs_source_info create_filter_info()
 
 	return filter_info;
 }
-
 
 obs_source_info filter_info;
 

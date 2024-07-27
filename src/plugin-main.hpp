@@ -26,10 +26,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #define MAX_AUDIO_BUFFER_FRAMES 131071
 #define SETTINGS_JSON_NAME "recently.json"
+#define OUTPUT_MAX_RETRIES 7
+#define OUTPUT_RETRY_DELAY_SECS 1
+#define CONNECT_ATTEMPTING_TIMEOUT_NS 15000000000ULL
 
 struct filter_t {
     bool filter_active;  // Activate after first "Apply" click
 	bool output_active;
+	uint32_t stored_settings_rev;
+	uint32_t active_settings_rev;
 
 	// Filter source
 	obs_source_t *source;
@@ -56,6 +61,9 @@ struct filter_t {
 	pthread_mutex_t audio_buffer_mutex;
 	uint8_t* audio_conv_buffer;
 	size_t audio_conv_buffer_size;
+
+	// Stream context
+	uint64_t connect_attempting_at;
 };
 
 struct audio_buffer_chunk_header_t {

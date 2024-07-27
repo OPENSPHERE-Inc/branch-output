@@ -143,10 +143,19 @@ void apply_defaults(obs_data_t *dest, obs_data_t *src)
                 obs_data_set_default_bool(dest, name, obs_data_item_get_bool(item));
                 break;
             case OBS_DATA_OBJECT:
-                obs_data_set_default_obj(dest, name, obs_data_item_get_obj(item));
+				{
+					auto value = obs_data_item_get_obj(item);
+	                obs_data_set_default_obj(dest, name, value);
+					obs_data_release(value);
+				}
                 break;
             case OBS_DATA_ARRAY:
-                obs_data_set_default_array(dest, name, obs_data_item_get_array(item));
+				{
+					auto value = obs_data_item_get_array(item);
+					obs_data_set_default_array(dest, name, value);
+					obs_data_array_release(value);
+				}
+                
                 break;
         }
     }
@@ -194,10 +203,12 @@ obs_properties_t *get_properties(void *data)
 	obs_properties_add_group(props, "stream", obs_module_text("Stream"), OBS_GROUP_NORMAL, stream_group);
 
 	// "Audio" gorup
-	auto audio = obs_properties_create();
-
+	auto audio_group = obs_properties_create();
 	auto audio_source_list = obs_properties_add_list(
-		audio, "audio_source", obs_module_text("Source"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+		audio_group, "audio_source", obs_module_text("Source"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+
+	obs_property_list_add_string(audio_source_list, obs_module_text("NoAudio"), "no_audio");
+
 	obs_enum_sources([](void* data, obs_source_t *source) {
 		auto prop = (obs_property_t*)data;
 		const uint32_t flags = obs_source_get_output_flags(source);
@@ -206,7 +217,8 @@ obs_properties_t *get_properties(void *data)
 		}
 		return true;
 	}, audio_source_list);
-	obs_properties_add_group(props, "custom_audio_source", obs_module_text("CustomAudioSource"), OBS_GROUP_CHECKABLE, audio);
+
+	obs_properties_add_group(props, "custom_audio_source", obs_module_text("CustomAudioSource"), OBS_GROUP_CHECKABLE, audio_group);
 
 	// "Encoder" prop
 	auto encoder_prop = obs_properties_add_list(
