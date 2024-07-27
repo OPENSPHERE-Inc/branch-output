@@ -31,27 +31,27 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define CONNECT_ATTEMPTING_TIMEOUT_NS 15000000000ULL
 
 struct filter_t {
-    bool filter_active;  // Activate after first "Apply" click
+	bool filter_active; // Activate after first "Apply" click
 	bool output_active;
 	uint32_t stored_settings_rev;
 	uint32_t active_settings_rev;
 
 	// Filter source
 	obs_source_t *source;
-	obs_weak_source_t *audio_source;  // NULL means using filter's audio
+	obs_weak_source_t *audio_source; // NULL means using filter's audio
 
 	// User choosed encoder
 	obs_encoder_t *video_encoder;
 	obs_encoder_t *audio_encoder;
-	
+
 	obs_view_t *view;
 	video_t *video_output;
 	audio_t *audio_output;
 	obs_output_t *stream_output;
 	obs_service_t *service;
 
-    // Video context
-   	uint32_t width;
+	// Video context
+	uint32_t width;
 	uint32_t height;
 
 	// Audio context
@@ -59,7 +59,7 @@ struct filter_t {
 	deque audio_buffer;
 	size_t audio_buffer_frames;
 	pthread_mutex_t audio_buffer_mutex;
-	uint8_t* audio_conv_buffer;
+	uint8_t *audio_conv_buffer;
 	size_t audio_conv_buffer_size;
 
 	// Stream context
@@ -67,13 +67,12 @@ struct filter_t {
 };
 
 struct audio_buffer_chunk_header_t {
-	size_t data_idx[MAX_AUDIO_CHANNELS];  // Zero means unused channel
+	size_t data_idx[MAX_AUDIO_CHANNELS]; // Zero means unused channel
 	uint32_t frames;
 	uint64_t timestamp;
 	size_t offset;
 	size_t channels;
 };
-
 
 void update(void *data, obs_data_t *settings);
 void get_defaults(obs_data_t *defaults);
