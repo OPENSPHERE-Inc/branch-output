@@ -157,6 +157,8 @@ void apply_defaults(obs_data_t *dest, obs_data_t *src)
 				}
                 
                 break;
+			case OBS_DATA_NULL:
+				break;
         }
     }
 }
@@ -165,7 +167,7 @@ void get_defaults(obs_data_t *defaults)
 {
     auto config = obs_frontend_get_profile_config();
     auto mode = config_get_string(config, "Output", "Mode");
-    bool advanced_out = stricmp(mode, "Advanced") == 0;
+    bool advanced_out = strcmp(mode, "Advanced") == 0 || strcmp(mode, "advanced");
 
     const char *encoder_id;
     if (advanced_out) {
@@ -209,8 +211,8 @@ obs_properties_t *get_properties(void *data)
 
 	obs_property_list_add_string(audio_source_list, obs_module_text("NoAudio"), "no_audio");
 
-	obs_enum_sources([](void* data, obs_source_t *source) {
-		auto prop = (obs_property_t*)data;
+	obs_enum_sources([](void* param, obs_source_t *source) {
+		auto prop = (obs_property_t*)param;
 		const uint32_t flags = obs_source_get_output_flags(source);
 		if (flags & OBS_SOURCE_AUDIO) {
 			obs_property_list_add_string(prop, obs_source_get_name(source), obs_source_get_uuid(source));

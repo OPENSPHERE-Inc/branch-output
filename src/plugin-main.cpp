@@ -353,7 +353,7 @@ void start_output(filter_t* filter, obs_data_t* settings)
 	if (obs_data_get_bool(settings, "custom_audio_source")) {
 		// Apply custom audio source
 		auto source_uuid = obs_data_get_string(settings, "audio_source");
-		filter->audio_enabled = !!stricmp(source_uuid, "no_audio");
+		filter->audio_enabled = !!strcmp(source_uuid, "no_audio");
 
 		if (!filter->audio_enabled || !strlen(source_uuid)) {
 			// Use filter's audio
