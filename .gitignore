@@ -24,3 +24,6 @@
 
 # Exclude CMake build number cache
 /cmake/.CMakeBuildNumber
+
+# Except additional project files
+!screenshot.jpg
