@@ -100,6 +100,8 @@ runs:
           print "codesignTeam=${team_id}" >> $GITHUB_OUTPUT
         } else {
           print 'haveCodesignIdent=false' >> $GITHUB_OUTPUT
+          print 'haveProvisioningProfile=false' >> $GITHUB_OUTPUT
+          print 'haveNotarizationUser=false' >> $GITHUB_OUTPUT
         }
 
     - name: Provisioning Profile 👤
