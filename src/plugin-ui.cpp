@@ -61,6 +61,7 @@ bool audio_encoder_changed(void *param, obs_properties_t *props, obs_property_t 
     const auto encoder_id = obs_data_get_string(settings, "audio_encoder");
     const auto encoder_props = obs_get_encoder_properties(encoder_id);
     const auto encoder_bitrate_prop = obs_properties_get(encoder_props, "bitrate");
+    obs_properties_destroy(encoder_props);
 
     auto audio_encoder_group = obs_property_group_content(obs_properties_get(props, "audio_encoder_group"));
     auto audio_bitrate_prop = obs_properties_get(audio_encoder_group, "audio_bitrate");
@@ -79,7 +80,7 @@ bool audio_encoder_changed(void *param, obs_properties_t *props, obs_property_t 
             obs_property_list_add_int(audio_bitrate_prop, bitrateTitle, i);
         }
 
-        break;
+        return true;
     }
 
     case OBS_PROPERTY_LIST: {
@@ -89,7 +90,7 @@ bool audio_encoder_changed(void *param, obs_properties_t *props, obs_property_t 
                 LOG_ERROR, "%s: Invalid bitrate property given by encoder: %s", obs_source_get_name(filter->source),
                 encoder_id
             );
-            break;
+            return false;
         }
 
         const auto count = obs_property_list_item_count(encoder_bitrate_prop);
@@ -102,14 +103,12 @@ bool audio_encoder_changed(void *param, obs_properties_t *props, obs_property_t 
             snprintf(bitrateTitle, sizeof(bitrateTitle), "%lld", bitrate);
             obs_property_list_add_int(audio_bitrate_prop, bitrateTitle, bitrate);
         }
-        break;
+        return true;
     }
 
     default:
-        break;
+        return true;
     }
-
-    return true;
 }
 
 bool video_encoder_changed(void *, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
@@ -252,6 +251,7 @@ void get_defaults(obs_data_t *defaults)
     // Load recent.json and apply to defaults
     auto path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
     auto recently_settings = obs_data_create_from_json_file(path);
+    bfree(path);
 
     if (recently_settings) {
         obs_data_erase(recently_settings, "server");
@@ -261,7 +261,6 @@ void get_defaults(obs_data_t *defaults)
         apply_defaults(defaults, recently_settings);
     }
 
-    bfree(path);
     obs_data_release(recently_settings);
 }
 
