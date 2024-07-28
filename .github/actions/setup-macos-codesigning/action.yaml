@@ -135,7 +135,6 @@ runs:
           print "provisioningProfileUUID=${uuid}" >> $GITHUB_OUTPUT
           print '::endgroup::'
         } else {
-          print 'haveNotarizationUser=false' >> $GITHUB_OUTPUT
           print 'haveProvisioningProfile=false' >> $GITHUB_OUTPUT
         }
 
