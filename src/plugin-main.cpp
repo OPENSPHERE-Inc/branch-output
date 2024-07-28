@@ -594,19 +594,19 @@ void video_tick(void *data, float)
 
                 if (stream_active) {
                     // Monitoring source
-                    auto parent = obs_filter_get_parent(filter->source);					
+                    auto parent = obs_filter_get_parent(filter->source);
                     auto width = obs_source_get_width(parent);
                     width += (width & 1);
                     uint32_t height = obs_source_get_height(parent);
                     height += (height & 1);
 
-					if (!width || !height) {
-						// Stop output when source resolution is zero
-						stop_output(filter);	
-						return;
-					} 
-					
-					if (filter->width != width || filter->height != height) {
+                    if (!width || !height) {
+                        // Stop output when source resolution is zero
+                        stop_output(filter);
+                        return;
+                    }
+
+                    if (filter->width != width || filter->height != height) {
                         // Restart output when source resolution was changed.
                         obs_log(
                             LOG_INFO, "%s: Attempting restart the stream output", obs_source_get_name(filter->source)
