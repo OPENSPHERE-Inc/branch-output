@@ -1,5 +1,5 @@
 /*
-Source Output Plugin
+Branch Output Plugin
 Copyright (C) 2024 OPENSPHERE Inc. info@opensphere.co.jp
 
 This program is free software; you can redistribute it and/or modify
@@ -454,8 +454,9 @@ void start_output(filter_t *filter, obs_data_t *settings)
     }
 
     // Setup video encoder
-    auto encoder_id = obs_data_get_string(settings, "encoder");
-    filter->video_encoder = obs_video_encoder_create(encoder_id, obs_source_get_name(filter->source), settings, NULL);
+    auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
+    filter->video_encoder =
+        obs_video_encoder_create(video_encoder_id, obs_source_get_name(filter->source), settings, NULL);
     if (!filter->video_encoder) {
         obs_log(LOG_ERROR, "%s: Video encoder creation failed", obs_source_get_name(filter->source));
         return;
@@ -465,7 +466,16 @@ void start_output(filter_t *filter, obs_data_t *settings)
     obs_output_set_video_encoder(filter->stream_output, filter->video_encoder);
 
     // Setup audo encoder
-    filter->audio_encoder = obs_audio_encoder_create("ffmpeg_aac", obs_source_get_name(filter->source), NULL, 0, NULL);
+    auto audio_encoder_id = obs_data_get_string(settings, "audio_encoder");
+    auto audio_bitrate = obs_data_get_int(settings, "audio_bitrate");
+    auto audio_encoder_settings = obs_encoder_defaults(audio_encoder_id);
+    obs_data_set_int(audio_encoder_settings, "bitrate", audio_bitrate);
+
+    // Use track 0 only.
+    filter->audio_encoder = obs_audio_encoder_create(
+        audio_encoder_id, obs_source_get_name(filter->source), audio_encoder_settings, 0, NULL
+    );
+    obs_data_release(audio_encoder_settings);
     if (!filter->audio_encoder) {
         obs_log(LOG_ERROR, "%s: Audio encoder creation failed", obs_source_get_name(filter->source));
         return;
@@ -638,14 +648,14 @@ void video_tick(void *data, float)
 
 const char *get_name(void *)
 {
-    return "Source Output";
+    return "Branch Output";
 }
 
 obs_source_info create_filter_info()
 {
     obs_source_info filter_info = {0};
 
-    filter_info.id = "source_output";
+    filter_info.id = "osi_branch_output";
     filter_info.type = OBS_SOURCE_TYPE_FILTER;
     filter_info.output_flags = OBS_SOURCE_VIDEO;
 

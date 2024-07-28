@@ -1,5 +1,5 @@
 /*
-Source Output Plugin
+Branch Output Plugin
 Copyright (C) 2024 OPENSPHERE Inc. info@opensphere.co.jp
 
 This program is free software; you can redistribute it and/or modify
@@ -22,7 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/config-file.h>
 #include "plugin-main.hpp"
 
-bool encoder_available(const char *encoder)
+inline bool encoder_available(const char *encoder)
 {
     const char *val;
     int i = 0;
@@ -36,7 +36,7 @@ bool encoder_available(const char *encoder)
     return false;
 }
 
-void add_apply_button(obs_properties_t *props)
+inline void add_apply_button(obs_properties_t *props)
 {
     obs_properties_add_button(
         props, "apply", obs_module_text("Apply"),
@@ -54,23 +54,91 @@ void add_apply_button(obs_properties_t *props)
     );
 }
 
-bool encoder_changed(void *, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
+bool audio_encoder_changed(void *param, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
 {
-    obs_properties_remove_by_name(props, "encoder_group");
+    auto filter = (filter_t *)param;
+
+    const auto encoder_id = obs_data_get_string(settings, "audio_encoder");
+    const auto encoder_props = obs_get_encoder_properties(encoder_id);
+    const auto encoder_bitrate_prop = obs_properties_get(encoder_props, "bitrate");
+
+    auto audio_encoder_group = obs_property_group_content(obs_properties_get(props, "audio_encoder_group"));
+    auto audio_bitrate_prop = obs_properties_get(audio_encoder_group, "audio_bitrate");
+
+    obs_property_list_clear(audio_bitrate_prop);
+
+    const auto type = obs_property_get_type(encoder_bitrate_prop);
+    switch (type) {
+    case OBS_PROPERTY_INT: {
+        const auto max_value = obs_property_int_max(encoder_bitrate_prop);
+        const auto step_value = obs_property_int_step(encoder_bitrate_prop);
+
+        for (int i = obs_property_int_min(encoder_bitrate_prop); i <= max_value; i += step_value) {
+            char bitrateTitle[6];
+            snprintf(bitrateTitle, sizeof(bitrateTitle), "%d", i);
+            obs_property_list_add_int(audio_bitrate_prop, bitrateTitle, i);
+        }
+
+        break;
+    }
+
+    case OBS_PROPERTY_LIST: {
+        const auto format = obs_property_list_format(encoder_bitrate_prop);
+        if (format != OBS_COMBO_FORMAT_INT) {
+            obs_log(
+                LOG_ERROR, "%s: Invalid bitrate property given by encoder: %s", obs_source_get_name(filter->source),
+                encoder_id
+            );
+            break;
+        }
+
+        const auto count = obs_property_list_item_count(encoder_bitrate_prop);
+        for (size_t i = 0; i < count; i++) {
+            if (obs_property_list_item_disabled(encoder_bitrate_prop, i)) {
+                continue;
+            }
+            const auto bitrate = obs_property_list_item_int(encoder_bitrate_prop, i);
+            char bitrateTitle[6];
+            snprintf(bitrateTitle, sizeof(bitrateTitle), "%lld", bitrate);
+            obs_property_list_add_int(audio_bitrate_prop, bitrateTitle, bitrate);
+        }
+        break;
+    }
+
+    default:
+        break;
+    }
+
+    return true;
+}
+
+bool video_encoder_changed(void *, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
+{
+    obs_properties_remove_by_name(props, "video_encoder_group");
     obs_properties_remove_by_name(props, "apply");
 
-    const char *encoder_id = obs_data_get_string(settings, "encoder");
-    ;
-    obs_properties_t *encoder_props = obs_get_encoder_properties(encoder_id);
+    auto encoder_id = obs_data_get_string(settings, "video_encoder");
+
+    auto encoder_props = obs_get_encoder_properties(encoder_id);
     if (encoder_props) {
         obs_properties_add_group(
-            props, "encoder_group", obs_encoder_get_display_name(encoder_id), OBS_GROUP_NORMAL, encoder_props
+            props, "video_encoder_group", obs_encoder_get_display_name(encoder_id), OBS_GROUP_NORMAL, encoder_props
         );
     }
 
     add_apply_button(props);
 
     return true;
+}
+
+// Hardcoded in obs-studio/UI/window-basic-main-outputs.cpp
+inline const char *get_simple_audio_encoder(const char *encoder)
+{
+    if (strcmp(encoder, "opus")) {
+        return "ffmpeg_opus";
+    } else {
+        return "ffmpeg_aac";
+    }
 }
 
 // Hardcoded in obs-studio/UI/window-basic-main.hpp
@@ -88,38 +156,38 @@ bool encoder_changed(void *, obs_properties_t *props, obs_property_t *, obs_data
 #define SIMPLE_ENCODER_APPLE_HEVC "apple_hevc"
 
 // Hardcoded in obs-studio/UI/window-basic-settings.cpp
-const char *get_simple_output_encoder(const char *encoder)
+inline const char *get_simple_video_encoder(const char *encoder)
 {
-    if (strcmp(encoder, SIMPLE_ENCODER_X264) == 0) {
+    if (!strcmp(encoder, SIMPLE_ENCODER_X264)) {
         return "obs_x264";
-    } else if (strcmp(encoder, SIMPLE_ENCODER_X264_LOWCPU) == 0) {
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_X264_LOWCPU)) {
         return "obs_x264";
-    } else if (strcmp(encoder, SIMPLE_ENCODER_QSV) == 0) {
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_QSV)) {
         return "obs_qsv11_v2";
-    } else if (strcmp(encoder, SIMPLE_ENCODER_QSV_AV1) == 0) {
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_QSV_AV1)) {
         return "obs_qsv11_av1";
-    } else if (strcmp(encoder, SIMPLE_ENCODER_AMD) == 0) {
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD)) {
         return "h264_texture_amf";
-    } else if (strcmp(encoder, SIMPLE_ENCODER_AMD_HEVC) == 0) {
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD_HEVC)) {
         return "h265_texture_amf";
-    } else if (strcmp(encoder, SIMPLE_ENCODER_AMD_AV1) == 0) {
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD_AV1)) {
         return "av1_texture_amf";
-    } else if (strcmp(encoder, SIMPLE_ENCODER_NVENC) == 0) {
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC)) {
         return encoder_available("jim_nvenc") ? "jim_nvenc" : "ffmpeg_nvenc";
-    } else if (strcmp(encoder, SIMPLE_ENCODER_NVENC_HEVC) == 0) {
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC_HEVC)) {
         return encoder_available("jim_hevc_nvenc") ? "jim_hevc_nvenc" : "ffmpeg_hevc_nvenc";
-    } else if (strcmp(encoder, SIMPLE_ENCODER_NVENC_AV1) == 0) {
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC_AV1)) {
         return "jim_av1_nvenc";
-    } else if (strcmp(encoder, SIMPLE_ENCODER_APPLE_H264) == 0) {
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_APPLE_H264)) {
         return "com.apple.videotoolbox.videoencoder.ave.avc";
-    } else if (strcmp(encoder, SIMPLE_ENCODER_APPLE_HEVC) == 0) {
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_APPLE_HEVC)) {
         return "com.apple.videotoolbox.videoencoder.ave.hevc";
     }
 
     return "obs_x264";
 }
 
-void apply_defaults(obs_data_t *dest, obs_data_t *src)
+inline void apply_defaults(obs_data_t *dest, obs_data_t *src)
 {
     for (auto item = obs_data_first(src); item; obs_data_item_next(&item)) {
         auto name = obs_data_item_get_name(item);
@@ -136,7 +204,8 @@ void apply_defaults(obs_data_t *dest, obs_data_t *src)
             } else if (numtype == OBS_DATA_NUM_INT) {
                 obs_data_set_default_int(dest, name, obs_data_item_get_int(item));
             }
-        } break;
+            break;
+        }
         case OBS_DATA_BOOLEAN:
             obs_data_set_default_bool(dest, name, obs_data_item_get_bool(item));
             break;
@@ -144,14 +213,14 @@ void apply_defaults(obs_data_t *dest, obs_data_t *src)
             auto value = obs_data_item_get_obj(item);
             obs_data_set_default_obj(dest, name, value);
             obs_data_release(value);
-        } break;
+            break;
+        }
         case OBS_DATA_ARRAY: {
             auto value = obs_data_item_get_array(item);
             obs_data_set_default_array(dest, name, value);
             obs_data_array_release(value);
+            break;
         }
-
-        break;
         case OBS_DATA_NULL:
             break;
         }
@@ -164,13 +233,21 @@ void get_defaults(obs_data_t *defaults)
     auto mode = config_get_string(config, "Output", "Mode");
     bool advanced_out = strcmp(mode, "Advanced") == 0 || strcmp(mode, "advanced");
 
-    const char *encoder_id;
+    const char *video_encoder_id;
+    const char *audio_encoder_id;
+    uint64_t audio_bitrate;
     if (advanced_out) {
-        encoder_id = config_get_string(config, "AdvOut", "Encoder");
+        video_encoder_id = config_get_string(config, "AdvOut", "Encoder");
+        audio_encoder_id = config_get_string(config, "AdvOut", "AudioEncoder");
+        audio_bitrate = config_get_uint(config, "AdvOut", "FFABitrate");
     } else {
-        encoder_id = get_simple_output_encoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
+        video_encoder_id = get_simple_video_encoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
+        audio_encoder_id = get_simple_audio_encoder(config_get_string(config, "SimpleOutput", "StreamAudioEncoder"));
+        audio_bitrate = config_get_uint(config, "SimpleOutput", "ABitrate");
     }
-    obs_data_set_default_string(defaults, "encoder", encoder_id);
+    obs_data_set_default_string(defaults, "audio_encoder", audio_encoder_id);
+    obs_data_set_default_string(defaults, "video_encoder", video_encoder_id);
+    obs_data_set_default_int(defaults, "audio_bitrate", audio_bitrate);
 
     // Load recent.json and apply to defaults
     auto path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
@@ -233,31 +310,53 @@ obs_properties_t *get_properties(void *data)
         props, "custom_audio_source", obs_module_text("CustomAudioSource"), OBS_GROUP_CHECKABLE, audio_group
     );
 
-    // "Encoder" prop
-    auto encoder_prop = obs_properties_add_list(
-        props, "encoder", obs_module_text("Encoder"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+    // "Audio Encoder" group
+    auto audio_encoder_group = obs_properties_create();
+    auto audio_encoder_list = obs_properties_add_list(
+        audio_encoder_group, "audio_encoder", obs_module_text("AudioEncoder"), OBS_COMBO_TYPE_LIST,
+        OBS_COMBO_FORMAT_STRING
+    );
+    // The bitrate list is empty initially.
+    obs_properties_add_list(
+        audio_encoder_group, "audio_bitrate", obs_module_text("AudioBitrate"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT
     );
 
+    obs_properties_add_group(
+        props, "audio_encoder_group", obs_module_text("AudioEncoder"), OBS_GROUP_NORMAL, audio_encoder_group
+    );
+
+    // "Video Encoder" prop
+    auto video_encoder_list = obs_properties_add_list(
+        props, "video_encoder", obs_module_text("VideoEncoder"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+    );
+
+    // Enum audio and video encoders
     const char *encoder_id = NULL;
     size_t i = 0;
     while (obs_enum_encoder_types(i++, &encoder_id)) {
-        if (obs_get_encoder_type(encoder_id) != OBS_ENCODER_VIDEO) {
-            continue;
-        }
-
         auto caps = obs_get_encoder_caps(encoder_id);
-        if ((caps & (OBS_ENCODER_CAP_DEPRECATED | OBS_ENCODER_CAP_INTERNAL)) != 0) {
+        if (caps & (OBS_ENCODER_CAP_DEPRECATED | OBS_ENCODER_CAP_INTERNAL)) {
+            // Ignore deprecated and internal
             continue;
         }
 
         auto name = obs_encoder_get_display_name(encoder_id);
-        obs_property_list_add_string(encoder_prop, name, encoder_id);
-    }
-    obs_property_set_modified_callback2(encoder_prop, encoder_changed, data);
 
-    // "Encoder" group (Initially empty)
-    auto encoder_group = obs_properties_create();
-    obs_properties_add_group(props, "encoder_group", obs_module_text("Encoder"), OBS_GROUP_NORMAL, encoder_group);
+        if (obs_get_encoder_type(encoder_id) == OBS_ENCODER_VIDEO) {
+            obs_property_list_add_string(video_encoder_list, name, encoder_id);
+        } else if (obs_get_encoder_type(encoder_id) == OBS_ENCODER_AUDIO) {
+            obs_property_list_add_string(audio_encoder_list, name, encoder_id);
+        }
+    }
+
+    obs_property_set_modified_callback2(audio_encoder_list, audio_encoder_changed, data);
+    obs_property_set_modified_callback2(video_encoder_list, video_encoder_changed, data);
+
+    // "Video Encoder" group (Initially empty)
+    auto video_encoder_group = obs_properties_create();
+    obs_properties_add_group(
+        props, "video_encoder_group", obs_module_text("VideoEncoder"), OBS_GROUP_NORMAL, video_encoder_group
+    );
 
     add_apply_button(props);
 

@@ -1,5 +1,5 @@
 /*
-Source Output Plugin
+Branch Output Plugin
 Copyright (C) 2024 OPENSPHERE Inc. info@opensphere.co.jp
 
 This program is free software; you can redistribute it and/or modify
