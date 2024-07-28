@@ -1,172 +1,84 @@
-# OBS Plugin Template
+# Source Output filter (The OBS Studio Plugin)
 
-## Introduction
+## Features
 
-The plugin template is meant to be used as a starting point for OBS Studio plugin development. It includes:
+**[EN]**
 
-* Boilerplate plugin source code
-* A CMake project file
-* GitHub Actions workflows and repository actions
+Add filters to be sent out in RTMP / SRT etc. for each source.
+Inspired by the [Source Record](https://github.com/exeldro/obs-source-record) plugin, but more focused on streaming.
+More reliable and proper audio handling.
 
-## Set Up
+(*) Recording functionality is currently not available
 
-The plugin project is set up using the included `buildspec.json` file. The following fields should be customized for an actual plugin:
+- Added “Source Output” to source or scene effect filters.
+- One stream per Source Output filter can be sent with dedicated encoding settings.
+- Multiple Source Outputs can be added to a single source or scene (as PC specs allow)
+- Source Output Selectable audio source for each filter (filter audio, any source audio, audio tracks 1-6)
+- Automatically reconnects when disconnected
 
-* `name`: The plugin name
-* `version`: The plugin version
-* `author`: Actual name or nickname of the plugin's author
-* `website`: URL of a website associated with the plugin
-* `email`: Contact email address associated with the plugin
-* `uuids`
-    * `macosPackage`: Unique (**!**) identifier for the macOS plugin package
-    * `macosInstaller`: Unique (**!**) identifier for the macOS plugin installer
-    * `windowsApp`: Unique (**!**) identifier for the Windows plugin installer
 
-These values are read and processed automatically by the CMake build scripts, so no further adjustments in other files are needed.
+**[JP]**
 
-### Platform Configuration
+ソース毎に RTMP / SRT 等で送出するフィルターを追加します。
+[Source Record](https://github.com/exeldro/obs-source-record) プラグインに触発されて開発しましたが、ストリーミングでの使用に重点が置かれています。
+より信頼性があり、適切なオーディオの取り扱いを行います。
 
-Platform-specific settings are set up in the `platformConfig` section of the buildspec file:
+※録画機能は現在のところ非搭載
 
-* `bundleId`: macOS bundle identifier for the plugin. Should be unique and follow reverse domain name notation.
+- ソースまたはシーンのエフェクトフィルターに「Source Output」を追加
+- Source Output フィルター1つにつき1本のストリーム送出が、専用のエンコーディング設定で可能  
+- 1つのソース・シーンに複数の Source Output を追加可能（PCのスペックが許す限り追加可能）
+- Source Output フィルターごとに音声ソースを選択可能（フィルター音声、任意ソース音声、音声トラック1～6）
+- 接続が切れても自動的に再接続
 
-### Set Up Build Dependencies
+## Requirements
 
-Just like OBS Studio itself, plugins need to be built using dependencies available either via the `obs-deps` repository (Windows and macOS) or via a distribution's package system (Linux).
+[OBS Studio](https://obsproject.com/) >= 30.0.0 (Qt6, x64/ARM64/AppleSilicon)
 
-#### Choose An OBS Studio Version
+# Installation
 
-By default the plugin template specifies the most current official OBS Studio version in the `buildspec.json` file, which makes most sense for plugins at the start of development. As far as updating the targeted OBS Studio version is concerned, a few things need to be considered:
+Please download latest install package from [Release]()
 
-* Plugins targeting _older_ versions of OBS Studio should _generally_ also work in newer versions, with the exception of breaking changes to specific APIs which would also be explicitly called out in release notes
-* Plugins targeting the _latest_ version of OBS Studio might not work in older versions because the internal data structures used by `libobs` might not be compatible
-* Users are encouraged to always update to the most recent version of OBS Studio available within a reasonable time after release - plugin authors have to choose for themselves if they'd rather keep up with OBS Studio releases or stay with an older version as their baseline (which might of course preclude the plugin from using functionality introduced in a newer version)
+# User manual
 
-On Linux, the version used for development might be decided by the specific version available via a distribution's package management system, so OBS Studio compatibility for plugins might be determined by those versions instead.
+**[EN]**
 
-#### Windows and macOS
+1. Add "Source Output" as effect filters to any "Source" or "Scene" (NOTE: "Scene" has no audio defaultly)
+2. Input server URL and stream key. The server URL can be RTMP or SRT etc. like OBS's custom stream settings.
+3. Choose audio source. Un-checked custom audio source means use filter audio as source (NOTE: "Scene"
+   must has custom audio source for it's sound)
 
-Windows and macOS dependency downloads are configured in the `buildspec.json` file:
+   "Any Sources" will be captured after filter pipeline before Audio Mixer. Also "Audio track 1 ~ 6" will be captured from Audio Mixer output.  
+   
+   You can choose "No Audio" as well.  
+   
+4. Setup encoder. It's usable that hardware encoder such as NVENC.
+5. Press Apply button and stream will be online.
 
-* `dependencies`:
-    * `obs-studio`: Version of OBS Studio to build plugin with (needed for `libobs` and `obs-frontend-api`)
-    * `prebuilt`: Prebuilt OBS Studio dependencies
-    * `qt6`: Prebuilt version of Qt6 as used by OBS Studio
-* `tools`: Contains additional build tools used by CI
+(*) Some sources (e.g. Local Media source) will stop stream output during inactivated scene. It's not plugin's bug.
 
-The values should be kept in sync with OBS Studio releases and the `buildspec.json` file in use by the main project to ensure that the plugin is developed and built in sync with its target environment.
+**[JP]**
 
-To update a dependency, change the `version` and associated `hashes` entries to match the new version. The used hash algorithm is `sha256`.
+日本語の詳細マニュアルが [こちらのブログ記事]() にあります。
 
-#### Linux
+1. 任意の「ソース」または「シーン」に、エフェクトフィルターとして "Source Output" を追加
+   （注意：「シーン」はデフォルトでオーディオがありません）
+2. サーバーURLとストリームキーを入力。
+   サーバーURLは OBS のカスタム配信設定の様に RTMP や SRT 等を使用できます。
+3. オーディオソースを選択。
+   カスタムオーディオソースからチェックを外した場合、フィルターオーディオを使用します
+   （注意：「シーン」の音声は必ずカスタムオーディオソースを使用しなければなりません）
 
-Linux dependencies need to be resolved using the package management tools appropriate for the local distribution. As an example, building on Ubuntu requires the following packages to be installed:
+   「任意のソース」はフィルターパイプラインの後、オーディオミキサーの前で取り込まれます。
+   「音声トラック1～6」はオーディオミキサーの出力が取り込まれます。
 
-* Build System Dependencies:
-    * `cmake`
-    * `ninja-build`
-    * `pkg-config`
-* Build Dependencies:
-    * `build-essential`
-    * `libobs-dev`
-* Qt6 Dependencies:
-    * `qt6-base-dev`
-    * `libqt6svg6-dev`
-    * `qt6-base-private-dev`
+   「無音」も選択可能です。
+4. エンコーダーを設定。NVENC 等のハードウェアエンコーダーも使用可能です。
+5. 「適用」ボタンをクリックすると、送信が開始されます。
 
-## Build System Configuration
+※いくつかのソース（例：ローカルメディアソース）は、シーンが非アクティブの場合に送出が停止しますが、これはプラグインのバグではありません。
 
-To create a build configuration, `cmake` needs to be installed on the system. The plugin template supports CMake presets using the `CMakePresets.json` file and ships with default presets:
+# Development
 
-* `macos`
-    * Universal architecture (supports Intel-based CPUs as Apple Silicon)
-    * Defaults to Qt version `6`
-    * Defaults to macOS deployment target `11.0`
-* `macos-ci`
-    * Inherits from `macos`
-    * Enables compile warnings as error
-* `windows-x64`
-    * Windows 64-bit architecture
-    * Defaults to Qt version `6`
-    * Defaults to Visual Studio 17 2022
-    * Defaults to Windows SDK version `10.0.18363.657`
-* `windows-ci-x64`
-    * Inherits from `windows-x64`
-    * Enables compile warnings as error
-* `linux-x86_64`
-    * Linux x86_64 architecture
-    * Defaults to Qt version `6`
-    * Defaults to Ninja as build tool
-    * Defaults to `RelWithDebInfo` build configuration
-* `linux-ci-x86_64`
-    * Inherits from `linux-x86_64`
-    * Enables compile warnings as error
-* `linux-aarch64`
-    * Provided as an experimental preview feature
-    * Linux aarch64 (ARM64) architecture
-    * Defaults to Qt version `6`
-    * Defaults to Ninja as build tool
-    * Defaults to `RelWithDebInfo` build configuration
-* `linux-ci-aarch64`
-    * Inherits from `linux-aarch64`
-    * Enables compile warnings as error
+This plugin is developed under [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate)
 
-Presets can be either specified on the command line (`cmake --preset <PRESET>`) or via the associated select field in the CMake Windows GUI. Only presets appropriate for the current build host are available for selection.
-
-Additional build system options are available to developers:
-
-* `ENABLE_CCACHE`: Enables support for compilation speed-ups via ccache (enabled by default on macOS and Linux)
-* `ENABLE_FRONTEND_API`: Adds OBS Frontend API support for interactions with OBS Studio frontend functionality (disabled by default)
-* `ENABLE_QT`: Adds Qt6 support for custom user interface elements (disabled by default)
-* `CODESIGN_IDENTITY`: Name of the Apple Developer certificate that should be used for code signing
-* `CODESIGN_TEAM`: Apple Developer team ID that should be used for code signing
-
-## GitHub Actions & CI
-
-Default GitHub Actions workflows are available for the following repository actions:
-
-* `push`: Run for commits or tags pushed to `master` or `main` branches.
-* `pr-pull`: Run when a Pull Request has been pushed or synchronized.
-* `dispatch`: Run when triggered by the workflow dispatch in GitHub's user interface.
-* `build-project`: Builds the actual project and is triggered by other workflows.
-* `check-format`: Checks CMake and plugin source code formatting and is triggered by other workflows.
-
-The workflows make use of GitHub repository actions (contained in `.github/actions`) and build scripts (contained in `.github/scripts`) which are not needed for local development, but might need to be adjusted if additional/different steps are required to build the plugin.
-
-### Retrieving build artifacts
-
-Successful builds on GitHub Actions will produce build artifacts that can be downloaded for testing. These artifacts are commonly simple archives and will not contain package installers or installation programs.
-
-### Building a Release
-
-To create a release, an appropriately named tag needs to be pushed to the `main`/`master` branch using semantic versioning (e.g., `12.3.4`, `23.4.5-beta2`). A draft release will be created on the associated repository with generated installer packages or installation programs attached as release artifacts.
-
-## Signing and Notarizing on macOS
-
-Plugins released for macOS should be codesigned and notarized with a valid Apple Developer ID for best user experience. To set this up, the private and personal key of a **paid Apple Developer ID** need to be downloaded from the Apple Developer portal:
-
-* On your Apple Developer dashboard, go to "Certificates, IDs & Profiles" and create two signing certificates:
-    * One of the "Developer ID Application" type. It will be used to sign the plugin's binaries
-    * One of the "Developer ID Installer" type. It will be used to sign the plugin's installer
-
-The developer certificate will usually carry a name similar in form to
-
-`Developer ID Application: <FIRSTNAME> <LASTNAME> (<LETTERS_AND_NUMBERS>)`
-
-This entire string should be specified as `CODESIGN_IDENTITY`, the `LETTERS_AND_NUMBERS` part as `CODESIGN_TEAM` to CMake to set up codesigning properly.
-
-### GitHub Actions Set Up
-
-To use code signing on GitHub Actions, the certificate and associated information need to be set up as _repository secrets_ in the GitHub repository's settings.
-
-* First, the locally stored developer certificate needs to be exported from the macOS keychain:
-    * Using the Keychain app on macOS, export these your certificates (Application and Installer) public _and_ private keys into a single .p12 file **protected with a strong password**
-    * Encode the .p12 file into its base64 representation by running `base64 <NAME_OF_YOUR_P12_FILE>`
-* Next, the certificate data and the password used to export it need to be set up as repository secrets:
-    * `MACOS_SIGNING_APPLICATION_IDENTITY`: Name of the "Developer ID Application" signing certificate
-    * `MACOS_SIGNING_INSTALLER_IDENTITY`: Name of "Developer ID Installer" signing certificate
-    * `MACOS_SIGNING_CERT`: The base64 encoded `.p12` file
-    * `MACOS_SIGNING_CERT_PASSWORD`: Password used to generate the .p12 certificate
-* To also enable notarization on GitHub Action runners, the following repository secrets are required:
-    * `MACOS_NOTARIZATION_USERNAME`: Your Apple Developer account's _Apple ID_
-    * `MACOS_NOTARIZATION_PASSWORD`: Your Apple Developer account's _generated app password_
