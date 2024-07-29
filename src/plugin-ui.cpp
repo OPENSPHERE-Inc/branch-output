@@ -82,14 +82,14 @@ inline void add_apply_button(filter_t *filter, obs_properties_t *props)
 {
     obs_properties_add_button2(
         props, "apply", obs_module_text("Apply"),
-        [](obs_properties_t *, obs_property_t *, void *data) {
-            auto filter = (filter_t *)data;
+        [](obs_properties_t *, obs_property_t *, void *param) {
+            auto param_filter = (filter_t *)param;
 
             // Force filter activation
-            filter->filter_active = true;
+            param_filter->filter_active = true;
 
-            auto settings = obs_source_get_settings(filter->source);
-            update(filter, settings);
+            auto settings = obs_source_get_settings(param_filter->source);
+            update(param_filter, settings);
             obs_data_release(settings);
 
             return true;
