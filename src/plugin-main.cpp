@@ -609,13 +609,17 @@ inline bool source_available(filter_t *filter, obs_source_t *source)
     }
     filter->last_available_at = now;
 
+    auto found = !!obs_scene_from_source(source);
+    if (found) {
+        return true;
+    }
+
     obs_frontend_source_list scenes = {0};
     obs_frontend_get_scenes(&scenes);
-    auto found = false;
 
     for (size_t i = 0; i < scenes.sources.num && !found; i++) {
         obs_scene_t *scene = obs_scene_from_source(scenes.sources.array[i]);
-        found = !!obs_scene_find_source(scene, obs_source_get_name(source));
+        found = !!obs_scene_find_source_recursive(scene, obs_source_get_name(source));
     }
 
     obs_frontend_source_list_free(&scenes);
