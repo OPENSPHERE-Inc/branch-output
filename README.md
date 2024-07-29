@@ -1,6 +1,6 @@
 # Branch Output filter (The OBS Studio Plugin)
 
-[<img src="./screenshot.jpg" width="300" />](./screenshot.jpg)
+[<img src="./screenshot.jpg" />](./screenshot.jpg)
 
 ## Features
 
@@ -21,13 +21,13 @@ More reliable and proper audio handling.
 
 **[JP]**
 
-この OBS Studio プラグインでは、ソース毎に RTMP / SRT 等で送出するエフェクトフィルターを追加します。
+この OBS Studio プラグインでは、ソース毎に RTMP / SRT 等で送出するエフェクトフィルタを追加します。
 [Source Record](https://github.com/exeldro/obs-source-record) プラグインに触発されて開発しましたが、ストリーミングでの使用に重点が置かれています。
 より信頼性があり、適切なオーディオの取り扱いを行います。
 
 ※録画機能は現在のところ非搭載
 
-- ソースまたはシーンのエフェクトフィルターに「Branch Output」を追加
+- ソースまたはシーンのエフェクトフィルタに「Branch Output」を追加
 - フィルター1つにつき1本のストリーム送出が、専用のエンコーディング設定で可能
 - 1つのソース・シーンに複数の Branch Output を追加可能（PCのスペックが許す限り追加可能）
 - Branch Output フィルターごとに音声ソースを選択可能（フィルター音声、任意ソース音声、音声トラック1～6）
@@ -62,7 +62,9 @@ Please download latest install package from [Release](https://github.com/OPENSPH
 
 **[JP]**
 
-1. 任意の「ソース」または「シーン」に、エフェクトフィルターとして "Branch Output" を追加
+[こちらのブログ記事](https://blog.opensphere.co.jp/posts/branchoutput001) に日本語でより詳しい使い方を掲載していますので参照ください。
+
+1. 任意の「ソース」または「シーン」に、エフェクトフィルタとして "Branch Output" を追加
    （注意：「シーン」はデフォルトでオーディオがありません）
 2. サーバーURLとストリームキーを入力。
    サーバーURLは OBS のカスタム配信設定の様に RTMP や SRT 等を使用できます。
