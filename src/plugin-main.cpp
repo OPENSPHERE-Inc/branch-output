@@ -601,6 +601,28 @@ inline bool connect_attempting_timed_out(filter_t *filter)
            os_gettime_ns() - filter->connect_attempting_at > CONNECT_ATTEMPTING_TIMEOUT_NS;
 }
 
+inline bool source_available(filter_t *filter, obs_source_t *source)
+{
+    auto now = os_gettime_ns();
+    if (now - filter->last_available_at < AVAILAVILITY_CHECK_INTERVAL_NS) {
+        return true;
+    }
+    filter->last_available_at = now;
+
+    obs_frontend_source_list scenes = {0};
+    obs_frontend_get_scenes(&scenes);
+    auto found = false;
+
+    for (size_t i = 0; i < scenes.sources.num && !found; i++) {
+        obs_scene_t *scene = obs_scene_from_source(scenes.sources.array[i]);
+        found = !!obs_scene_find_source(scene, obs_source_get_name(source));
+    }
+
+    obs_frontend_source_list_free(&scenes);
+
+    return found;
+}
+
 // NOTE: Becareful this function is called so offen.
 void video_tick(void *data, float)
 {
@@ -646,8 +668,8 @@ void video_tick(void *data, float)
                     uint32_t height = obs_source_get_height(parent);
                     height += (height & 1);
 
-                    if (!width || !height) {
-                        // Stop output when source resolution is zero
+                    if (!width || !height || !source_available(filter, parent)) {
+                        // Stop output when source resolution is zero or source had been removed
                         stop_output(filter);
                         return;
                     }

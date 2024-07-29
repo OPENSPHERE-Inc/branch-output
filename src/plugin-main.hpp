@@ -29,6 +29,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define OUTPUT_MAX_RETRIES 7
 #define OUTPUT_RETRY_DELAY_SECS 1
 #define CONNECT_ATTEMPTING_TIMEOUT_NS 15000000000ULL
+#define AVAILAVILITY_CHECK_INTERVAL_NS 1000000000ULL
 
 enum AudioSourceType {
     AUDIO_SOURCE_TYPE_SILENCE,
@@ -42,6 +43,7 @@ struct filter_t {
     bool output_active;
     uint32_t stored_settings_rev;
     uint32_t active_settings_rev;
+    uint64_t last_available_at;
 
     // Filter source
     obs_source_t *source;
