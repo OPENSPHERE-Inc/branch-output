@@ -153,9 +153,17 @@ bool audio_input_callback(
     {
         if (filter->audio_buffer_frames < AUDIO_OUTPUT_FRAMES) {
             // Wait until enough frames are receved.
-            obs_log(LOG_DEBUG, "%s: Wait for frames...", obs_source_get_name(filter->source));
+            if (!filter->audio_skip) {
+                obs_log(LOG_DEBUG, "%s: Wait for frames...", obs_source_get_name(filter->source));
+            }
+            filter->audio_skip++;
             pthread_mutex_unlock(&filter->audio_buffer_mutex);
-            return false;
+
+            // DO NOT stall audio output pipeline
+            *out_ts = start_ts_in;
+            return true;
+        } else {
+            filter->audio_skip = 0;
         }
 
         size_t max_frames = AUDIO_OUTPUT_FRAMES;
@@ -276,6 +284,7 @@ void stop_output(filter_t *filter)
     }
 
     filter->audio_buffer_frames = 0;
+    filter->audio_skip = 0;
     deque_free(&filter->audio_buffer);
 
     if (filter->output_active) {
@@ -377,6 +386,8 @@ void start_output(filter_t *filter, obs_data_t *settings)
     filter->audio_mix_idx = 0;
     filter->audio_channels = (speaker_layout)audio_output_get_channels(obs_get_audio());
     filter->samples_per_sec = audio_output_get_sample_rate(obs_get_audio());
+    filter->audio_buffer_frames = 0;
+    filter->audio_skip = 0;
 
     if (obs_data_get_bool(settings, "custom_audio_source")) {
         // Apply custom audio source
@@ -514,14 +525,39 @@ void update(void *data, obs_data_t *settings)
     obs_log(LOG_INFO, "%s: Filter updated", obs_source_get_name(filter->source));
 }
 
+inline void load_recently(obs_data_t *settings)
+{
+    obs_log(LOG_DEBUG, "Recently settings loading");
+    auto path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
+    auto recently_settings = obs_data_create_from_json_file(path);
+    bfree(path);
+
+    if (recently_settings) {
+        obs_data_erase(recently_settings, "server");
+        obs_data_erase(recently_settings, "key");
+        obs_data_erase(recently_settings, "custom_audio_source");
+        obs_data_erase(recently_settings, "audio_source");
+        obs_data_apply(settings, recently_settings);
+    }
+
+    obs_data_release(recently_settings);
+    obs_log(LOG_INFO, "Recently settings loaded");
+}
+
 void *create(obs_data_t *settings, obs_source_t *source)
 {
     obs_log(LOG_DEBUG, "%s: Filter creating", obs_source_get_name(source));
+    obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
 
     auto filter = (filter_t *)bzalloc(sizeof(filter_t));
     pthread_mutex_init(&filter->audio_buffer_mutex, NULL);
 
     filter->source = source;
+
+    if (!strcmp(obs_data_get_last_json(settings), "{}")) {
+        // Maybe initial creation
+        load_recently(settings);
+    }
 
     // Fiter activate immediately when "server" is exists.
     auto server = obs_data_get_string(settings, "server");

@@ -71,6 +71,7 @@ struct filter_t {
     size_t audio_mix_idx;
     speaker_layout audio_channels;
     uint32_t samples_per_sec;
+    uint64_t audio_skip;
 
     // Stream context
     uint64_t connect_attempting_at;

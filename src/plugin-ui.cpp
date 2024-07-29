@@ -20,7 +20,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <plugin-support.h>
 #include <obs-frontend-api.h>
 #include <util/config-file.h>
+#include <util/dstr.h>
 #include "plugin-main.hpp"
+#include "plugin-support.h"
 
 inline bool encoder_available(const char *encoder)
 {
@@ -36,9 +38,49 @@ inline bool encoder_available(const char *encoder)
     return false;
 }
 
-inline void add_apply_button(obs_properties_t *props)
+inline void apply_defaults(obs_data_t *dest, obs_data_t *src)
 {
-    obs_properties_add_button(
+    for (auto item = obs_data_first(src); item; obs_data_item_next(&item)) {
+        auto name = obs_data_item_get_name(item);
+        auto type = obs_data_item_gettype(item);
+
+        switch (type) {
+        case OBS_DATA_STRING:
+            obs_data_set_default_string(dest, name, obs_data_item_get_string(item));
+            break;
+        case OBS_DATA_NUMBER: {
+            auto numtype = obs_data_item_numtype(item);
+            if (numtype == OBS_DATA_NUM_DOUBLE) {
+                obs_data_set_default_double(dest, name, obs_data_item_get_double(item));
+            } else if (numtype == OBS_DATA_NUM_INT) {
+                obs_data_set_default_int(dest, name, obs_data_item_get_int(item));
+            }
+            break;
+        }
+        case OBS_DATA_BOOLEAN:
+            obs_data_set_default_bool(dest, name, obs_data_item_get_bool(item));
+            break;
+        case OBS_DATA_OBJECT: {
+            auto value = obs_data_item_get_obj(item);
+            obs_data_set_default_obj(dest, name, value);
+            obs_data_release(value);
+            break;
+        }
+        case OBS_DATA_ARRAY: {
+            auto value = obs_data_item_get_array(item);
+            obs_data_set_default_array(dest, name, value);
+            obs_data_array_release(value);
+            break;
+        }
+        case OBS_DATA_NULL:
+            break;
+        }
+    }
+}
+
+inline void add_apply_button(filter_t *filter, obs_properties_t *props)
+{
+    obs_properties_add_button2(
         props, "apply", obs_module_text("Apply"),
         [](obs_properties_t *, obs_property_t *, void *data) {
             auto filter = (filter_t *)data;
@@ -49,14 +91,31 @@ inline void add_apply_button(obs_properties_t *props)
             auto settings = obs_source_get_settings(filter->source);
             update(filter, settings);
             obs_data_release(settings);
+
             return true;
-        }
+        },
+        filter
     );
+}
+
+inline void add_plugin_info(obs_properties_t *props)
+{
+    char plugin_info_format[] = "<a href=\"https://github.com/OPENSPHERE-Inc/branch-output\">Branch Output</a> (v%s) "
+                                "developed by <a href=\"https://opensphere.co.jp\">OPENSPHERE Inc.</a>";
+
+    size_t buffer_size = sizeof(plugin_info_format) + strlen(PLUGIN_VERSION);
+    auto plugin_info_text = (char *)bzalloc(buffer_size);
+    snprintf(plugin_info_text, buffer_size, plugin_info_format, PLUGIN_VERSION);
+
+    obs_properties_add_text(props, "plugin_info", plugin_info_text, OBS_TEXT_INFO);
+
+    bfree(plugin_info_text);
 }
 
 bool audio_encoder_changed(void *param, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
 {
     auto filter = (filter_t *)param;
+    obs_log(LOG_DEBUG, "%s: Audio encoder chainging.", obs_source_get_name(filter->source));
 
     const auto encoder_id = obs_data_get_string(settings, "audio_encoder");
     const auto encoder_props = obs_get_encoder_properties(encoder_id);
@@ -69,6 +128,7 @@ bool audio_encoder_changed(void *param, obs_properties_t *props, obs_property_t 
     obs_property_list_clear(audio_bitrate_prop);
 
     const auto type = obs_property_get_type(encoder_bitrate_prop);
+    auto result = true;
     switch (type) {
     case OBS_PROPERTY_INT: {
         const auto max_value = obs_property_int_max(encoder_bitrate_prop);
@@ -80,7 +140,7 @@ bool audio_encoder_changed(void *param, obs_properties_t *props, obs_property_t 
             obs_property_list_add_int(audio_bitrate_prop, bitrateTitle, i);
         }
 
-        return true;
+        break;
     }
 
     case OBS_PROPERTY_LIST: {
@@ -90,7 +150,8 @@ bool audio_encoder_changed(void *param, obs_properties_t *props, obs_property_t 
                 LOG_ERROR, "%s: Invalid bitrate property given by encoder: %s", obs_source_get_name(filter->source),
                 encoder_id
             );
-            return false;
+            result = false;
+            break;
         }
 
         const auto count = obs_property_list_item_count(encoder_bitrate_prop);
@@ -103,18 +164,25 @@ bool audio_encoder_changed(void *param, obs_properties_t *props, obs_property_t 
             snprintf(bitrateTitle, sizeof(bitrateTitle), "%lld", bitrate);
             obs_property_list_add_int(audio_bitrate_prop, bitrateTitle, bitrate);
         }
-        return true;
+        break;
     }
 
     default:
-        return true;
+        break;
     }
+
+    obs_log(LOG_INFO, "%s: Audio encoder changed.", obs_source_get_name(filter->source));
+    return result;
 }
 
-bool video_encoder_changed(void *, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
+bool video_encoder_changed(void *param, obs_properties_t *props, obs_property_t *, obs_data_t *settings)
 {
+    auto filter = (filter_t *)param;
+    obs_log(LOG_DEBUG, "%s: Video encoder chainging.", obs_source_get_name(filter->source));
+
     obs_properties_remove_by_name(props, "video_encoder_group");
     obs_properties_remove_by_name(props, "apply");
+    obs_properties_remove_by_name(props, "plugin_info");
 
     auto encoder_id = obs_data_get_string(settings, "video_encoder");
 
@@ -125,8 +193,15 @@ bool video_encoder_changed(void *, obs_properties_t *props, obs_property_t *, ob
         );
     }
 
-    add_apply_button(props);
+    add_apply_button(filter, props);
+    add_plugin_info(props);
 
+    // Apply encoder's defaults
+    auto encoder_defaults = obs_encoder_defaults(encoder_id);
+    apply_defaults(settings, encoder_defaults);
+    obs_data_release(encoder_defaults);
+
+    obs_log(LOG_INFO, "%s: Video encoder changed.", obs_source_get_name(filter->source));
     return true;
 }
 
@@ -186,48 +261,10 @@ inline const char *get_simple_video_encoder(const char *encoder)
     return "obs_x264";
 }
 
-inline void apply_defaults(obs_data_t *dest, obs_data_t *src)
-{
-    for (auto item = obs_data_first(src); item; obs_data_item_next(&item)) {
-        auto name = obs_data_item_get_name(item);
-        auto type = obs_data_item_gettype(item);
-
-        switch (type) {
-        case OBS_DATA_STRING:
-            obs_data_set_default_string(dest, name, obs_data_item_get_string(item));
-            break;
-        case OBS_DATA_NUMBER: {
-            auto numtype = obs_data_item_numtype(item);
-            if (numtype == OBS_DATA_NUM_DOUBLE) {
-                obs_data_set_default_double(dest, name, obs_data_item_get_double(item));
-            } else if (numtype == OBS_DATA_NUM_INT) {
-                obs_data_set_default_int(dest, name, obs_data_item_get_int(item));
-            }
-            break;
-        }
-        case OBS_DATA_BOOLEAN:
-            obs_data_set_default_bool(dest, name, obs_data_item_get_bool(item));
-            break;
-        case OBS_DATA_OBJECT: {
-            auto value = obs_data_item_get_obj(item);
-            obs_data_set_default_obj(dest, name, value);
-            obs_data_release(value);
-            break;
-        }
-        case OBS_DATA_ARRAY: {
-            auto value = obs_data_item_get_array(item);
-            obs_data_set_default_array(dest, name, value);
-            obs_data_array_release(value);
-            break;
-        }
-        case OBS_DATA_NULL:
-            break;
-        }
-    }
-}
-
 void get_defaults(obs_data_t *defaults)
 {
+    obs_log(LOG_DEBUG, "Default settings applying.");
+
     auto config = obs_frontend_get_profile_config();
     auto mode = config_get_string(config, "Output", "Mode");
     bool advanced_out = strcmp(mode, "Advanced") == 0 || strcmp(mode, "advanced");
@@ -248,24 +285,13 @@ void get_defaults(obs_data_t *defaults)
     obs_data_set_default_string(defaults, "video_encoder", video_encoder_id);
     obs_data_set_default_int(defaults, "audio_bitrate", audio_bitrate);
 
-    // Load recent.json and apply to defaults
-    auto path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
-    auto recently_settings = obs_data_create_from_json_file(path);
-    bfree(path);
-
-    if (recently_settings) {
-        obs_data_erase(recently_settings, "server");
-        obs_data_erase(recently_settings, "key");
-        obs_data_erase(recently_settings, "custom_audio_source");
-        obs_data_erase(recently_settings, "audio_source");
-        apply_defaults(defaults, recently_settings);
-    }
-
-    obs_data_release(recently_settings);
+    obs_log(LOG_INFO, "Default settings applied.");
 }
 
 obs_properties_t *get_properties(void *data)
 {
+    auto filter = (filter_t *)data;
+
     auto props = obs_properties_create();
     obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
 
@@ -357,7 +383,8 @@ obs_properties_t *get_properties(void *data)
         props, "video_encoder_group", obs_module_text("VideoEncoder"), OBS_GROUP_NORMAL, video_encoder_group
     );
 
-    add_apply_button(props);
+    add_apply_button(filter, props);
+    add_plugin_info(props);
 
     return props;
 }
