@@ -90,3 +90,9 @@ struct audio_buffer_chunk_header_t {
 void update(void *data, obs_data_t *settings);
 void get_defaults(obs_data_t *defaults);
 obs_properties_t *get_properties(void *data);
+void audio_capture_callback(void *param, obs_source_t *, const audio_data *audio_data, bool muted);
+void master_audio_callback(void *param, size_t, audio_data *audio_data);
+obs_audio_data *audio_filter_callback(void *param, obs_audio_data *audio_data);
+bool audio_input_callback(
+    void *param, uint64_t start_ts_in, uint64_t, uint64_t *out_ts, uint32_t mixers, audio_output_data *mixes
+);
