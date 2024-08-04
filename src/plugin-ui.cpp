@@ -21,6 +21,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-frontend-api.h>
 #include <util/config-file.h>
 #include <util/dstr.h>
+#include <QMainWindow>
+#include <QDockWidget>
 #include "plugin-main.hpp"
 #include "plugin-support.h"
 
@@ -180,21 +182,18 @@ bool video_encoder_changed(void *param, obs_properties_t *props, obs_property_t 
     auto filter = (filter_t *)param;
     obs_log(LOG_DEBUG, "%s: Video encoder chainging.", obs_source_get_name(filter->source));
 
-    obs_properties_remove_by_name(props, "video_encoder_group");
-    obs_properties_remove_by_name(props, "apply");
-    obs_properties_remove_by_name(props, "plugin_info");
-
+    auto video_encoder_group = obs_property_group_content(obs_properties_get(props, "video_encoder_group"));
     auto encoder_id = obs_data_get_string(settings, "video_encoder");
+
+    obs_properties_remove_by_name(video_encoder_group, "video_encoder_settings_group");
 
     auto encoder_props = obs_get_encoder_properties(encoder_id);
     if (encoder_props) {
         obs_properties_add_group(
-            props, "video_encoder_group", obs_encoder_get_display_name(encoder_id), OBS_GROUP_NORMAL, encoder_props
+            video_encoder_group, "video_encoder_settings_group", obs_encoder_get_display_name(encoder_id),
+            OBS_GROUP_NORMAL, encoder_props
         );
     }
-
-    add_apply_button(filter, props);
-    add_plugin_info(props);
 
     // Apply encoder's defaults
     auto encoder_defaults = obs_encoder_defaults(encoder_id);
@@ -350,9 +349,13 @@ obs_properties_t *get_properties(void *data)
         props, "audio_encoder_group", obs_module_text("AudioEncoder"), OBS_GROUP_NORMAL, audio_encoder_group
     );
 
+    // "Video Encoder" group
+    auto video_encoder_group = obs_properties_create();
+
     // "Video Encoder" prop
     auto video_encoder_list = obs_properties_add_list(
-        props, "video_encoder", obs_module_text("VideoEncoder"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+        video_encoder_group, "video_encoder", obs_module_text("VideoEncoder"), OBS_COMBO_TYPE_LIST,
+        OBS_COMBO_FORMAT_STRING
     );
 
     // Enum audio and video encoders
@@ -377,8 +380,13 @@ obs_properties_t *get_properties(void *data)
     obs_property_set_modified_callback2(audio_encoder_list, audio_encoder_changed, data);
     obs_property_set_modified_callback2(video_encoder_list, video_encoder_changed, data);
 
-    // "Video Encoder" group (Initially empty)
-    auto video_encoder_group = obs_properties_create();
+    // "Video Encoder Settings" group (Initially empty)
+    auto video_encoder_settings_group = obs_properties_create();
+    obs_properties_add_group(
+        video_encoder_group, "video_encoder_settings_group", obs_module_text("VideoEncoderSettings"), OBS_GROUP_NORMAL,
+        video_encoder_settings_group
+    );
+
     obs_properties_add_group(
         props, "video_encoder_group", obs_module_text("VideoEncoder"), OBS_GROUP_NORMAL, video_encoder_group
     );
@@ -387,4 +395,11 @@ obs_properties_t *get_properties(void *data)
     add_plugin_info(props);
 
     return props;
+}
+
+void create_dock()
+{
+	auto myWidget = new QWidget();
+
+	obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("OutputStatus"), myWidget);
 }

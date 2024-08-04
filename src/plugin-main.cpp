@@ -540,7 +540,7 @@ obs_source_info create_filter_info()
 
 obs_source_info filter_info;
 
-bool obs_module_load(void)
+bool obs_module_load()
 {
     filter_info = create_filter_info();
     obs_register_source(&filter_info);
@@ -549,7 +549,12 @@ bool obs_module_load(void)
     return true;
 }
 
-void obs_module_unload(void)
+void obs_module_post_load()
+{
+    create_dock();
+}
+
+void obs_module_unload()
 {
     obs_log(LOG_INFO, "Plugin unloaded");
 }

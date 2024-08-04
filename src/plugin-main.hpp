@@ -96,3 +96,4 @@ obs_audio_data *audio_filter_callback(void *param, obs_audio_data *audio_data);
 bool audio_input_callback(
     void *param, uint64_t start_ts_in, uint64_t, uint64_t *out_ts, uint32_t mixers, audio_output_data *mixes
 );
+void create_dock();
