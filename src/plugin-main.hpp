@@ -23,7 +23,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <util/deque.h>
 #include <util/threading.h>
+#include "dock/output-status.hpp";
 
+#define FILTER_ID "osi_branch_output"
 #define MAX_AUDIO_BUFFER_FRAMES 131071
 #define SETTINGS_JSON_NAME "recently.json"
 #define OUTPUT_MAX_RETRIES 7
@@ -96,4 +98,4 @@ obs_audio_data *audio_filter_callback(void *param, obs_audio_data *audio_data);
 bool audio_input_callback(
     void *param, uint64_t start_ts_in, uint64_t, uint64_t *out_ts, uint32_t mixers, audio_output_data *mixes
 );
-void create_dock();
+BranchOutputStatus* create_dock();

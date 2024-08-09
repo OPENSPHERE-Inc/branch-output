@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include "plugin-main.hpp"
 
+
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
@@ -520,7 +521,7 @@ obs_source_info create_filter_info()
 {
     obs_source_info filter_info = {0};
 
-    filter_info.id = "osi_branch_output";
+    filter_info.id = FILTER_ID;
     filter_info.type = OBS_SOURCE_TYPE_FILTER;
     filter_info.output_flags = OBS_SOURCE_VIDEO;
 
@@ -539,6 +540,7 @@ obs_source_info create_filter_info()
 }
 
 obs_source_info filter_info;
+BranchOutputStatus* status = nullptr;
 
 bool obs_module_load()
 {
@@ -551,7 +553,7 @@ bool obs_module_load()
 
 void obs_module_post_load()
 {
-    create_dock();
+    status = create_dock();
 }
 
 void obs_module_unload()

@@ -17,14 +17,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include <obs-module.h>
-#include <plugin-support.h>
 #include <obs-frontend-api.h>
 #include <util/config-file.h>
 #include <util/dstr.h>
-#include <QMainWindow>
-#include <QDockWidget>
+#include <plugin-support.h>
 #include "plugin-main.hpp"
-#include "plugin-support.h"
+
 
 inline bool encoder_available(const char *encoder)
 {
@@ -397,9 +395,11 @@ obs_properties_t *get_properties(void *data)
     return props;
 }
 
-void create_dock()
+BranchOutputStatus* create_dock()
 {
-	auto myWidget = new QWidget();
+	auto dock = new BranchOutputStatus();
 
-	obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("OutputStatus"), myWidget);
+	obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("OutputStatus"), dock);
+
+    return dock;
 }
