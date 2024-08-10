@@ -19,29 +19,28 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include <obs-module.h>
-#include <QWidget>
+#include <QFrame>
 #include <QPointer>
 #include <QList>
 #include <QTimer>
-#include <QStandardItem>
 
-class QTableView;
+class QTableWidget;
+class QTableWidgetItem;
 class QLabel;
 class QString;
-class QStandardItemModel;
 struct filter_t;
 
-class BranchOutputStatus : public QWidget {
+class BranchOutputStatus : public QFrame {
     Q_OBJECT
 
     struct OutputLabels {
         filter_t *filter;
-        QStandardItem *parentName;
-        QStandardItem *name;
-        QStandardItem *status;
-        QStandardItem *droppedFrames;
-        QStandardItem *megabytesSent;
-        QStandardItem *bitrate;
+        QTableWidgetItem *parentName;
+        QTableWidgetItem *name;
+        QLabel *status;
+        QLabel *droppedFrames;
+        QLabel *megabytesSent;
+        QLabel *bitrate;
 
         uint64_t lastBytesSent = 0;
         uint64_t lastBytesSentTime = 0;
@@ -56,20 +55,19 @@ class BranchOutputStatus : public QWidget {
     };
 
     QTimer timer;
-    QTableView *outputTable = nullptr;
-    QStandardItemModel *outputTableModel = nullptr;
+    QTableWidget *outputTable = nullptr;
     QList<OutputLabels> outputLabels;
 
     void Update();
 
-      public:
+public:
     BranchOutputStatus(QWidget *parent = (QWidget *)nullptr);
     ~BranchOutputStatus();
 
     void AddOutputLabels(QString parentName, filter_t *filter);
     void RemoveOutputLabels(filter_t *filter);
 
-      protected:
+protected:
     virtual void showEvent(QShowEvent *event) override;
     virtual void hideEvent(QHideEvent *event) override;
 };

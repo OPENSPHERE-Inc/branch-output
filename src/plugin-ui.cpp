@@ -395,11 +395,11 @@ obs_properties_t *get_properties(void *data)
     return props;
 }
 
-BranchOutputStatus* create_dock()
+BranchOutputStatus* create_output_status_dock()
 {
 	auto dock = new BranchOutputStatus();
 
-	obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("OutputStatus"), dock);
+	obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("BranchOutputStatus"), dock);
 
     return dock;
 }

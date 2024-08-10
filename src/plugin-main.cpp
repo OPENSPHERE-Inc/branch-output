@@ -29,8 +29,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-BranchOutputStatus* status = nullptr;
-
 void stop_output(filter_t *filter)
 {
     obs_source_t *parent = obs_filter_get_parent(filter->source);
@@ -514,18 +512,21 @@ void video_tick(void *data, float)
     }
 }
 
+
+BranchOutputStatus* status_dock = nullptr;
+
 void filter_add(void* data, obs_source_t *parent)
 {
     // Register to output status dock
     auto filter = (filter_t *)data;
-    status->AddOutputLabels(QTStr(obs_source_get_name(parent)), filter);
+    status_dock->AddOutputLabels(QTStr(obs_source_get_name(parent)), filter);
 }
 
 void filter_remove(void* data, obs_source_t *parent)
 {
     // Unregister from output status dock
     auto filter = (filter_t *)data;
-    status->RemoveOutputLabels(filter);
+    status_dock->RemoveOutputLabels(filter);
 }
 
 const char *get_name(void *)
@@ -570,7 +571,7 @@ bool obs_module_load()
 
 void obs_module_post_load()
 {
-    status = create_dock();
+    status_dock = create_output_status_dock();
 }
 
 void obs_module_unload()

@@ -22,9 +22,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QLabel>
 #include <QTimer>
 #include <QString>
-#include <QTableView>
-#include <QStandardItemModel>
+#include <QTableWidget>
+#include <QTableWidgetItem>
 #include <QHeaderView>
+#include <QPushButton>
 #include <plugin-main.hpp>
 #include "output-status.hpp"
 
@@ -35,36 +36,30 @@ extern "C" {
 extern void obs_log(int log_level, const char *format, ...);
 }
 
-void setThemeID(QWidget *widget, const QString &themeID)
+BranchOutputStatus::BranchOutputStatus(QWidget *parent) : QFrame(parent), timer(this)
 {
-    if (widget->property("themeID").toString() != themeID) {
-        widget->setProperty("themeID", themeID);
+	setMinimumWidth(320);
 
-        /* force style sheet recalculation */
-        QString qss = widget->styleSheet();
-        widget->setStyleSheet("/* */");
-        widget->setStyleSheet(qss);
-    }
-}
-
-BranchOutputStatus::BranchOutputStatus(QWidget *parent) : QWidget(parent), timer(this)
-{
-    outputTable = new QTableView(this);
+	// Setup statistics table
+    outputTable = new QTableWidget(this);
     outputTable->verticalHeader()->hide();
+	outputTable->horizontalHeader()->setSectionsClickable(false);
+	outputTable->horizontalHeader()->setMinimumSectionSize(100);
     outputTable->setGridStyle(Qt::NoPen);
     outputTable->setHorizontalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
     outputTable->setVerticalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
-    outputTableModel = new QStandardItemModel(this);
-    outputTableModel->setColumnCount(6);
-    outputTable->setModel(outputTableModel);
+	outputTable->setSelectionMode(QTableWidget::SelectionMode::NoSelection);
+	outputTable->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+	outputTable->setColumnCount(7);
 
     int col = 0;
-    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Source Name")));
-    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Filter Name")));
-    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Status")));
-    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Drop Frames")));
-    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Sent Data Size")));
-    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Bit Rate")));
+    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("SourceName")));
+    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("FilterName")));
+    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("Status")));
+    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("DropFrames")));
+    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("SentDataSize")));
+    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("BitRate")));
+    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("")));
 
     QObject::connect(&timer, &QTimer::timeout, this, &BranchOutputStatus::Update);
 
@@ -86,41 +81,32 @@ void BranchOutputStatus::AddOutputLabels(QString parentName, filter_t *filter)
     OutputLabels ol;
     ol.filter = filter;
 
-    ol.parentName = new QStandardItem(parentName);
-    ol.parentName->setEditable(false);
-    ol.parentName->setSelectable(false);
-
-    ol.name = new QStandardItem(QTStr(obs_source_get_name(filter->source)));
-    ol.name->setEditable(false);
-    ol.name->setSelectable(false);
-
-    ol.status = new QStandardItem(QTStr("Status.Inactive"));
-    ol.status->setEditable(false);
-    ol.status->setSelectable(false);
-
-    ol.droppedFrames = new QStandardItem(QTStr(""));
-    ol.droppedFrames->setEditable(false);
-    ol.droppedFrames->setSelectable(false);
-
-    ol.megabytesSent = new QStandardItem(QTStr(""));
-    ol.megabytesSent->setEditable(false);
-    ol.megabytesSent->setSelectable(false);
-
-    ol.bitrate = new QStandardItem(QTStr(""));
-    ol.bitrate->setEditable(false);
-    ol.bitrate->setSelectable(false);
+    ol.parentName = new QTableWidgetItem(parentName);
+    ol.name = new QTableWidgetItem(QTStr(obs_source_get_name(filter->source)));
+    ol.status = new QLabel(QTStr("Status.Inactive"));
+    ol.droppedFrames = new QLabel(QTStr(""));
+    ol.megabytesSent = new QLabel(QTStr(""));
+    ol.bitrate = new QLabel(QTStr(""));
 
     int col = 0;
     int row = outputLabels.size();
 
-    outputTableModel->setItem(row, col++, ol.parentName);
-    outputTableModel->setItem(row, col++, ol.name);
-    outputTableModel->setItem(row, col++, ol.status);
-    outputTableModel->setItem(row, col++, ol.droppedFrames);
-    outputTableModel->setItem(row, col++, ol.megabytesSent);
-    outputTableModel->setItem(row, col++, ol.bitrate);
+	outputTable->setRowCount(row + 1);
+    outputTable->setItem(row, col++, ol.parentName);
+    outputTable->setItem(row, col++, ol.name);
+    outputTable->setCellWidget(row, col++, ol.status);
+    outputTable->setCellWidget(row, col++, ol.droppedFrames);
+    outputTable->setCellWidget(row, col++, ol.megabytesSent);
+    outputTable->setCellWidget(row, col++, ol.bitrate);
+    
+	outputLabels.push_back(ol);
 
-    outputLabels.push_back(ol);
+	// Setup reset button
+	auto resetButton = new QPushButton(QTStr("Reset"), this);
+	connect(resetButton, &QPushButton::clicked, [this, row]() { outputLabels[row].Reset(); });
+	resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
+	resetButton->setMinimumHeight(27);
+	outputTable->setCellWidget(row, col, resetButton);
 }
 
 void BranchOutputStatus::RemoveOutputLabels(filter_t *filter)
@@ -128,7 +114,7 @@ void BranchOutputStatus::RemoveOutputLabels(filter_t *filter)
     for (int i = 0; i < outputLabels.size(); i++) {
         if (outputLabels[i].filter == filter) {
             outputLabels.removeAt(i);
-            outputTableModel->removeRow(i);
+            outputTable->removeRow(i);
             break;
         }
     }
@@ -151,6 +137,20 @@ void BranchOutputStatus::hideEvent(QHideEvent *)
     timer.stop();
 }
 
+// Imitate UI/window-basic-stats.cpp
+void setThemeID(QWidget *widget, const QString &themeID)
+{
+    if (widget->property("themeID").toString() != themeID) {
+        widget->setProperty("themeID", themeID);
+
+        /* force style sheet recalculation */
+        QString qss = widget->styleSheet();
+        widget->setStyleSheet("/* */");
+        widget->setStyleSheet(qss);
+    }
+}
+
+// Imitate UI/window-basic-stats.cpp
 void BranchOutputStatus::OutputLabels::Update(bool rec)
 {
     auto output = filter->stream_output;
@@ -195,9 +195,7 @@ void BranchOutputStatus::OutputLabels::Update(bool rec)
     }
 
     status->setText(str);
-    /*
 	setThemeID(status, themeID);
-	*/
 
     long double num = (long double)totalBytes / (1024.0l * 1024.0l);
     const char *unit = "MiB";
@@ -233,19 +231,19 @@ void BranchOutputStatus::OutputLabels::Update(bool rec)
             QString("%1 / %2 (%3%)").arg(QString::number(dropped), QString::number(total), QString::number(num, 'f', 1));
         droppedFrames->setText(str);
 
-        /*
-		if (num > 5.0l)
+
+		if (num > 5.0l) {
 			setThemeID(droppedFrames, "error");
-		else if (num > 1.0l)
+		} else if (num > 1.0l) {
 			setThemeID(droppedFrames, "warning");
-		else
+		} else {
 			setThemeID(droppedFrames, "");
-		*/
+		}
     }
 
     lastBytesSent = bytesSent;
     lastBytesSentTime = curTime;
-}
+} 
 
 void BranchOutputStatus::OutputLabels::Reset()
 {
@@ -256,4 +254,7 @@ void BranchOutputStatus::OutputLabels::Reset()
 
     first_total = obs_output_get_total_frames(output);
     first_dropped = obs_output_get_frames_dropped(output);
+	droppedFrames->setText(QString("0 / 0 (0)"));
+	megabytesSent->setText(QString("0 MiB"));
+	bitrate->setText(QString("0 kb/s"));
 }
