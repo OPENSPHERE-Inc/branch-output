@@ -34,10 +34,7 @@ if(ENABLE_QT)
                AUTORCC ON)
 endif()
 
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE 
-  src/plugin-main.cpp
-  src/plugin-ui.cpp
-  src/plugin-audio.cpp
-  src/dock/output-status.cpp)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.cpp src/plugin-ui.cpp src/plugin-audio.cpp
+                                             src/dock/output-status.cpp)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

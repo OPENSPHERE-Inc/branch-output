@@ -88,8 +88,8 @@ void BranchOutputStatus::AddOutputLabels(QString parentName, filter_t *filter)
     ol.megabytesSent = new QLabel(QTStr(""));
     ol.bitrate = new QLabel(QTStr(""));
 
-    int col = 0;
-    int row = outputLabels.size();
+    auto col = 0;
+    auto row = outputLabels.size();
 
     outputTable->setRowCount(row + 1);
     outputTable->setItem(row, col++, ol.parentName);
@@ -203,7 +203,7 @@ void BranchOutputStatus::OutputLabels::Update(bool rec)
         num /= 1024;
         unit = "GiB";
     }
-    megabytesSent->setText(QString("%1 %2").arg(num, 0, 'f', 1).arg(unit));
+    megabytesSent->setText(QString("%1 %2").arg((double)num, 0, 'f', 1).arg(unit));
 
     num = kbps;
     unit = "kb/s";
@@ -211,7 +211,7 @@ void BranchOutputStatus::OutputLabels::Update(bool rec)
         num /= 1000;
         unit = "Mb/s";
     }
-    bitrate->setText(QString("%1 %2").arg(num, 0, 'f', 0).arg(unit));
+    bitrate->setText(QString("%1 %2").arg((double)num, 0, 'f', 0).arg(unit));
 
     if (!rec) {
         int total = output ? obs_output_get_total_frames(output) : 0;
@@ -228,7 +228,7 @@ void BranchOutputStatus::OutputLabels::Update(bool rec)
         num = total ? (long double)dropped / (long double)total * 100.0l : 0.0l;
 
         str =
-            QString("%1 / %2 (%3%)").arg(QString::number(dropped), QString::number(total), QString::number(num, 'f', 1));
+            QString("%1 / %2 (%3%)").arg(QString::number(dropped), QString::number(total), QString::number((double)num, 'f', 1));
         droppedFrames->setText(str);
 
         if (num > 5.0l) {
