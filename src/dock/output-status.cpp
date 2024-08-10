@@ -38,19 +38,19 @@ extern void obs_log(int log_level, const char *format, ...);
 
 BranchOutputStatus::BranchOutputStatus(QWidget *parent) : QFrame(parent), timer(this)
 {
-	setMinimumWidth(320);
+    setMinimumWidth(320);
 
-	// Setup statistics table
+    // Setup statistics table
     outputTable = new QTableWidget(this);
     outputTable->verticalHeader()->hide();
-	outputTable->horizontalHeader()->setSectionsClickable(false);
-	outputTable->horizontalHeader()->setMinimumSectionSize(100);
+    outputTable->horizontalHeader()->setSectionsClickable(false);
+    outputTable->horizontalHeader()->setMinimumSectionSize(100);
     outputTable->setGridStyle(Qt::NoPen);
     outputTable->setHorizontalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
     outputTable->setVerticalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
-	outputTable->setSelectionMode(QTableWidget::SelectionMode::NoSelection);
-	outputTable->setFocusPolicy(Qt::FocusPolicy::NoFocus);
-	outputTable->setColumnCount(7);
+    outputTable->setSelectionMode(QTableWidget::SelectionMode::NoSelection);
+    outputTable->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+    outputTable->setColumnCount(7);
 
     int col = 0;
     outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("SourceName")));
@@ -91,22 +91,22 @@ void BranchOutputStatus::AddOutputLabels(QString parentName, filter_t *filter)
     int col = 0;
     int row = outputLabels.size();
 
-	outputTable->setRowCount(row + 1);
+    outputTable->setRowCount(row + 1);
     outputTable->setItem(row, col++, ol.parentName);
     outputTable->setItem(row, col++, ol.name);
     outputTable->setCellWidget(row, col++, ol.status);
     outputTable->setCellWidget(row, col++, ol.droppedFrames);
     outputTable->setCellWidget(row, col++, ol.megabytesSent);
     outputTable->setCellWidget(row, col++, ol.bitrate);
-    
-	outputLabels.push_back(ol);
 
-	// Setup reset button
-	auto resetButton = new QPushButton(QTStr("Reset"), this);
-	connect(resetButton, &QPushButton::clicked, [this, row]() { outputLabels[row].Reset(); });
-	resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
-	resetButton->setMinimumHeight(27);
-	outputTable->setCellWidget(row, col, resetButton);
+    outputLabels.push_back(ol);
+
+    // Setup reset button
+    auto resetButton = new QPushButton(QTStr("Reset"), this);
+    connect(resetButton, &QPushButton::clicked, [this, row]() { outputLabels[row].Reset(); });
+    resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
+    resetButton->setMinimumHeight(27);
+    outputTable->setCellWidget(row, col, resetButton);
 }
 
 void BranchOutputStatus::RemoveOutputLabels(filter_t *filter)
@@ -195,7 +195,7 @@ void BranchOutputStatus::OutputLabels::Update(bool rec)
     }
 
     status->setText(str);
-	setThemeID(status, themeID);
+    setThemeID(status, themeID);
 
     long double num = (long double)totalBytes / (1024.0l * 1024.0l);
     const char *unit = "MiB";
@@ -231,19 +231,18 @@ void BranchOutputStatus::OutputLabels::Update(bool rec)
             QString("%1 / %2 (%3%)").arg(QString::number(dropped), QString::number(total), QString::number(num, 'f', 1));
         droppedFrames->setText(str);
 
-
-		if (num > 5.0l) {
-			setThemeID(droppedFrames, "error");
-		} else if (num > 1.0l) {
-			setThemeID(droppedFrames, "warning");
-		} else {
-			setThemeID(droppedFrames, "");
-		}
+        if (num > 5.0l) {
+            setThemeID(droppedFrames, "error");
+        } else if (num > 1.0l) {
+            setThemeID(droppedFrames, "warning");
+        } else {
+            setThemeID(droppedFrames, "");
+        }
     }
 
     lastBytesSent = bytesSent;
     lastBytesSentTime = curTime;
-} 
+}
 
 void BranchOutputStatus::OutputLabels::Reset()
 {
@@ -254,7 +253,7 @@ void BranchOutputStatus::OutputLabels::Reset()
 
     first_total = obs_output_get_total_frames(output);
     first_dropped = obs_output_get_frames_dropped(output);
-	droppedFrames->setText(QString("0 / 0 (0)"));
-	megabytesSent->setText(QString("0 MiB"));
-	bitrate->setText(QString("0 kb/s"));
+    droppedFrames->setText(QString("0 / 0 (0)"));
+    megabytesSent->setText(QString("0 MiB"));
+    bitrate->setText(QString("0 kb/s"));
 }

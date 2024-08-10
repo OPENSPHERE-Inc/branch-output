@@ -20,7 +20,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <plugin-support.h>
 #include "plugin-main.hpp"
 
-
 inline void push_audio_to_buffer(void *param, obs_audio_data *audio_data)
 {
     auto filter = (filter_t *)param;

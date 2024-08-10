@@ -23,7 +23,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <plugin-support.h>
 #include "plugin-main.hpp"
 
-
 inline bool encoder_available(const char *encoder)
 {
     const char *val;
@@ -395,11 +394,11 @@ obs_properties_t *get_properties(void *data)
     return props;
 }
 
-BranchOutputStatus* create_output_status_dock()
+BranchOutputStatus *create_output_status_dock()
 {
-	auto dock = new BranchOutputStatus();
+    auto dock = new BranchOutputStatus();
 
-	obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("BranchOutputStatus"), dock);
+    obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("BranchOutputStatus"), dock);
 
     return dock;
 }
