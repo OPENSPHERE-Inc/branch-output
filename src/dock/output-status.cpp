@@ -227,8 +227,8 @@ void BranchOutputStatus::OutputLabels::Update(bool rec)
 
         num = total ? (long double)dropped / (long double)total * 100.0l : 0.0l;
 
-        str =
-            QString("%1 / %2 (%3%)").arg(QString::number(dropped), QString::number(total), QString::number((double)num, 'f', 1));
+        str = QString("%1 / %2 (%3%)")
+                  .arg(QString::number(dropped), QString::number(total), QString::number((double)num, 'f', 1));
         droppedFrames->setText(str);
 
         if (num > 5.0l) {
