@@ -20,58 +20,61 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs-module.h>
 #include <QWidget>
-#include <QList>
-#include <QString>
 #include <QPointer>
-#include <QLabel>
+#include <QList>
 #include <QTimer>
+#include <QStandardItem>
 
-
-class QGridLayout;
+class QTableView;
+class QLabel;
+class QString;
+class QStandardItemModel;
+struct filter_t;
 
 class BranchOutputStatus : public QWidget {
     Q_OBJECT
 
-	struct OutputLabels {
-		obs_output_t* output;
-		QPointer<QLabel> name;
-		QPointer<QLabel> status;
-		QPointer<QLabel> droppedFrames;
-		QPointer<QLabel> megabytesSent;
-		QPointer<QLabel> bitrate;
+    struct OutputLabels {
+        filter_t *filter;
+        QStandardItem *parentName;
+        QStandardItem *name;
+        QStandardItem *status;
+        QStandardItem *droppedFrames;
+        QStandardItem *megabytesSent;
+        QStandardItem *bitrate;
 
-		uint64_t lastBytesSent = 0;
-		uint64_t lastBytesSentTime = 0;
+        uint64_t lastBytesSent = 0;
+        uint64_t lastBytesSentTime = 0;
 
-		int first_total = 0;
-		int first_dropped = 0;
+        int first_total = 0;
+        int first_dropped = 0;
 
-		void Update(bool rec);
-		void Reset();
+        void Update(bool rec);
+        void Reset();
 
-		long double kbps = 0.0l;
-	};
+        long double kbps = 0.0l;
+    };
 
-	QTimer timer;
-    QGridLayout *outputLayout = nullptr;
+    QTimer timer;
+    QTableView *outputTable = nullptr;
+    QStandardItemModel *outputTableModel = nullptr;
     QList<OutputLabels> outputLabels;
 
-	void Update();
+    void Update();
 
-public:
-    BranchOutputStatus(QWidget *parent = (QWidget*)nullptr);
+      public:
+    BranchOutputStatus(QWidget *parent = (QWidget *)nullptr);
     ~BranchOutputStatus();
 
-    void AddOutputLabels(QString name, obs_output_t* output);
-	void RemoveOutputLabels(obs_output_t* output);
+    void AddOutputLabels(QString parentName, filter_t *filter);
+    void RemoveOutputLabels(filter_t *filter);
 
-protected:
-	virtual void showEvent(QShowEvent *event) override;
-	virtual void hideEvent(QHideEvent *event) override;
+      protected:
+    virtual void showEvent(QShowEvent *event) override;
+    virtual void hideEvent(QHideEvent *event) override;
 };
-
 
 inline QString QTStr(const char *lookupVal)
 {
-	return QString::fromUtf8(obs_module_text(lookupVal));
+    return QString::fromUtf8(obs_module_text(lookupVal));
 }

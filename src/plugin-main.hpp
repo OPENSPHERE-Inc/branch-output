@@ -23,7 +23,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <util/deque.h>
 #include <util/threading.h>
-#include "dock/output-status.hpp";
+#include "dock/output-status.hpp"
 
 #define FILTER_ID "osi_branch_output"
 #define MAX_AUDIO_BUFFER_FRAMES 131071

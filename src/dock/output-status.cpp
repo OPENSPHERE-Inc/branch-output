@@ -20,6 +20,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include <QGridLayout>
 #include <QLabel>
+#include <QTimer>
+#include <QString>
+#include <QTableView>
+#include <QStandardItemModel>
+#include <QHeaderView>
 #include <plugin-main.hpp>
 #include "output-status.hpp"
 
@@ -27,24 +32,39 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 // FIXME: Duplicated definition error with util/base.h
 extern "C" {
-    extern void obs_log(int log_level, const char *format, ...);
+extern void obs_log(int log_level, const char *format, ...);
 }
 
 void setThemeID(QWidget *widget, const QString &themeID)
 {
-	if (widget->property("themeID").toString() != themeID) {
-		widget->setProperty("themeID", themeID);
+    if (widget->property("themeID").toString() != themeID) {
+        widget->setProperty("themeID", themeID);
 
-		/* force style sheet recalculation */
-		QString qss = widget->styleSheet();
-		widget->setStyleSheet("/* */");
-		widget->setStyleSheet(qss);
-	}
+        /* force style sheet recalculation */
+        QString qss = widget->styleSheet();
+        widget->setStyleSheet("/* */");
+        widget->setStyleSheet(qss);
+    }
 }
 
 BranchOutputStatus::BranchOutputStatus(QWidget *parent) : QWidget(parent), timer(this)
 {
-    outputLayout = new QGridLayout();
+    outputTable = new QTableView(this);
+    outputTable->verticalHeader()->hide();
+    outputTable->setGridStyle(Qt::NoPen);
+    outputTable->setHorizontalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
+    outputTable->setVerticalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
+    outputTableModel = new QStandardItemModel(this);
+    outputTableModel->setColumnCount(6);
+    outputTable->setModel(outputTableModel);
+
+    int col = 0;
+    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Source Name")));
+    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Filter Name")));
+    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Status")));
+    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Drop Frames")));
+    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Sent Data Size")));
+    outputTableModel->setHorizontalHeaderItem(col++, new QStandardItem(QTStr("Bit Rate")));
 
     QObject::connect(&timer, &QTimer::timeout, this, &BranchOutputStatus::Update);
 
@@ -53,40 +73,62 @@ BranchOutputStatus::BranchOutputStatus(QWidget *parent) : QWidget(parent), timer
         timer.start();
     }
 
-    this->setLayout(outputLayout);
+    QVBoxLayout *outputContainerLayout = new QVBoxLayout();
+    outputContainerLayout->addWidget(outputTable);
+
+    this->setLayout(outputContainerLayout);
 }
 
-BranchOutputStatus::~BranchOutputStatus()
+BranchOutputStatus::~BranchOutputStatus() {}
+
+void BranchOutputStatus::AddOutputLabels(QString parentName, filter_t *filter)
 {
+    OutputLabels ol;
+    ol.filter = filter;
 
+    ol.parentName = new QStandardItem(parentName);
+    ol.parentName->setEditable(false);
+    ol.parentName->setSelectable(false);
+
+    ol.name = new QStandardItem(QTStr(obs_source_get_name(filter->source)));
+    ol.name->setEditable(false);
+    ol.name->setSelectable(false);
+
+    ol.status = new QStandardItem(QTStr("Status.Inactive"));
+    ol.status->setEditable(false);
+    ol.status->setSelectable(false);
+
+    ol.droppedFrames = new QStandardItem(QTStr(""));
+    ol.droppedFrames->setEditable(false);
+    ol.droppedFrames->setSelectable(false);
+
+    ol.megabytesSent = new QStandardItem(QTStr(""));
+    ol.megabytesSent->setEditable(false);
+    ol.megabytesSent->setSelectable(false);
+
+    ol.bitrate = new QStandardItem(QTStr(""));
+    ol.bitrate->setEditable(false);
+    ol.bitrate->setSelectable(false);
+
+    int col = 0;
+    int row = outputLabels.size();
+
+    outputTableModel->setItem(row, col++, ol.parentName);
+    outputTableModel->setItem(row, col++, ol.name);
+    outputTableModel->setItem(row, col++, ol.status);
+    outputTableModel->setItem(row, col++, ol.droppedFrames);
+    outputTableModel->setItem(row, col++, ol.megabytesSent);
+    outputTableModel->setItem(row, col++, ol.bitrate);
+
+    outputLabels.push_back(ol);
 }
 
-void BranchOutputStatus::AddOutputLabels(QString name, obs_output_t* output)
-{
-  	OutputLabels ol;
-    ol.output = output;
-	ol.name = new QLabel(name, this);
-	ol.status = new QLabel(this);
-	ol.droppedFrames = new QLabel(this);
-	ol.megabytesSent = new QLabel(this);
-	ol.bitrate = new QLabel(this);
-
-	int col = 0;
-	int row = outputLabels.size() + 1;
-	outputLayout->addWidget(ol.name, row, col++);
-	outputLayout->addWidget(ol.status, row, col++);
-	outputLayout->addWidget(ol.droppedFrames, row, col++);
-	outputLayout->addWidget(ol.megabytesSent, row, col++);
-	outputLayout->addWidget(ol.bitrate, row, col++);
-	outputLabels.push_back(ol);
-}
-
-void BranchOutputStatus::RemoveOutputLabels(obs_output_t* output)
+void BranchOutputStatus::RemoveOutputLabels(filter_t *filter)
 {
     for (int i = 0; i < outputLabels.size(); i++) {
-        const auto ol = outputLabels.at(i);
-        if (ol.output == output) {
+        if (outputLabels[i].filter == filter) {
             outputLabels.removeAt(i);
+            outputTableModel->removeRow(i);
             break;
         }
     }
@@ -94,119 +136,124 @@ void BranchOutputStatus::RemoveOutputLabels(obs_output_t* output)
 
 void BranchOutputStatus::Update()
 {
-
+    for (int i = 0; i < outputLabels.size(); i++) {
+        outputLabels[i].Update(false);
+    }
 }
-
 
 void BranchOutputStatus::showEvent(QShowEvent *)
 {
-	timer.start(TIMER_INTERVAL);
+    timer.start(TIMER_INTERVAL);
 }
 
 void BranchOutputStatus::hideEvent(QHideEvent *)
 {
-	timer.stop();
+    timer.stop();
 }
 
 void BranchOutputStatus::OutputLabels::Update(bool rec)
 {
-	uint64_t totalBytes = output ? obs_output_get_total_bytes(output) : 0;
-	uint64_t curTime = os_gettime_ns();
-	uint64_t bytesSent = totalBytes;
+    auto output = filter->stream_output;
+    uint64_t totalBytes = output ? obs_output_get_total_bytes(output) : 0;
+    uint64_t curTime = os_gettime_ns();
+    uint64_t bytesSent = totalBytes;
 
-	if (bytesSent < lastBytesSent)
-		bytesSent = 0;
-	if (bytesSent == 0)
-		lastBytesSent = 0;
+    if (bytesSent < lastBytesSent) {
+        bytesSent = 0;
+    }
+    if (bytesSent == 0) {
+        lastBytesSent = 0;
+    }
 
-	uint64_t bitsBetween = (bytesSent - lastBytesSent) * 8;
-	long double timePassed =
-		(long double)(curTime - lastBytesSentTime) / 1000000000.0l;
-	kbps = (long double)bitsBetween / timePassed / 1000.0l;
+    uint64_t bitsBetween = (bytesSent - lastBytesSent) * 8;
+    long double timePassed = (long double)(curTime - lastBytesSentTime) / 1000000000.0l;
+    kbps = (long double)bitsBetween / timePassed / 1000.0l;
 
-	if (timePassed < 0.01l)
-		kbps = 0.0l;
+    if (timePassed < 0.01l) {
+        kbps = 0.0l;
+    }
 
-	QString str = QTStr("Basic.Stats.Status.Inactive");
-	QString themeID;
-	bool active = output ? obs_output_active(output) : false;
-	if (rec) {
-		if (active)
-			str = QTStr("Basic.Stats.Status.Recording");
-	} else {
-		if (active) {
-			bool reconnecting =
-				output ? obs_output_reconnecting(output)
-				       : false;
+    QString str = QTStr("Status.Inactive");
+    QString themeID;
+    bool active = output ? obs_output_active(output) : false;
+    if (rec) {
+        if (active) {
+            str = QTStr("Status.Recording");
+        }
+    } else {
+        if (active) {
+            bool reconnecting = output ? obs_output_reconnecting(output) : false;
 
-			if (reconnecting) {
-				str = QTStr("Basic.Stats.Status.Reconnecting");
-				themeID = "error";
-			} else {
-				str = QTStr("Basic.Stats.Status.Live");
-				themeID = "good";
-			}
-		}
-	}
+            if (reconnecting) {
+                str = QTStr("Status.Reconnecting");
+                themeID = "error";
+            } else {
+                str = QTStr("Status.Live");
+                themeID = "good";
+            }
+        }
+    }
 
-	status->setText(str);
+    status->setText(str);
+    /*
 	setThemeID(status, themeID);
+	*/
 
-	long double num = (long double)totalBytes / (1024.0l * 1024.0l);
-	const char *unit = "MiB";
-	if (num > 1024) {
-		num /= 1024;
-		unit = "GiB";
-	}
-	megabytesSent->setText(QString("%1 %2").arg(num, 0, 'f', 1).arg(unit));
+    long double num = (long double)totalBytes / (1024.0l * 1024.0l);
+    const char *unit = "MiB";
+    if (num > 1024) {
+        num /= 1024;
+        unit = "GiB";
+    }
+    megabytesSent->setText(QString("%1 %2").arg(num, 0, 'f', 1).arg(unit));
 
-	num = kbps;
-	unit = "kb/s";
-	if (num >= 10'000) {
-		num /= 1000;
-		unit = "Mb/s";
-	}
-	bitrate->setText(QString("%1 %2").arg(num, 0, 'f', 0).arg(unit));
+    num = kbps;
+    unit = "kb/s";
+    if (num >= 10'000) {
+        num /= 1000;
+        unit = "Mb/s";
+    }
+    bitrate->setText(QString("%1 %2").arg(num, 0, 'f', 0).arg(unit));
 
-	if (!rec) {
-		int total = output ? obs_output_get_total_frames(output) : 0;
-		int dropped = output ? obs_output_get_frames_dropped(output)
-				     : 0;
+    if (!rec) {
+        int total = output ? obs_output_get_total_frames(output) : 0;
+        int dropped = output ? obs_output_get_frames_dropped(output) : 0;
 
-		if (total < first_total || dropped < first_dropped) {
-			first_total = 0;
-			first_dropped = 0;
-		}
+        if (total < first_total || dropped < first_dropped) {
+            first_total = 0;
+            first_dropped = 0;
+        }
 
-		total -= first_total;
-		dropped -= first_dropped;
+        total -= first_total;
+        dropped -= first_dropped;
 
-		num = total ? (long double)dropped / (long double)total * 100.0l
-			    : 0.0l;
+        num = total ? (long double)dropped / (long double)total * 100.0l : 0.0l;
 
-		str = QString("%1 / %2 (%3%)")
-			      .arg(QString::number(dropped),
-				   QString::number(total),
-				   QString::number(num, 'f', 1));
-		droppedFrames->setText(str);
+        str =
+            QString("%1 / %2 (%3%)").arg(QString::number(dropped), QString::number(total), QString::number(num, 'f', 1));
+        droppedFrames->setText(str);
 
+        /*
 		if (num > 5.0l)
 			setThemeID(droppedFrames, "error");
 		else if (num > 1.0l)
 			setThemeID(droppedFrames, "warning");
 		else
 			setThemeID(droppedFrames, "");
-	}
+		*/
+    }
 
-	lastBytesSent = bytesSent;
-	lastBytesSentTime = curTime;
+    lastBytesSent = bytesSent;
+    lastBytesSentTime = curTime;
 }
 
 void BranchOutputStatus::OutputLabels::Reset()
 {
-	if (!output)
-		return;
+    auto output = filter->stream_output;
+    if (!output) {
+        return;
+    }
 
-	first_total = obs_output_get_total_frames(output);
-	first_dropped = obs_output_get_frames_dropped(output);
+    first_total = obs_output_get_total_frames(output);
+    first_dropped = obs_output_get_frames_dropped(output);
 }
