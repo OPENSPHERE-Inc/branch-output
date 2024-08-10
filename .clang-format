@@ -1,7 +1,7 @@
 # please use clang-format version 16 or later
 
 Standard: c++17
-AccessModifierOffset: 2
+AccessModifierOffset: -4
 AlignAfterOpenBracket: BlockIndent
 AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
@@ -59,6 +59,7 @@ ForEachMacros:
   - 'json_object_foreach_safe'
   - 'json_array_foreach'
   - 'HASH_ITER'
+IndentAccessModifiers: false
 IncludeBlocks: Preserve
 IndentCaseLabels: false
 IndentPPDirectives: None
@@ -107,7 +108,7 @@ TypenameMacros:
 UseTab: Never
 ---
 Language: ObjC
-AccessModifierOffset: 2
+AccessModifierOffset: -4
 AlignArrayOfStructures: Right
 AlignConsecutiveAssignments: None
 AlignConsecutiveBitFields: None

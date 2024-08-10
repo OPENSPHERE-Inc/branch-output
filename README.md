@@ -35,7 +35,7 @@ More reliable and proper audio handling.
 
 ## Requirements
 
-[OBS Studio](https://obsproject.com/) >= 30.0.0 (Qt6, x64/ARM64/AppleSilicon)
+[OBS Studio](https://obsproject.com/) >= 30.1.0 (Qt6, x64/ARM64/AppleSilicon)
 
 # Installation
 
