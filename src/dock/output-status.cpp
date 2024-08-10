@@ -89,7 +89,7 @@ void BranchOutputStatus::AddOutputLabels(QString parentName, filter_t *filter)
     ol.bitrate = new QLabel(QTStr(""));
 
     auto col = 0;
-    auto row = outputLabels.size();
+    auto row = (int)outputLabels.size();
 
     outputTable->setRowCount(row + 1);
     outputTable->setItem(row, col++, ol.parentName);
