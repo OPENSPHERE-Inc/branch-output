@@ -28,15 +28,33 @@ class QTableWidget;
 class QTableWidgetItem;
 class QLabel;
 class QString;
+class QCheckBox;
 struct filter_t;
+
+class FilterItem : public QWidget {
+    Q_OBJECT
+
+    obs_source_t *source;
+
+    QCheckBox *visibilityCheckbox;
+    QLabel *name;
+
+public:
+    FilterItem(QString text, obs_source_t *_source, QWidget *parent = (QWidget *)nullptr);
+    ~FilterItem();
+
+    void SetText(QString text);
+
+    static void VisibilityChanged(void *data, calldata_t *cd);
+};
 
 class BranchOutputStatus : public QFrame {
     Q_OBJECT
 
     struct OutputLabels {
         filter_t *filter;
+        FilterItem *filterItem;
         QTableWidgetItem *parentName;
-        QTableWidgetItem *name;
         QLabel *status;
         QLabel *droppedFrames;
         QLabel *megabytesSent;
@@ -51,6 +69,9 @@ class BranchOutputStatus : public QFrame {
         void Update(bool rec);
         void Reset();
 
+        static void FilterRenamed(void *data, calldata_t *cd);
+        static void ParentRenamed(void *data, calldata_t *cd);
+
         long double kbps = 0.0l;
     };
 
@@ -64,8 +85,9 @@ public:
     BranchOutputStatus(QWidget *parent = (QWidget *)nullptr);
     ~BranchOutputStatus();
 
-    void AddOutputLabels(QString parentName, filter_t *filter);
+    void AddOutputLabels(filter_t *filter);
     void RemoveOutputLabels(filter_t *filter);
+    void SetEabnleAll(bool enabled);
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
