@@ -321,7 +321,8 @@ FilterCell::FilterCell(QString text, obs_source_t *source, QWidget *parent) : QW
     enableSignal.Connect(obs_source_get_signal_handler(source), "enable", FilterCell::VisibilityChanged, this);
 }
 
-FilterCell::~FilterCell() {
+FilterCell::~FilterCell()
+{
     filterRenamedSignal.Disconnect();
     enableSignal.Disconnect();
 }
@@ -352,7 +353,8 @@ ParentCell::ParentCell(QString text, obs_source_t *source, QWidget *parent) : QL
     parentRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", ParentCell::ParentRenamed, this);
 }
 
-ParentCell::~ParentCell() {
+ParentCell::~ParentCell()
+{
     parentRenamedSignal.Disconnect();
 }
 
