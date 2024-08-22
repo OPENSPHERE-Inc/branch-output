@@ -90,25 +90,27 @@ BranchOutputStatus::BranchOutputStatus(QWidget *parent) : QFrame(parent), timer(
 
 BranchOutputStatus::~BranchOutputStatus() {}
 
-void BranchOutputStatus::AddOutputLabels(filter_t *filter)
+void BranchOutputStatus::AddFilter(filter_t *filter)
 {
     auto parent = obs_filter_get_parent(filter->source);
-    OutputLabels ol;
-    ol.filter = filter;
+    auto row = (int)outputLabels.size();
 
-    ol.filterItem = new FilterItem(QString::fromUtf8(obs_source_get_name(filter->source)), filter->source, this);
-    ol.parentName = new QTableWidgetItem(QString::fromUtf8(obs_source_get_name(parent)));
+    OutputLabels ol;
+
+    ol.filter = filter;
+    ol.filterCell = new FilterCell(QString::fromUtf8(obs_source_get_name(filter->source)), filter->source, this);
+    ol.parentCell = new ParentCell(QString::fromUtf8(obs_source_get_name(parent)), parent, this);
     ol.status = new QLabel(QTStr("Status.Inactive"), this);
     ol.droppedFrames = new QLabel(QString::fromUtf8(""), this);
     ol.megabytesSent = new QLabel(QString::fromUtf8(""), this);
     ol.bitrate = new QLabel(QString::fromUtf8(""), this);
 
-    auto col = 0;
-    auto row = (int)outputLabels.size();
+    outputLabels.push_back(ol);
 
+    auto col = 0;
     outputTable->setRowCount(row + 1);
-    outputTable->setCellWidget(row, col++, ol.filterItem);
-    outputTable->setItem(row, col++, ol.parentName);
+    outputTable->setCellWidget(row, col++, ol.filterCell);
+    outputTable->setCellWidget(row, col++, ol.parentCell);
     outputTable->setCellWidget(row, col++, ol.status);
     outputTable->setCellWidget(row, col++, ol.droppedFrames);
     outputTable->setCellWidget(row, col++, ol.megabytesSent);
@@ -116,52 +118,27 @@ void BranchOutputStatus::AddOutputLabels(filter_t *filter)
 
     outputTable->setRowHeight(row, 32);
 
-    outputLabels.push_back(ol);
-
     // Setup reset button
     auto resetButtonContainer = new QWidget(this);
-    auto resetButtonLayout = new QHBoxLayout();
-    resetButtonLayout->setContentsMargins(0, 0, 0, 0);
-    resetButtonContainer->setLayout(resetButtonLayout);
+    auto resetButtonContainerLayout = new QHBoxLayout();
+    resetButtonContainerLayout->setContentsMargins(0, 0, 0, 0);
+    resetButtonContainer->setLayout(resetButtonContainerLayout);
 
     auto resetButton = new QPushButton(QTStr("Reset"), this);
     connect(resetButton, &QPushButton::clicked, [this, row]() { outputLabels[row].Reset(); });
     resetButton->setProperty("toolButton", true);
     resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
 
-    resetButtonLayout->addWidget(resetButton);
+    resetButtonContainerLayout->addWidget(resetButton);
     outputTable->setCellWidget(row, col, resetButtonContainer);
-
-    // Listen signal for filter update
-    signal_handler_connect(
-        obs_source_get_signal_handler(filter->source), "rename", BranchOutputStatus::OutputLabels::FilterRenamed,
-        outputLabels[row].filterItem
-    );
-
-    // Listen signal for parent update
-    signal_handler_connect(
-        obs_source_get_signal_handler(parent), "rename", BranchOutputStatus::OutputLabels::ParentRenamed,
-        outputLabels[row].parentName
-    );
 }
 
-void BranchOutputStatus::RemoveOutputLabels(filter_t *filter)
+void BranchOutputStatus::RemoveFilter(filter_t *filter)
 {
     for (int i = 0; i < outputLabels.size(); i++) {
         if (outputLabels[i].filter == filter) {
             outputLabels.removeAt(i);
             outputTable->removeRow(i);
-
-            signal_handler_disconnect(
-                obs_source_get_signal_handler(filter->source), "rename",
-                BranchOutputStatus::OutputLabels::FilterRenamed, outputLabels[i].filterItem
-            );
-
-            signal_handler_disconnect(
-                obs_source_get_signal_handler(obs_filter_get_parent(filter->source)), "rename",
-                BranchOutputStatus::OutputLabels::ParentRenamed, outputLabels[i].parentName
-            );
-
             break;
         }
     }
@@ -314,33 +291,20 @@ void BranchOutputStatus::OutputLabels::Reset()
     bitrate->setText(QString("0 kb/s"));
 }
 
-void BranchOutputStatus::OutputLabels::FilterRenamed(void *data, calldata_t *cd)
-{
-    auto item = (FilterItem *)data;
-    auto newName = calldata_string(cd, "new_name");
-    item->SetText(QString::fromUtf8(newName));
-}
+// FilterCell class
 
-void BranchOutputStatus::OutputLabels::ParentRenamed(void *data, calldata_t *cd)
-{
-    auto label = (QTableWidgetItem *)data;
-    auto newName = calldata_string(cd, "new_name");
-    label->setText(QString::fromUtf8(newName));
-}
-
-// FilterItem class
-
-FilterItem::FilterItem(QString text, obs_source_t *_source, QWidget *parent) : QWidget(parent)
+FilterCell::FilterCell(QString text, obs_source_t *source, QWidget *parent) : QWidget(parent)
 {
     setMinimumHeight(27);
-    source = _source;
 
     visibilityCheckbox = new QCheckBox(this);
     visibilityCheckbox->setProperty("visibilityCheckBox", true);
     visibilityCheckbox->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
     visibilityCheckbox->setChecked(obs_source_enabled(source));
 
-    connect(visibilityCheckbox, &QCheckBox::clicked, [this](bool visible) { obs_source_set_enabled(source, visible); });
+    connect(visibilityCheckbox, &QCheckBox::clicked, [source](bool visible) {
+        obs_source_set_enabled(source, visible);
+    });
 
     name = new QLabel(text, this);
 
@@ -350,23 +314,53 @@ FilterItem::FilterItem(QString text, obs_source_t *_source, QWidget *parent) : Q
     checkboxLayout->addWidget(name);
     setLayout(checkboxLayout);
 
+    // Listen signal for filter update
+    filterRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", FilterCell::FilterRenamed, this);
+
     // Listen signal for filter enabled/disabled
-    signal_handler_connect(obs_source_get_signal_handler(source), "enable", FilterItem::VisibilityChanged, this);
+    enableSignal.Connect(obs_source_get_signal_handler(source), "enable", FilterCell::VisibilityChanged, this);
 }
 
-FilterItem::~FilterItem()
+FilterCell::~FilterCell()
 {
-    signal_handler_disconnect(obs_source_get_signal_handler(source), "enable", FilterItem::VisibilityChanged, this);
+    filterRenamedSignal.Disconnect();
+    enableSignal.Disconnect();
 }
 
-void FilterItem::SetText(QString text)
+void FilterCell::SetText(QString text)
 {
     name->setText(text);
 }
 
-void FilterItem::VisibilityChanged(void *data, calldata_t *cd)
+void FilterCell::FilterRenamed(void *data, calldata_t *cd)
 {
-    auto item = (FilterItem *)data;
+    auto item = (FilterCell *)data;
+    auto newName = calldata_string(cd, "new_name");
+    item->SetText(QString::fromUtf8(newName));
+}
+
+void FilterCell::VisibilityChanged(void *data, calldata_t *cd)
+{
+    auto item = (FilterCell *)data;
     auto enabled = calldata_bool(cd, "enabled");
     item->visibilityCheckbox->setChecked(enabled);
+}
+
+// ParentCell class
+
+ParentCell::ParentCell(QString text, obs_source_t *source, QWidget *parent) : QLabel(text, parent)
+{
+    parentRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", ParentCell::ParentRenamed, this);
+}
+
+ParentCell::~ParentCell()
+{
+    parentRenamedSignal.Disconnect();
+}
+
+void ParentCell::ParentRenamed(void *data, calldata_t *cd)
+{
+    auto item = (ParentCell *)data;
+    auto newName = calldata_string(cd, "new_name");
+    item->setText(QString::fromUtf8(newName));
 }
