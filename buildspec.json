@@ -33,12 +33,12 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "jp.co.opensphere.source-output"
+            "bundleId": "jp.co.opensphere.branch-output"
         }
     },
     "name": "osi-branch-output",
     "displayName": "Branch Output Plugin",
-    "version": "0.9.6",
+    "version": "0.9.7",
     "author": "OPENSPHERE Inc.",
     "website": "https://opensphere.co.jp/",
     "email": "info@opensphere.co.jp",

@@ -517,14 +517,14 @@ void filter_add(void *data, obs_source_t *)
 {
     // Register to output status dock
     auto filter = (filter_t *)data;
-    status_dock->AddOutputLabels(filter);
+    status_dock->AddFilter(filter);
 }
 
 void filter_remove(void *data, obs_source_t *)
 {
     // Unregister from output status dock
     auto filter = (filter_t *)data;
-    status_dock->RemoveOutputLabels(filter);
+    status_dock->RemoveFilter(filter);
 }
 
 const char *get_name(void *)

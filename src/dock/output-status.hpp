@@ -19,33 +19,48 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include <obs-module.h>
+#include <obs.hpp>
 #include <QFrame>
 #include <QPointer>
 #include <QList>
 #include <QTimer>
+#include <QTableWidgetItem>
+#include <QLabel>
 
 class QTableWidget;
-class QTableWidgetItem;
-class QLabel;
 class QString;
 class QCheckBox;
 struct filter_t;
 
-class FilterItem : public QWidget {
+class FilterCell : public QWidget {
     Q_OBJECT
-
-    obs_source_t *source;
 
     QCheckBox *visibilityCheckbox;
     QLabel *name;
 
+    OBSSignal enableSignal;
+    OBSSignal filterRenamedSignal;
+
 public:
-    FilterItem(QString text, obs_source_t *_source, QWidget *parent = (QWidget *)nullptr);
-    ~FilterItem();
+    FilterCell(QString text, obs_source_t *_source, QWidget *parent = (QWidget *)nullptr);
+    ~FilterCell();
 
     void SetText(QString text);
 
     static void VisibilityChanged(void *data, calldata_t *cd);
+    static void FilterRenamed(void *data, calldata_t *cd);
+};
+
+class ParentCell : public QLabel {
+    Q_OBJECT
+
+    OBSSignal parentRenamedSignal;
+
+public:
+    ParentCell(QString text, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
+    ~ParentCell();
+
+    static void ParentRenamed(void *data, calldata_t *cd);
 };
 
 class BranchOutputStatus : public QFrame {
@@ -53,8 +68,8 @@ class BranchOutputStatus : public QFrame {
 
     struct OutputLabels {
         filter_t *filter;
-        FilterItem *filterItem;
-        QTableWidgetItem *parentName;
+        FilterCell *filterCell;
+        ParentCell *parentCell;
         QLabel *status;
         QLabel *droppedFrames;
         QLabel *megabytesSent;
@@ -69,9 +84,6 @@ class BranchOutputStatus : public QFrame {
         void Update(bool rec);
         void Reset();
 
-        static void FilterRenamed(void *data, calldata_t *cd);
-        static void ParentRenamed(void *data, calldata_t *cd);
-
         long double kbps = 0.0l;
     };
 
@@ -85,8 +97,8 @@ public:
     BranchOutputStatus(QWidget *parent = (QWidget *)nullptr);
     ~BranchOutputStatus();
 
-    void AddOutputLabels(filter_t *filter);
-    void RemoveOutputLabels(filter_t *filter);
+    void AddFilter(filter_t *filter);
+    void RemoveFilter(filter_t *filter);
     void SetEabnleAll(bool enabled);
 
 protected:
