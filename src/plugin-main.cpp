@@ -513,11 +513,11 @@ void video_tick(void *data, float)
 
 BranchOutputStatus *status_dock = nullptr;
 
-void filter_add(void *data, obs_source_t *parent)
+void filter_add(void *data, obs_source_t *)
 {
     // Register to output status dock
     auto filter = (filter_t *)data;
-    status_dock->AddOutputLabels(QTStr(obs_source_get_name(parent)), filter);
+    status_dock->AddOutputLabels(filter);
 }
 
 void filter_remove(void *data, obs_source_t *)
