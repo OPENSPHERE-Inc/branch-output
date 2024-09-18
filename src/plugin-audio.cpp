@@ -17,81 +17,82 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include <obs-module.h>
-#include <plugin-support.h>
+
+#include "plugin-support.h"
 #include "plugin-main.hpp"
 
-inline void push_audio_to_buffer(void *param, obs_audio_data *audio_data)
+inline void pushAudioToBuffer(void *param, obs_audio_data *audioData)
 {
-    auto filter = (filter_t *)param;
+    auto filter = (BranchOutputFilter *)param;
 
 #ifdef NO_AUDIO
     return;
 #endif
 
-    if (!filter->output_active || filter->audio_source_type == AUDIO_SOURCE_TYPE_SILENCE || !audio_data->frames) {
+    if (!filter->outputActive || filter->audioSourceType == AUDIO_SOURCE_TYPE_SILENCE || !audioData->frames) {
         return;
     }
 
-    pthread_mutex_lock(&filter->audio_buffer_mutex);
+    pthread_mutex_lock(&filter->audioBufferMutex);
     {
-        if (filter->audio_buffer_frames + audio_data->frames > MAX_AUDIO_BUFFER_FRAMES) {
-            obs_log(LOG_WARNING, "%s: The audio buffer is full", obs_source_get_name(filter->source));
-            deque_free(&filter->audio_buffer);
-            deque_init(&filter->audio_buffer);
-            filter->audio_buffer_frames = 0;
+        if (filter->audioBufferFrames + audioData->frames > MAX_AUDIO_BUFFER_FRAMES) {
+            obs_log(LOG_WARNING, "%s: The audio buffer is full", obs_source_get_name(filter->filterSource));
+            deque_free(&filter->audioBuffer);
+            deque_init(&filter->audioBuffer);
+            filter->audioBufferFrames = 0;
         }
 
         // Compute header
-        audio_buffer_chunk_header_t header = {0};
-        header.frames = audio_data->frames;
-        header.timestamp = audio_data->timestamp;
-        for (int ch = 0; ch < filter->audio_channels; ch++) {
-            if (!audio_data->data[ch]) {
+        AudioBufferChunkHeader header = {0};
+        header.frames = audioData->frames;
+        header.timestamp = audioData->timestamp;
+        for (int ch = 0; ch < filter->audioChannels; ch++) {
+            if (!audioData->data[ch]) {
                 continue;
             }
-            header.data_idx[ch] = sizeof(audio_buffer_chunk_header_t) + header.channels * audio_data->frames * 4;
+            header.data_idx[ch] = sizeof(AudioBufferChunkHeader) + header.channels * audioData->frames * 4;
             header.channels++;
         }
 
         // Push audio data to buffer
-        deque_push_back(&filter->audio_buffer, &header, sizeof(audio_buffer_chunk_header_t));
-        for (int ch = 0; ch < filter->audio_channels; ch++) {
-            if (!audio_data->data[ch]) {
+        deque_push_back(&filter->audioBuffer, &header, sizeof(AudioBufferChunkHeader));
+        for (int ch = 0; ch < filter->audioChannels; ch++) {
+            if (!audioData->data[ch]) {
                 continue;
             }
-            deque_push_back(&filter->audio_buffer, audio_data->data[ch], audio_data->frames * 4);
+            deque_push_back(&filter->audioBuffer, audioData->data[ch], audioData->frames * 4);
         }
 
-        // Ensure allocation of audio_conv_buffer
-        size_t data_size = sizeof(audio_buffer_chunk_header_t) + header.channels * audio_data->frames * 4;
-        if (data_size > filter->audio_conv_buffer_size) {
+        // Ensure allocation of audioConvBuffer
+        size_t data_size = sizeof(AudioBufferChunkHeader) + header.channels * audioData->frames * 4;
+        if (data_size > filter->audioConvBufferSize) {
             obs_log(
-                LOG_INFO, "%s: Expand audio_conv_buffer from %zu to %zu bytes", obs_source_get_name(filter->source),
-                filter->audio_conv_buffer_size, data_size
+                LOG_INFO, "%s: Expand audioConvBuffer from %zu to %zu bytes", obs_source_get_name(filter->filterSource),
+                filter->audioConvBufferSize, data_size
             );
-            filter->audio_conv_buffer = (uint8_t *)brealloc(filter->audio_conv_buffer, data_size);
-            filter->audio_conv_buffer_size = data_size;
+            filter->audioConvBuffer = (uint8_t *)brealloc(filter->audioConvBuffer, data_size);
+            filter->audioConvBufferSize = data_size;
         }
 
         // Increment buffer usage
-        filter->audio_buffer_frames += audio_data->frames;
+        filter->audioBufferFrames += audioData->frames;
     }
-    pthread_mutex_unlock(&filter->audio_buffer_mutex);
+    pthread_mutex_unlock(&filter->audioBufferMutex);
 }
 
 // Callback from filter audio
-obs_audio_data *audio_filter_callback(void *param, obs_audio_data *audio_data)
+obs_audio_data *audioFilterCallback(void *param, obs_audio_data *audioData)
 {
-    auto filter = (filter_t *)param;
+    auto filter = (BranchOutputFilter *)param;
 
-    if (filter->audio_source_type != AUDIO_SOURCE_TYPE_FILTER) {
+    if (filter->audioSourceType != AUDIO_SOURCE_TYPE_FILTER) {
         // Omit filter's audio
-        return audio_data;
+        return audioData;
     }
 
-    push_audio_to_buffer(filter, audio_data);
+    pushAudioToBuffer(filter, audioData);
 
-    return audio_data;
+    return audioData;
 }
 
 inline void convert_audio_data(obs_audio_data *dest, const audio_data *src)
@@ -102,87 +103,87 @@ inline void convert_audio_data(obs_audio_data *dest, const audio_data *src)
 }
 
 // Callback from source's audio capture
-void audio_capture_callback(void *param, obs_source_t *, const audio_data *audio_data, bool muted)
+void audioCaptureCallback(void *param, obs_source_t *, const audio_data *audioData, bool muted)
 {
-    auto filter = (filter_t *)param;
+    auto filter = (BranchOutputFilter *)param;
 
-    if (muted || !filter->audio_source) {
+    if (muted || !filter->audioSource) {
         return;
     }
 
-    obs_audio_data filter_audio_data = {0};
-    convert_audio_data(&filter_audio_data, audio_data);
-    push_audio_to_buffer(filter, &filter_audio_data);
+    obs_audio_data filterAudioData = {0};
+    convert_audio_data(&filterAudioData, audioData);
+    pushAudioToBuffer(filter, &filterAudioData);
 }
 
 // Callback from master audio output
-void master_audio_callback(void *param, size_t, audio_data *audio_data)
+void masterAudioCallback(void *param, size_t, audio_data *audioData)
 {
-    auto filter = (filter_t *)param;
+    auto filter = (BranchOutputFilter *)param;
 
-    obs_audio_data filter_audio_data = {0};
-    convert_audio_data(&filter_audio_data, audio_data);
-    push_audio_to_buffer(filter, &filter_audio_data);
+    obs_audio_data filterAudioData = {0};
+    convert_audio_data(&filterAudioData, audioData);
+    pushAudioToBuffer(filter, &filterAudioData);
 }
 
 // Callback from audio output
-bool audio_input_callback(
-    void *param, uint64_t start_ts_in, uint64_t, uint64_t *out_ts, uint32_t mixers, audio_output_data *mixes
+bool audioInputCallback(
+    void *param, uint64_t startTsIn, uint64_t, uint64_t *outTs, uint32_t mixers, audio_output_data *mixes
 )
 {
-    auto filter = (filter_t *)param;
+    auto filter = (BranchOutputFilter *)param;
 
-    obs_audio_info audio_info;
-    if (!filter->output_active || filter->audio_source_type == AUDIO_SOURCE_TYPE_SILENCE ||
-        !obs_get_audio_info(&audio_info)) {
+    obs_audio_info audioInfo;
+    if (!filter->outputActive || filter->audioSourceType == AUDIO_SOURCE_TYPE_SILENCE ||
+        !obs_get_audio_info(&audioInfo)) {
         // Silence
-        *out_ts = start_ts_in;
+        *outTs = startTsIn;
         return true;
     }
 
     // TODO: Shorten the critical section to reduce audio delay
-    pthread_mutex_lock(&filter->audio_buffer_mutex);
+    pthread_mutex_lock(&filter->audioBufferMutex);
     {
-        if (filter->audio_buffer_frames < AUDIO_OUTPUT_FRAMES) {
+        if (filter->audioBufferFrames < AUDIO_OUTPUT_FRAMES) {
             // Wait until enough frames are receved.
-            if (!filter->audio_skip) {
-                obs_log(LOG_DEBUG, "%s: Wait for frames...", obs_source_get_name(filter->source));
+            if (!filter->audioSkip) {
+                obs_log(LOG_DEBUG, "%s: Wait for frames...", obs_source_get_name(filter->filterSource));
             }
-            filter->audio_skip++;
-            pthread_mutex_unlock(&filter->audio_buffer_mutex);
+            filter->audioSkip++;
+            pthread_mutex_unlock(&filter->audioBufferMutex);
 
             // DO NOT stall audio output pipeline
-            *out_ts = start_ts_in;
+            *outTs = startTsIn;
             return true;
         } else {
-            filter->audio_skip = 0;
+            filter->audioSkip = 0;
         }
 
-        size_t max_frames = AUDIO_OUTPUT_FRAMES;
+        size_t maxFrames = AUDIO_OUTPUT_FRAMES;
 
-        while (max_frames > 0 && filter->audio_buffer_frames) {
+        while (maxFrames > 0 && filter->audioBufferFrames) {
             // Peek header of first chunk
-            deque_peek_front(&filter->audio_buffer, filter->audio_conv_buffer, sizeof(audio_buffer_chunk_header_t));
-            auto header = (audio_buffer_chunk_header_t *)filter->audio_conv_buffer;
-            size_t data_size = sizeof(audio_buffer_chunk_header_t) + header->channels * header->frames * 4;
+            deque_peek_front(&filter->audioBuffer, filter->audioConvBuffer, sizeof(AudioBufferChunkHeader));
+            auto header = (AudioBufferChunkHeader *)filter->audioConvBuffer;
+            size_t dataSize = sizeof(AudioBufferChunkHeader) + header->channels * header->frames * 4;
 
             // Read chunk data
-            deque_peek_front(&filter->audio_buffer, filter->audio_conv_buffer, data_size);
+            deque_peek_front(&filter->audioBuffer, filter->audioConvBuffer, dataSize);
 
-            size_t chunk_frames = header->frames - header->offset;
-            size_t frames = (chunk_frames > max_frames) ? max_frames : chunk_frames;
-            size_t out_offset = AUDIO_OUTPUT_FRAMES - max_frames;
+            size_t chunkFrames = header->frames - header->offset;
+            size_t frames = (chunkFrames > maxFrames) ? maxFrames : chunkFrames;
+            size_t outOffset = AUDIO_OUTPUT_FRAMES - maxFrames;
 
-            for (size_t mix_idx = 0; mix_idx < MAX_AUDIO_MIXES; mix_idx++) {
-                if ((mixers & (1 << mix_idx)) == 0) {
+            for (size_t mixIdx = 0; mixIdx < MAX_AUDIO_MIXES; mixIdx++) {
+                if ((mixers & (1 << mixIdx)) == 0) {
                     continue;
                 }
-                for (size_t ch = 0; ch < filter->audio_channels; ch++) {
-                    auto out = mixes[mix_idx].data[ch] + out_offset;
+                for (size_t ch = 0; ch < filter->audioChannels; ch++) {
+                    auto out = mixes[mixIdx].data[ch] + outOffset;
                     if (!header->data_idx[ch]) {
                         continue;
                     }
-                    auto in = (float *)(filter->audio_conv_buffer + header->data_idx[ch]) + header->offset;
+                    auto in = (float *)(filter->audioConvBuffer + header->data_idx[ch]) + header->offset;
 
                     for (size_t i = 0; i < frames; i++) {
                         *out += *(in++);
@@ -196,23 +197,23 @@ bool audio_input_callback(
                 }
             }
 
-            if (frames == chunk_frames) {
+            if (frames == chunkFrames) {
                 // Remove fulfilled chunk from buffer
-                deque_pop_front(&filter->audio_buffer, NULL, data_size);
+                deque_pop_front(&filter->audioBuffer, nullptr, dataSize);
             } else {
                 // Chunk frames are remaining -> modify chunk header
                 header->offset += frames;
-                deque_place(&filter->audio_buffer, 0, header, sizeof(audio_buffer_chunk_header_t));
+                deque_place(&filter->audioBuffer, 0, header, sizeof(AudioBufferChunkHeader));
             }
 
-            max_frames -= frames;
+            maxFrames -= frames;
 
             // Decrement buffer usage
-            filter->audio_buffer_frames -= frames;
+            filter->audioBufferFrames -= frames;
         }
     }
-    pthread_mutex_unlock(&filter->audio_buffer_mutex);
+    pthread_mutex_unlock(&filter->audioBufferMutex);
 
-    *out_ts = start_ts_in;
+    *outTs = startTsIn;
     return true;
 }

@@ -18,6 +18,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs-module.h>
 #include <util/platform.h>
+
 #include <QGridLayout>
 #include <QLabel>
 #include <QTimer>
@@ -28,8 +29,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QCheckBox>
-#include <plugin-main.hpp>
-#include "output-status.hpp"
+
+#include "../plugin-main.hpp"
+#include "output-status-dock.hpp"
 
 #define TIMER_INTERVAL 2000
 
@@ -38,7 +40,22 @@ extern "C" {
 extern void obs_log(int log_level, const char *format, ...);
 }
 
-BranchOutputStatus::BranchOutputStatus(QWidget *parent) : QFrame(parent), timer(this)
+// Imitate UI/window-basic-stats.cpp
+void setThemeID(QWidget *widget, const QString &themeID)
+{
+    if (widget->property("themeID").toString() != themeID) {
+        widget->setProperty("themeID", themeID);
+
+        /* force style sheet recalculation */
+        QString qss = widget->styleSheet();
+        widget->setStyleSheet("/* */");
+        widget->setStyleSheet(qss);
+    }
+}
+
+//--- BranchOutputStatusDock class ---//
+
+BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent), timer(this)
 {
     setMinimumWidth(320);
 
@@ -63,7 +80,7 @@ BranchOutputStatus::BranchOutputStatus(QWidget *parent) : QFrame(parent), timer(
     outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("BitRate")));
     outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QString::fromUtf8("")));
 
-    QObject::connect(&timer, &QTimer::timeout, this, &BranchOutputStatus::Update);
+    QObject::connect(&timer, &QTimer::timeout, this, &BranchOutputStatusDock::update);
 
     timer.setInterval(TIMER_INTERVAL);
     if (isVisible()) {
@@ -72,10 +89,10 @@ BranchOutputStatus::BranchOutputStatus(QWidget *parent) : QFrame(parent), timer(
 
     // Tool buttons
     auto enableAllButton = new QPushButton(QTStr("EnableAll"));
-    connect(enableAllButton, &QPushButton::clicked, [this]() { SetEabnleAll(true); });
+    connect(enableAllButton, &QPushButton::clicked, [this]() { setEabnleAll(true); });
 
     auto disableAllButton = new QPushButton(QTStr("DisableAll"));
-    connect(disableAllButton, &QPushButton::clicked, [this]() { SetEabnleAll(false); });
+    connect(disableAllButton, &QPushButton::clicked, [this]() { setEabnleAll(false); });
 
     auto buttonsContainerLayout = new QHBoxLayout();
     buttonsContainerLayout->addWidget(enableAllButton);
@@ -88,24 +105,24 @@ BranchOutputStatus::BranchOutputStatus(QWidget *parent) : QFrame(parent), timer(
     this->setLayout(outputContainerLayout);
 }
 
-BranchOutputStatus::~BranchOutputStatus() {}
+BranchOutputStatusDock::~BranchOutputStatusDock() {}
 
-void BranchOutputStatus::AddFilter(filter_t *filter)
+void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 {
-    auto parent = obs_filter_get_parent(filter->source);
-    auto row = (int)outputLabels.size();
+    auto parent = obs_filter_get_parent(filter->filterSource);
+    auto row = (int)outputTableRows.size();
 
-    OutputLabels ol;
+    OutputTableRow ol;
 
     ol.filter = filter;
-    ol.filterCell = new FilterCell(QString::fromUtf8(obs_source_get_name(filter->source)), filter->source, this);
+    ol.filterCell = new FilterCell(QString::fromUtf8(obs_source_get_name(filter->filterSource)), filter->filterSource, this);
     ol.parentCell = new ParentCell(QString::fromUtf8(obs_source_get_name(parent)), parent, this);
     ol.status = new QLabel(QTStr("Status.Inactive"), this);
     ol.droppedFrames = new QLabel(QString::fromUtf8(""), this);
     ol.megabytesSent = new QLabel(QString::fromUtf8(""), this);
     ol.bitrate = new QLabel(QString::fromUtf8(""), this);
 
-    outputLabels.push_back(ol);
+    outputTableRows.push_back(ol);
 
     auto col = 0;
     outputTable->setRowCount(row + 1);
@@ -125,7 +142,7 @@ void BranchOutputStatus::AddFilter(filter_t *filter)
     resetButtonContainer->setLayout(resetButtonContainerLayout);
 
     auto resetButton = new QPushButton(QTStr("Reset"), this);
-    connect(resetButton, &QPushButton::clicked, [this, row]() { outputLabels[row].Reset(); });
+    connect(resetButton, &QPushButton::clicked, [this, row]() { outputTableRows[row].reset(); });
     resetButton->setProperty("toolButton", true);
     resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
 
@@ -133,60 +150,47 @@ void BranchOutputStatus::AddFilter(filter_t *filter)
     outputTable->setCellWidget(row, col, resetButtonContainer);
 }
 
-void BranchOutputStatus::RemoveFilter(filter_t *filter)
+void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
 {
-    for (int i = 0; i < outputLabels.size(); i++) {
-        if (outputLabels[i].filter == filter) {
-            outputLabels.removeAt(i);
+    for (int i = 0; i < outputTableRows.size(); i++) {
+        if (outputTableRows[i].filter == filter) {
+            outputTableRows.removeAt(i);
             outputTable->removeRow(i);
             break;
         }
     }
 }
 
-void BranchOutputStatus::Update()
+void BranchOutputStatusDock::update()
 {
-    for (int i = 0; i < outputLabels.size(); i++) {
-        outputLabels[i].Update(false);
+    for (int i = 0; i < outputTableRows.size(); i++) {
+        outputTableRows[i].update(false);
     }
 }
 
-void BranchOutputStatus::showEvent(QShowEvent *)
+void BranchOutputStatusDock::showEvent(QShowEvent *)
 {
     timer.start(TIMER_INTERVAL);
 }
 
-void BranchOutputStatus::hideEvent(QHideEvent *)
+void BranchOutputStatusDock::hideEvent(QHideEvent *)
 {
     timer.stop();
 }
 
-void BranchOutputStatus::SetEabnleAll(bool enabled)
+void BranchOutputStatusDock::setEabnleAll(bool enabled)
 {
-    for (int i = 0; i < outputLabels.size(); i++) {
-        obs_source_set_enabled(outputLabels[i].filter->source, enabled);
+    foreach (auto &row, outputTableRows) {
+        obs_source_set_enabled(row.filter->filterSource, enabled);
     }
 }
 
-// Imitate UI/window-basic-stats.cpp
-void setThemeID(QWidget *widget, const QString &themeID)
-{
-    if (widget->property("themeID").toString() != themeID) {
-        widget->setProperty("themeID", themeID);
-
-        /* force style sheet recalculation */
-        QString qss = widget->styleSheet();
-        widget->setStyleSheet("/* */");
-        widget->setStyleSheet(qss);
-    }
-}
-
-// BranchOutputStatus::OutputLabels structure
+//--- BranchOutputStatusDock::OutputTableRow structure ---//
 
 // Imitate UI/window-basic-stats.cpp
-void BranchOutputStatus::OutputLabels::Update(bool rec)
+void BranchOutputStatusDock::OutputTableRow::update(bool rec)
 {
-    auto output = filter->stream_output;
+    auto output = filter->streamOutput;
     uint64_t totalBytes = output ? obs_output_get_total_bytes(output) : 0;
     uint64_t curTime = os_gettime_ns();
     uint64_t bytesSent = totalBytes;
@@ -277,9 +281,9 @@ void BranchOutputStatus::OutputLabels::Update(bool rec)
     lastBytesSentTime = curTime;
 }
 
-void BranchOutputStatus::OutputLabels::Reset()
+void BranchOutputStatusDock::OutputTableRow::reset()
 {
-    auto output = filter->stream_output;
+    auto output = filter->streamOutput;
     if (!output) {
         return;
     }
@@ -291,9 +295,9 @@ void BranchOutputStatus::OutputLabels::Reset()
     bitrate->setText(QString("0 kb/s"));
 }
 
-// FilterCell class
+//--- FilterCell class ---//
 
-FilterCell::FilterCell(QString text, obs_source_t *source, QWidget *parent) : QWidget(parent)
+FilterCell::FilterCell(const QString &text, obs_source_t *source, QWidget *parent) : QWidget(parent)
 {
     setMinimumHeight(27);
 
@@ -315,10 +319,10 @@ FilterCell::FilterCell(QString text, obs_source_t *source, QWidget *parent) : QW
     setLayout(checkboxLayout);
 
     // Listen signal for filter update
-    filterRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", FilterCell::FilterRenamed, this);
+    filterRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", FilterCell::onFilterRenamed, this);
 
     // Listen signal for filter enabled/disabled
-    enableSignal.Connect(obs_source_get_signal_handler(source), "enable", FilterCell::VisibilityChanged, this);
+    enableSignal.Connect(obs_source_get_signal_handler(source), "enable", FilterCell::onVisibilityChanged, this);
 }
 
 FilterCell::~FilterCell()
@@ -327,30 +331,30 @@ FilterCell::~FilterCell()
     enableSignal.Disconnect();
 }
 
-void FilterCell::SetText(QString text)
+void FilterCell::setText(const QString &text)
 {
     name->setText(text);
 }
 
-void FilterCell::FilterRenamed(void *data, calldata_t *cd)
+void FilterCell::onFilterRenamed(void *data, calldata_t *cd)
 {
     auto item = (FilterCell *)data;
     auto newName = calldata_string(cd, "new_name");
-    item->SetText(QString::fromUtf8(newName));
+    item->setText(QString::fromUtf8(newName));
 }
 
-void FilterCell::VisibilityChanged(void *data, calldata_t *cd)
+void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
 {
     auto item = (FilterCell *)data;
     auto enabled = calldata_bool(cd, "enabled");
     item->visibilityCheckbox->setChecked(enabled);
 }
 
-// ParentCell class
+//--- ParentCell class ---//
 
-ParentCell::ParentCell(QString text, obs_source_t *source, QWidget *parent) : QLabel(text, parent)
+ParentCell::ParentCell(const QString &text, obs_source_t *source, QWidget *parent) : QLabel(text, parent)
 {
-    parentRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", ParentCell::ParentRenamed, this);
+    parentRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", ParentCell::onParentRenamed, this);
 }
 
 ParentCell::~ParentCell()
@@ -358,7 +362,7 @@ ParentCell::~ParentCell()
     parentRenamedSignal.Disconnect();
 }
 
-void ParentCell::ParentRenamed(void *data, calldata_t *cd)
+void ParentCell::onParentRenamed(void *data, calldata_t *cd)
 {
     auto item = (ParentCell *)data;
     auto newName = calldata_string(cd, "new_name");

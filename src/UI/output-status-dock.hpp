@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs-module.h>
 #include <obs.hpp>
+
 #include <QFrame>
 #include <QPointer>
 #include <QList>
@@ -30,7 +31,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 class QTableWidget;
 class QString;
 class QCheckBox;
-struct filter_t;
+struct BranchOutputFilter;
 
 class FilterCell : public QWidget {
     Q_OBJECT
@@ -41,14 +42,14 @@ class FilterCell : public QWidget {
     OBSSignal enableSignal;
     OBSSignal filterRenamedSignal;
 
+    static void onVisibilityChanged(void *data, calldata_t *cd);
+    static void onFilterRenamed(void *data, calldata_t *cd);
+
 public:
-    FilterCell(QString text, obs_source_t *_source, QWidget *parent = (QWidget *)nullptr);
+    explicit FilterCell(const QString &text, obs_source_t *_source, QWidget *parent = (QWidget *)nullptr);
     ~FilterCell();
 
-    void SetText(QString text);
-
-    static void VisibilityChanged(void *data, calldata_t *cd);
-    static void FilterRenamed(void *data, calldata_t *cd);
+    void setText(const QString &text);
 };
 
 class ParentCell : public QLabel {
@@ -56,18 +57,18 @@ class ParentCell : public QLabel {
 
     OBSSignal parentRenamedSignal;
 
-public:
-    ParentCell(QString text, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
-    ~ParentCell();
+    static void onParentRenamed(void *data, calldata_t *cd);
 
-    static void ParentRenamed(void *data, calldata_t *cd);
+public:
+    explicit ParentCell(const QString &text, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
+    ~ParentCell();
 };
 
-class BranchOutputStatus : public QFrame {
+class BranchOutputStatusDock : public QFrame {
     Q_OBJECT
 
-    struct OutputLabels {
-        filter_t *filter;
+    struct OutputTableRow {
+        BranchOutputFilter *filter;
         FilterCell *filterCell;
         ParentCell *parentCell;
         QLabel *status;
@@ -81,29 +82,29 @@ class BranchOutputStatus : public QFrame {
         int first_total = 0;
         int first_dropped = 0;
 
-        void Update(bool rec);
-        void Reset();
+        void update(bool rec);
+        void reset();
 
         long double kbps = 0.0l;
     };
 
     QTimer timer;
     QTableWidget *outputTable = nullptr;
-    QList<OutputLabels> outputLabels;
+    QList<OutputTableRow> outputTableRows;
 
-    void Update();
-
-public:
-    BranchOutputStatus(QWidget *parent = (QWidget *)nullptr);
-    ~BranchOutputStatus();
-
-    void AddFilter(filter_t *filter);
-    void RemoveFilter(filter_t *filter);
-    void SetEabnleAll(bool enabled);
+    void update();
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
     virtual void hideEvent(QHideEvent *event) override;
+
+public:
+    explicit BranchOutputStatusDock(QWidget *parent = (QWidget *)nullptr);
+    ~BranchOutputStatusDock();
+
+    void addFilter(BranchOutputFilter *filter);
+    void removeFilter(BranchOutputFilter *filter);
+    void setEabnleAll(bool enabled);
 };
 
 inline QString QTStr(const char *lookupVal)
