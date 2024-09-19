@@ -19,10 +19,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <util/platform.h>
 
-#include <QString>
+#include <QWidget>
 
 #include "utils.hpp"
 
+// Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1871
 QString getFormatExt(const char *container)
 {
     QString ext = container;
@@ -40,12 +41,14 @@ QString getFormatExt(const char *container)
     return ext;
 }
 
+// Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1771
 QString generateSpecifiedFilename(const char *extension, bool noSpace, const char *format)
 {
     OBSString filename = os_generate_formatted_filename(extension, !noSpace, format);
     return QString(filename);
 }
 
+// Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1809
 void ensureDirectoryExists(QString path)
 {
     path.replace('\\', '/');
@@ -60,6 +63,7 @@ void ensureDirectoryExists(QString path)
 	os_mkdirs(qUtf8Printable(directory));
 }
 
+// Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1779
 void findBestFilename(QString &strPath, bool noSpace)
 {
 	int num = 2;
@@ -88,6 +92,7 @@ void findBestFilename(QString &strPath, bool noSpace)
 	}
 }
 
+// Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1888
 QString getOutputFilename(const char *path, const char *container, bool noSpace, bool overwrite, const char *format)
 {
     os_dir_t *dir = path && path[0] ? os_opendir(path) : nullptr;
@@ -114,3 +119,4 @@ QString getOutputFilename(const char *path, const char *container, bool noSpace,
 
     return strPath;
 }
+

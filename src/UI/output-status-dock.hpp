@@ -27,10 +27,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QTimer>
 #include <QTableWidgetItem>
 #include <QLabel>
+#include <QComboBox>
+
+#include "../utils.hpp"
 
 class QTableWidget;
 class QString;
 class QCheckBox;
+class QPushButton;
 struct BranchOutputFilter;
 
 class FilterCell : public QWidget {
@@ -56,12 +60,34 @@ class ParentCell : public QLabel {
     Q_OBJECT
 
     OBSSignal parentRenamedSignal;
+    obs_source_t *source;
 
     static void onParentRenamed(void *data, calldata_t *cd);
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override;
 
 public:
     explicit ParentCell(const QString &text, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
     ~ParentCell();
+
+    void setSourceName(const QString &text);
+};
+
+class StatusCell : public QWidget {
+    Q_OBJECT
+
+    QLabel *icon;
+    QLabel *statusText;
+
+public:
+    explicit StatusCell(const QString &text, QWidget *parent = (QWidget *)nullptr);
+    ~StatusCell();
+
+    inline void setText(const QString &text) { statusText->setText(text); };
+    inline void setIcon(const QPixmap &pixmap) { icon->setPixmap(pixmap); };
+    inline void setIconShow(bool show) { icon->setVisible(show); };
+    inline void setTheme(const QString &id) { setThemeID(statusText, id); };
 };
 
 class BranchOutputStatusDock : public QFrame {
@@ -71,7 +97,7 @@ class BranchOutputStatusDock : public QFrame {
         BranchOutputFilter *filter;
         FilterCell *filterCell;
         ParentCell *parentCell;
-        QLabel *status;
+        StatusCell *status;
         QLabel *droppedFrames;
         QLabel *megabytesSent;
         QLabel *bitrate;
@@ -82,7 +108,7 @@ class BranchOutputStatusDock : public QFrame {
         int first_total = 0;
         int first_dropped = 0;
 
-        void update(bool rec);
+        void update();
         void reset();
 
         long double kbps = 0.0l;
@@ -91,8 +117,14 @@ class BranchOutputStatusDock : public QFrame {
     QTimer timer;
     QTableWidget *outputTable = nullptr;
     QList<OutputTableRow> outputTableRows;
+    QPushButton *enableAllButton = nullptr;
+    QPushButton *disableAllButton = nullptr;
+    QLabel *interlockLabel = nullptr;
+    QComboBox *interlockComboBox = nullptr;
 
     void update();
+    void saveSettings();
+    void loadSettings();
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
@@ -105,9 +137,6 @@ public:
     void addFilter(BranchOutputFilter *filter);
     void removeFilter(BranchOutputFilter *filter);
     void setEabnleAll(bool enabled);
-};
 
-inline QString QTStr(const char *lookupVal)
-{
-    return QString::fromUtf8(obs_module_text(lookupVal));
-}
+    inline const int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
+};

@@ -26,14 +26,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "UI/output-status-dock.hpp"
 
-#define FILTER_ID "osi_branch_output"
-#define MAX_AUDIO_BUFFER_FRAMES 131071
-#define SETTINGS_JSON_NAME "recently.json"
-#define OUTPUT_MAX_RETRIES 7
-#define OUTPUT_RETRY_DELAY_SECS 1
-#define CONNECT_ATTEMPTING_TIMEOUT_NS 15000000000ULL
-#define AVAILAVILITY_CHECK_INTERVAL_NS 1000000000ULL
-
 enum AudioSourceType {
     AUDIO_SOURCE_TYPE_SILENCE,
     AUDIO_SOURCE_TYPE_FILTER,
@@ -41,22 +33,23 @@ enum AudioSourceType {
     AUDIO_SOURCE_TYPE_CAPTURE,
 };
 
-enum StartTriggerType {
-    START_TRIGGER_TYPE_ALWAYS,
-    START_TRIGGER_TYPE_STREAMING,
-    START_TRIGGER_TYPE_RECORDING,
-    START_TRIGGER_TYPE_STREAMING_RECORDING,
-    START_TRIGGER_TYPE_VIRTUAL_CAM,
+enum InterlockType {
+    INTERLOCK_TYPE_NONE,
+    INTERLOCK_TYPE_STREAMING,
+    INTERLOCK_TYPE_RECORDING,
+    INTERLOCK_TYPE_STREAMING_RECORDING,
+    INTERLOCK_TYPE_VIRTUAL_CAM,
 };
 
+// TODO: Convert to Object
 struct BranchOutputFilter {
-    bool filterActive; // Activate after first "Apply" click
+    bool initialized; // Activate after first "Apply" click
     bool outputActive;
     bool recordingActive;
     uint32_t storedSettingsRev;
     uint32_t activeSettingsRev;
     uint64_t lastAvailableAt;
-    StartTriggerType triggerType;
+    QTimer *intervalTimer;
 
     // Filter source
     obs_source_t *filterSource;
@@ -90,6 +83,7 @@ struct BranchOutputFilter {
     uint64_t audioSkip;
 
     // Stream context
+    pthread_mutex_t outputMutex;
     uint64_t connectAttemptingAt;
 };
 

@@ -20,9 +20,30 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs-module.h>
 #include <obs.hpp>
+#include <util/threading.h>
 
 #include <QString>
+#include <QWidget>
 
 using OBSString = OBSPtr<char *, (void (*)(char *))bfree>;
 QString getOutputFilename(const char *path, const char *container, bool noSpace, bool overwrite, const char *format);
 QString getFormatExt(const char *container);
+using OBSMutexAutoUnlock = OBSPtr<pthread_mutex_t *, (void (*)(pthread_mutex_t *))pthread_mutex_unlock>;
+
+// Imitate UI/window-basic-stats.cpp
+inline void setThemeID(QWidget *widget, const QString &themeID)
+{
+    if (widget->property("themeID").toString() != themeID) {
+        widget->setProperty("themeID", themeID);
+
+        /* force style sheet recalculation */
+        QString qss = widget->styleSheet();
+        widget->setStyleSheet("/* */");
+        widget->setStyleSheet(qss);
+    }
+}
+
+inline QString QTStr(const char *lookupVal)
+{
+    return QString::fromUtf8(obs_module_text(lookupVal));
+}

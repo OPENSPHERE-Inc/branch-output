@@ -160,8 +160,8 @@ void getDefaults(obs_data_t *defaults)
         recSplitFile = config_get_bool(config, "AdvOut", "RecSplitFile");
         recSplitFileTimeMins = config_get_uint(config, "AdvOut", "RecSplitFileTime");
         recSplitFileSizeMb = config_get_uint(config, "AdvOut", "RecSplitFileSize");
-        
-        const char* recType = config_get_string(config, "AdvOut", "RecType");
+
+        const char *recType = config_get_string(config, "AdvOut", "RecType");
         bool ffmpegRecording = !astrcmpi(recType, "ffmpeg") && config_get_bool(config, "AdvOut", "FFOutputToFile");
         path = config_get_string(config, "AdvOut", ffmpegRecording ? "FFFilePath" : "RecFilePath");
     } else {
@@ -191,7 +191,6 @@ void getDefaults(obs_data_t *defaults)
 
     obs_data_set_default_int(defaults, "split_file_time_mins", recSplitFileTimeMins);
     obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
-    obs_data_set_default_string(defaults, "start_trigger", "always");
     obs_data_set_default_string(defaults, "audio_source", "master_track");
     obs_data_set_default_int(defaults, "audio_track", 1);
 
@@ -206,7 +205,7 @@ inline void addApplyButton(BranchOutputFilter *filter, obs_properties_t *props)
             auto filter = (BranchOutputFilter *)param;
 
             // Force filter activation
-            filter->filterActive = true;
+            filter->initialized = true;
 
             OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
             update(filter, settings);
@@ -237,17 +236,24 @@ inline void addStreamGroup(obs_properties_t *props)
     obs_properties_add_text(streamGroup, "server", obs_module_text("Server"), OBS_TEXT_DEFAULT);
     obs_properties_add_text(streamGroup, "key", obs_module_text("Key"), OBS_TEXT_PASSWORD);
 
-    auto triggerList = obs_properties_add_list(
-        streamGroup, "start_trigger", obs_module_text("StartingTrigger"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+    auto useAuth = obs_properties_add_bool(streamGroup, "use_auth", obs_module_text("UseAuthentication"));
+    auto username = obs_properties_add_text(streamGroup, "username", obs_module_text("Username"), OBS_TEXT_DEFAULT);
+    obs_property_set_visible(username, false);
+    auto password = obs_properties_add_text(streamGroup, "password", obs_module_text("Password"), OBS_TEXT_PASSWORD);
+    obs_property_set_visible(password, false);
+
+    obs_property_set_modified_callback2(
+        useAuth,
+        [](void *, obs_properties_t *props, obs_property_t *p, obs_data_t *settings) {
+            auto useAuth = obs_data_get_bool(settings, "use_auth");
+            obs_property_set_visible(obs_properties_get(props, "username"), useAuth);
+            obs_property_set_visible(obs_properties_get(props, "password"), useAuth);
+            return true;
+        },
+        nullptr
     );
 
-    obs_property_list_add_string(triggerList, obs_module_text("Always"), "always");
-    obs_property_list_add_string(triggerList, obs_module_text("DuringStreaming"), "streaming");
-    obs_property_list_add_string(triggerList, obs_module_text("DuringRecording"), "recording");
-    obs_property_list_add_string(triggerList, obs_module_text("DuringStreamingOrRecording"), "streaming_recording");
-    obs_property_list_add_string(triggerList, obs_module_text("DuringVertualCam"), "virtual_cam");
-
-    auto streamRecording = obs_properties_add_bool(streamGroup, "stream_recording", obs_module_text("RecordingStream"));
+    auto streamRecording = obs_properties_add_bool(streamGroup, "stream_recording", obs_module_text("StreamRecording"));
 
     auto streamRecordingChangeHandler = [](void *, obs_properties_t *props, obs_property_t *, obs_data_t *settings) {
         auto streamRecording = obs_data_get_bool(settings, "stream_recording");
@@ -256,8 +262,12 @@ inline void addStreamGroup(obs_properties_t *props)
         obs_property_set_visible(obs_properties_get(props, "split_file"), streamRecording);
 
         auto splitFile = obs_data_get_string(settings, "split_file");
-        obs_property_set_visible(obs_properties_get(props, "split_file_time_mins"), streamRecording && !strcmp(splitFile, "by_time"));
-        obs_property_set_visible(obs_properties_get(props, "split_file_size_mb"), streamRecording && !strcmp(splitFile, "by_size"));
+        obs_property_set_visible(
+            obs_properties_get(props, "split_file_time_mins"), streamRecording && !strcmp(splitFile, "by_time")
+        );
+        obs_property_set_visible(
+            obs_properties_get(props, "split_file_size_mb"), streamRecording && !strcmp(splitFile, "by_size")
+        );
         return true;
     };
 
@@ -274,6 +284,8 @@ inline void addStreamGroup(obs_properties_t *props)
     obs_property_list_add_string(fileFormatList, obs_module_text("MKV"), "mkv");
     obs_property_list_add_string(fileFormatList, obs_module_text("hMP4"), "hybrid_mp4"); // beta
     obs_property_list_add_string(fileFormatList, obs_module_text("MP4"), "mp4");
+    obs_property_list_add_string(fileFormatList, obs_module_text("MOV"), "mov");
+    obs_property_list_add_string(fileFormatList, obs_module_text("TS"), "mpegts");
 
     auto splitFileList = obs_properties_add_list(
         streamGroup, "split_file", obs_module_text("SplitFile"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
@@ -284,10 +296,8 @@ inline void addStreamGroup(obs_properties_t *props)
 
     obs_property_set_modified_callback2(splitFileList, streamRecordingChangeHandler, nullptr);
 
-    obs_properties_add_int(
-        streamGroup, "split_file_time_mins", obs_module_text("SplitFile.TimeInMinutes"), 1, 525600, 1
-    );
-    obs_properties_add_int(streamGroup, "split_file_size_mb", obs_module_text("SplitFile.SizeInMB"), 1, 1073741824, 1);
+    obs_properties_add_int(streamGroup, "split_file_time_mins", obs_module_text("SplitFile.Time"), 1, 525600, 1);
+    obs_properties_add_int(streamGroup, "split_file_size_mb", obs_module_text("SplitFile.Size"), 1, 1073741824, 1);
 
     obs_properties_add_group(props, "stream", obs_module_text("Stream"), OBS_GROUP_NORMAL, streamGroup);
 }

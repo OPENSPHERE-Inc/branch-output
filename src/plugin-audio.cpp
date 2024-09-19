@@ -21,6 +21,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "plugin-support.h"
 #include "plugin-main.hpp"
 
+#define MAX_AUDIO_BUFFER_FRAMES 131071
+
 inline void pushAudioToBuffer(void *param, obs_audio_data *audioData)
 {
     auto filter = (BranchOutputFilter *)param;
@@ -29,12 +31,15 @@ inline void pushAudioToBuffer(void *param, obs_audio_data *audioData)
     return;
 #endif
 
-    if (!filter->outputActive || filter->audioSourceType == AUDIO_SOURCE_TYPE_SILENCE || !audioData->frames) {
+    auto outputAlive = filter->outputActive || filter->recordingActive;
+    if (!outputAlive || filter->audioSourceType == AUDIO_SOURCE_TYPE_SILENCE || !audioData->frames) {
         return;
     }
 
     pthread_mutex_lock(&filter->audioBufferMutex);
     {
+        OBSMutexAutoUnlock locked(&filter->audioBufferMutex);
+
         if (filter->audioBufferFrames + audioData->frames > MAX_AUDIO_BUFFER_FRAMES) {
             obs_log(LOG_WARNING, "%s: The audio buffer is full", obs_source_get_name(filter->filterSource));
             deque_free(&filter->audioBuffer);
@@ -77,7 +82,6 @@ inline void pushAudioToBuffer(void *param, obs_audio_data *audioData)
         // Increment buffer usage
         filter->audioBufferFrames += audioData->frames;
     }
-    pthread_mutex_unlock(&filter->audioBufferMutex);
 }
 
 // Callback from filter audio
@@ -134,7 +138,8 @@ bool audioInputCallback(
     auto filter = (BranchOutputFilter *)param;
 
     obs_audio_info audioInfo;
-    if (!filter->outputActive || filter->audioSourceType == AUDIO_SOURCE_TYPE_SILENCE ||
+    auto outputAlive = filter->outputActive || filter->recordingActive;
+    if (!outputAlive || filter->audioSourceType == AUDIO_SOURCE_TYPE_SILENCE ||
         !obs_get_audio_info(&audioInfo)) {
         // Silence
         *outTs = startTsIn;
@@ -144,13 +149,14 @@ bool audioInputCallback(
     // TODO: Shorten the critical section to reduce audio delay
     pthread_mutex_lock(&filter->audioBufferMutex);
     {
+        OBSMutexAutoUnlock locked(&filter->audioBufferMutex);
+
         if (filter->audioBufferFrames < AUDIO_OUTPUT_FRAMES) {
             // Wait until enough frames are receved.
             if (!filter->audioSkip) {
                 obs_log(LOG_DEBUG, "%s: Wait for frames...", obs_source_get_name(filter->filterSource));
             }
             filter->audioSkip++;
-            pthread_mutex_unlock(&filter->audioBufferMutex);
 
             // DO NOT stall audio output pipeline
             *outTs = startTsIn;
@@ -212,7 +218,6 @@ bool audioInputCallback(
             filter->audioBufferFrames -= frames;
         }
     }
-    pthread_mutex_unlock(&filter->audioBufferMutex);
 
     *outTs = startTsIn;
     return true;

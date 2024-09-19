@@ -18,6 +18,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs-module.h>
 #include <util/platform.h>
+#include <obs-frontend-api.h>
 
 #include <QGridLayout>
 #include <QLabel>
@@ -34,23 +35,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "output-status-dock.hpp"
 
 #define TIMER_INTERVAL 2000
+#define SETTINGS_JSON_NAME "outputStatusDock.json"
 
 // FIXME: Duplicated definition error with util/base.h
 extern "C" {
 extern void obs_log(int log_level, const char *format, ...);
-}
-
-// Imitate UI/window-basic-stats.cpp
-void setThemeID(QWidget *widget, const QString &themeID)
-{
-    if (widget->property("themeID").toString() != themeID) {
-        widget->setProperty("themeID", themeID);
-
-        /* force style sheet recalculation */
-        QString qss = widget->styleSheet();
-        widget->setStyleSheet("/* */");
-        widget->setStyleSheet(qss);
-    }
 }
 
 //--- BranchOutputStatusDock class ---//
@@ -88,24 +77,90 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     }
 
     // Tool buttons
-    auto enableAllButton = new QPushButton(QTStr("EnableAll"));
+    enableAllButton = new QPushButton(QTStr("EnableAll"), this);
     connect(enableAllButton, &QPushButton::clicked, [this]() { setEabnleAll(true); });
 
-    auto disableAllButton = new QPushButton(QTStr("DisableAll"));
+    disableAllButton = new QPushButton(QTStr("DisableAll"), this);
     connect(disableAllButton, &QPushButton::clicked, [this]() { setEabnleAll(false); });
+
+    interlockLabel = new QLabel(QTStr("Interlock"), this);
+    interlockComboBox = new QComboBox(this);
+    interlockComboBox->addItem(QTStr("None"), INTERLOCK_TYPE_NONE);
+    interlockComboBox->addItem(QTStr("Streaming"), INTERLOCK_TYPE_STREAMING);
+    interlockComboBox->addItem(QTStr("Recording"), INTERLOCK_TYPE_RECORDING);
+    interlockComboBox->addItem(QTStr("StreamingOrRecording"), INTERLOCK_TYPE_STREAMING_RECORDING);
+    interlockComboBox->addItem(QTStr("VirtualCam"), INTERLOCK_TYPE_VIRTUAL_CAM);
 
     auto buttonsContainerLayout = new QHBoxLayout();
     buttonsContainerLayout->addWidget(enableAllButton);
     buttonsContainerLayout->addWidget(disableAllButton);
     buttonsContainerLayout->addStretch();
+    buttonsContainerLayout->addWidget(interlockLabel);
+    buttonsContainerLayout->addWidget(interlockComboBox);
 
-    QVBoxLayout *outputContainerLayout = new QVBoxLayout();
+    auto *outputContainerLayout = new QVBoxLayout();
     outputContainerLayout->addWidget(outputTable);
     outputContainerLayout->addLayout(buttonsContainerLayout);
     this->setLayout(outputContainerLayout);
+
+    loadSettings();
 }
 
-BranchOutputStatusDock::~BranchOutputStatusDock() {}
+BranchOutputStatusDock::~BranchOutputStatusDock()
+{
+    saveSettings();
+}
+
+void BranchOutputStatusDock::loadSettings()
+{
+    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
+    OBSDataAutoRelease settings = obs_data_create_from_json_file(path);
+    if (!settings) {
+        return;
+    }
+
+    auto loadColumn = [&](int i, const char *key) {
+        auto width = obs_data_get_int(settings, qUtf8Printable(QString("column.%1.width").arg(key)));
+        if (width > 0) {
+            outputTable->setColumnWidth(i, width);
+        }
+    };
+
+    int col = 0;
+    loadColumn(col++, "filterName");
+    loadColumn(col++, "sourceName");
+    loadColumn(col++, "status");
+    loadColumn(col++, "dropFrames");
+    loadColumn(col++, "sentDataSize");
+    loadColumn(col++, "bitRate");
+
+    interlockComboBox->setCurrentIndex(interlockComboBox->findData(obs_data_get_int(settings, "interlock")));
+}
+
+void BranchOutputStatusDock::saveSettings()
+{
+    OBSDataAutoRelease settings = obs_data_create();
+
+    auto saveColumn = [&](int i, const char *key) {
+        obs_data_set_int(settings, qUtf8Printable(QString("column.%1.width").arg(key)), outputTable->columnWidth(i));
+    };
+
+    int col = 0;
+    saveColumn(col++, "filterName");
+    saveColumn(col++, "sourceName");
+    saveColumn(col++, "status");
+    saveColumn(col++, "dropFrames");
+    saveColumn(col++, "sentDataSize");
+    saveColumn(col++, "bitRate");
+
+    obs_data_set_int(settings, "interlock", interlockComboBox->currentData().toInt());
+
+    OBSString config_dir_path = obs_module_get_config_path(obs_current_module(), "");
+    os_mkdirs(config_dir_path);
+
+    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
+    obs_data_save_json_safe(settings, path, "tmp", "bak");
+}
 
 void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 {
@@ -115,12 +170,13 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     OutputTableRow ol;
 
     ol.filter = filter;
-    ol.filterCell = new FilterCell(QString::fromUtf8(obs_source_get_name(filter->filterSource)), filter->filterSource, this);
-    ol.parentCell = new ParentCell(QString::fromUtf8(obs_source_get_name(parent)), parent, this);
-    ol.status = new QLabel(QTStr("Status.Inactive"), this);
-    ol.droppedFrames = new QLabel(QString::fromUtf8(""), this);
-    ol.megabytesSent = new QLabel(QString::fromUtf8(""), this);
-    ol.bitrate = new QLabel(QString::fromUtf8(""), this);
+    ol.filterCell =
+        new FilterCell(QString::fromUtf8(obs_source_get_name(filter->filterSource)), filter->filterSource, this);
+    ol.parentCell = new ParentCell(obs_source_get_name(parent), parent, this);
+    ol.status = new StatusCell(QTStr("Status.Inactive"), this);
+    ol.droppedFrames = new QLabel("", this);
+    ol.megabytesSent = new QLabel("", this);
+    ol.bitrate = new QLabel("", this);
 
     outputTableRows.push_back(ol);
 
@@ -164,7 +220,7 @@ void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
 void BranchOutputStatusDock::update()
 {
     for (int i = 0; i < outputTableRows.size(); i++) {
-        outputTableRows[i].update(false);
+        outputTableRows[i].update();
     }
 }
 
@@ -188,9 +244,9 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
 //--- BranchOutputStatusDock::OutputTableRow structure ---//
 
 // Imitate UI/window-basic-stats.cpp
-void BranchOutputStatusDock::OutputTableRow::update(bool rec)
+void BranchOutputStatusDock::OutputTableRow::update()
 {
-    auto output = filter->streamOutput;
+    auto output = filter->streamOutput ? filter->streamOutput : filter->recordingOutput;
     uint64_t totalBytes = output ? obs_output_get_total_bytes(output) : 0;
     uint64_t curTime = os_gettime_ns();
     uint64_t bytesSent = totalBytes;
@@ -210,29 +266,40 @@ void BranchOutputStatusDock::OutputTableRow::update(bool rec)
         kbps = 0.0l;
     }
 
-    QString str = QTStr("Status.Inactive");
+    QStringList statusStr;
     QString themeID;
-    bool active = output ? obs_output_active(output) : false;
+    bool live = filter->streamOutput ? obs_output_active(filter->streamOutput) : false;
+    bool rec = filter->recordingOutput ? obs_output_active(filter->recordingOutput) : false;
     if (rec) {
-        if (active) {
-            str = QTStr("Status.Recording");
-        }
-    } else {
-        if (active) {
-            bool reconnecting = output ? obs_output_reconnecting(output) : false;
+        statusStr.append(QTStr("Status.Recording"));
+        themeID = "good";
+    }
 
-            if (reconnecting) {
-                str = QTStr("Status.Reconnecting");
-                themeID = "error";
-            } else {
-                str = QTStr("Status.Live");
-                themeID = "good";
-            }
+    if (live) {
+        bool reconnecting = filter->streamOutput ? obs_output_reconnecting(filter->streamOutput) : false;
+
+        if (reconnecting) {
+            statusStr.append(QTStr("Status.Reconnecting"));
+            themeID = "error";
+        } else {
+            statusStr.append(QTStr("Status.Live"));
+            themeID = "good";
         }
     }
 
-    status->setText(str);
-    setThemeID(status, themeID);
+    if (!statusStr.size()) {
+        statusStr.append(QTStr("Status.Inactive"));
+    }
+
+    status->setText(statusStr.join(","));
+    status->setTheme(themeID);
+
+    if (rec) {
+        status->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
+        status->setIconShow(true);
+    } else {
+        status->setIconShow(false);
+    }
 
     long double num = (long double)totalBytes / (1024.0l * 1024.0l);
     const char *unit = "MiB";
@@ -250,31 +317,31 @@ void BranchOutputStatusDock::OutputTableRow::update(bool rec)
     }
     bitrate->setText(QString("%1 %2").arg((double)num, 0, 'f', 0).arg(unit));
 
-    if (!rec) {
-        int total = output ? obs_output_get_total_frames(output) : 0;
-        int dropped = output ? obs_output_get_frames_dropped(output) : 0;
+    // Calculate statistics
+    int total = output ? obs_output_get_total_frames(output) : 0;
+    int dropped = output ? obs_output_get_frames_dropped(output) : 0;
 
-        if (total < first_total || dropped < first_dropped) {
-            first_total = 0;
-            first_dropped = 0;
-        }
+    if (total < first_total || dropped < first_dropped) {
+        first_total = 0;
+        first_dropped = 0;
+    }
 
-        total -= first_total;
-        dropped -= first_dropped;
+    total -= first_total;
+    dropped -= first_dropped;
 
-        num = total ? (long double)dropped / (long double)total * 100.0l : 0.0l;
+    num = total ? (long double)dropped / (long double)total * 100.0l : 0.0l;
 
-        str = QString("%1 / %2 (%3%)")
-                  .arg(QString::number(dropped), QString::number(total), QString::number((double)num, 'f', 1));
-        droppedFrames->setText(str);
+    QString dropFramesStr =
+        QString("%1 / %2 (%3%)")
+            .arg(QString::number(dropped), QString::number(total), QString::number((double)num, 'f', 1));
+    droppedFrames->setText(dropFramesStr);
 
-        if (num > 5.0l) {
-            setThemeID(droppedFrames, "error");
-        } else if (num > 1.0l) {
-            setThemeID(droppedFrames, "warning");
-        } else {
-            setThemeID(droppedFrames, "");
-        }
+    if (num > 5.0l) {
+        setThemeID(droppedFrames, "error");
+    } else if (num > 1.0l) {
+        setThemeID(droppedFrames, "warning");
+    } else {
+        setThemeID(droppedFrames, "");
     }
 
     lastBytesSent = bytesSent;
@@ -283,7 +350,7 @@ void BranchOutputStatusDock::OutputTableRow::update(bool rec)
 
 void BranchOutputStatusDock::OutputTableRow::reset()
 {
-    auto output = filter->streamOutput;
+    auto output = filter->streamOutput ? filter->streamOutput : filter->recordingOutput;
     if (!output) {
         return;
     }
@@ -305,6 +372,7 @@ FilterCell::FilterCell(const QString &text, obs_source_t *source, QWidget *paren
     visibilityCheckbox->setProperty("visibilityCheckBox", true);
     visibilityCheckbox->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
     visibilityCheckbox->setChecked(obs_source_enabled(source));
+    visibilityCheckbox->setCursor(Qt::PointingHandCursor);
 
     connect(visibilityCheckbox, &QCheckBox::clicked, [source](bool visible) {
         obs_source_set_enabled(source, visible);
@@ -352,9 +420,12 @@ void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
 
 //--- ParentCell class ---//
 
-ParentCell::ParentCell(const QString &text, obs_source_t *source, QWidget *parent) : QLabel(text, parent)
+ParentCell::ParentCell(const QString &text, obs_source_t *_source, QWidget *parent) : QLabel(parent), source(_source)
 {
     parentRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", ParentCell::onParentRenamed, this);
+    setTextFormat(Qt::RichText);
+    setCursor(Qt::PointingHandCursor);
+    setSourceName(text);
 }
 
 ParentCell::~ParentCell()
@@ -366,5 +437,33 @@ void ParentCell::onParentRenamed(void *data, calldata_t *cd)
 {
     auto item = (ParentCell *)data;
     auto newName = calldata_string(cd, "new_name");
-    item->setText(QString::fromUtf8(newName));
+    item->setSourceName(newName);
 }
+
+void ParentCell::setSourceName(const QString &text)
+{
+    setText(QString("<u>%1</u>").arg(text));
+}
+
+void ParentCell::mousePressEvent(QMouseEvent *event)
+{
+    obs_frontend_open_source_filters(source);
+}
+
+//--- StatusCell class ---//
+
+StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent)
+{
+    icon = new QLabel(this);
+    statusText = new QLabel(text, this);
+
+    icon->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+
+    auto layout = new QHBoxLayout();
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(icon);
+    layout->addWidget(statusText);
+    setLayout(layout);
+}
+
+StatusCell::~StatusCell() {}
