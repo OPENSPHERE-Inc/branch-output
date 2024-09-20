@@ -26,4 +26,6 @@
 /cmake/.CMakeBuildNumber
 
 # Except additional project files
-!screenshot.jpg
+!screenshot1.jpg
+!screenshot2.jpg
+

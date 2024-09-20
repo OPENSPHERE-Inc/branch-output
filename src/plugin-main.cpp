@@ -715,6 +715,12 @@ void filterRemove(void *data, obs_source_t *)
     statusDock->removeFilter(filter);
 }
 
+void videoRender(void *data, gs_effect_t *)
+{
+    auto filter = (BranchOutputFilter *)data;
+    obs_source_skip_video_filter(filter->filterSource);
+}
+
 obs_source_info createFilterInfo()
 {
     obs_source_info filter_info = {0};
@@ -734,8 +740,8 @@ obs_source_info createFilterInfo()
     filter_info.update = update;
     filter_info.filter_add = filterAdd;
     filter_info.filter_remove = filterRemove;
-
     filter_info.filter_audio = audioFilterCallback;
+    filter_info.video_render = videoRender;
 
     return filter_info;
 }

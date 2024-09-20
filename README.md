@@ -1,6 +1,8 @@
 # Branch Output filter (The OBS Studio Plugin)
 
-[<img src="./screenshot.jpg" />](./screenshot.jpg)
+[<img src="./screenshot1.jpg" />](./screenshot1.jpg)
+
+[<img src="./screenshot2.jpg" />](./screenshot2.jpg)
 
 ## Features
 
