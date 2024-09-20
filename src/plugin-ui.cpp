@@ -382,7 +382,7 @@ inline void addAudioEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
 
     obs_property_set_modified_callback2(
         audioEncoderList,
-        [](void *param, obs_properties_t *props, obs_property_t *, obs_data_t *settings) {
+        [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
             auto _filter = (BranchOutputFilter *)param;
             obs_log(LOG_DEBUG, "%s: Audio encoder chainging.", obs_source_get_name(_filter->filterSource));
 
@@ -391,7 +391,7 @@ inline void addAudioEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
             const auto encoder_bitrate_prop = obs_properties_get(encoder_props, "bitrate");
             obs_properties_destroy(encoder_props);
 
-            auto audio_encoder_group = obs_property_group_content(obs_properties_get(props, "audio_encoder_group"));
+            auto audio_encoder_group = obs_property_group_content(obs_properties_get(_props, "audio_encoder_group"));
             auto audio_bitrate_prop = obs_properties_get(audio_encoder_group, "audio_bitrate");
 
             obs_property_list_clear(audio_bitrate_prop);
