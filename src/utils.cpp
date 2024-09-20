@@ -54,28 +54,28 @@ void ensureDirectoryExists(QString path)
     path.replace('\\', '/');
 
     // Remove file part (also remove trailing slash)
-	size_t last = path.lastIndexOf('/');
-	if (last < 0) {
-		return;
+    auto last = path.lastIndexOf('/');
+    if (last < 0) {
+        return;
     }
 
-	QString directory = path.left(last);
-	os_mkdirs(qUtf8Printable(directory));
+    QString directory = path.left(last);
+    os_mkdirs(qUtf8Printable(directory));
 }
 
 // Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1779
 void findBestFilename(QString &strPath, bool noSpace)
 {
-	int num = 2;
+    int num = 2;
 
-	if (!os_file_exists(qUtf8Printable(strPath))) {
-		return;
+    if (!os_file_exists(qUtf8Printable(strPath))) {
+        return;
     }
 
     size_t dotPos = strPath.lastIndexOf('.');
-	for (;;) {
-		QString testPath = strPath;
-		QString numStr;
+    for (;;) {
+        QString testPath = strPath;
+        QString numStr;
 
         if (noSpace) {
             numStr = QString("_%1").arg(num++);
@@ -83,13 +83,13 @@ void findBestFilename(QString &strPath, bool noSpace)
             numStr = QString(" (%1)").arg(num++);
         }
 
-		testPath.insert(dotPos, numStr);
+        testPath.insert(dotPos, numStr);
 
-		if (!os_file_exists(qUtf8Printable(testPath))) {
-			strPath = testPath;
-			break;
-		}
-	}
+        if (!os_file_exists(qUtf8Printable(testPath))) {
+            strPath = testPath;
+            break;
+        }
+    }
 }
 
 // Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1888
@@ -119,4 +119,3 @@ QString getOutputFilename(const char *path, const char *container, bool noSpace,
 
     return strPath;
 }
-

@@ -139,8 +139,7 @@ bool audioInputCallback(
 
     obs_audio_info audioInfo;
     auto outputAlive = filter->outputActive || filter->recordingActive;
-    if (!outputAlive || filter->audioSourceType == AUDIO_SOURCE_TYPE_SILENCE ||
-        !obs_get_audio_info(&audioInfo)) {
+    if (!outputAlive || filter->audioSourceType == AUDIO_SOURCE_TYPE_SILENCE || !obs_get_audio_info(&audioInfo)) {
         // Silence
         *outTs = startTsIn;
         return true;

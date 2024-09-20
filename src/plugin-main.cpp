@@ -41,7 +41,6 @@ OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 BranchOutputStatusDock *statusDock = nullptr;
 
-
 void stopOutput(BranchOutputFilter *filter)
 {
     pthread_mutex_lock(&filter->outputMutex);

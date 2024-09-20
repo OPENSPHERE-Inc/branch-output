@@ -24,11 +24,22 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <QString>
 #include <QWidget>
+#include <QVariant>
 
-using OBSString = OBSPtr<char *, (void (*)(char *))bfree>;
 QString getOutputFilename(const char *path, const char *container, bool noSpace, bool overwrite, const char *format);
 QString getFormatExt(const char *container);
-using OBSMutexAutoUnlock = OBSPtr<pthread_mutex_t *, (void (*)(pthread_mutex_t *))pthread_mutex_unlock>;
+
+inline void strFree(char *ptr)
+{
+    bfree(ptr);
+}
+using OBSString = OBSPtr<char *, strFree>;
+
+inline void pthreadMutexUnlock(pthread_mutex_t *mutex)
+{
+    pthread_mutex_unlock(mutex);
+}
+using OBSMutexAutoUnlock = OBSPtr<pthread_mutex_t *, pthreadMutexUnlock>;
 
 // Imitate UI/window-basic-stats.cpp
 inline void setThemeID(QWidget *widget, const QString &themeID)
