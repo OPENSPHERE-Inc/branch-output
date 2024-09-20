@@ -425,6 +425,42 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
     }
 }
 
+void reconnectStreamOutput(BranchOutputFilter *filter)
+{
+    pthread_mutex_lock(&filter->outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&filter->outputMutex);
+
+        if (filter->outputActive) {
+            obs_output_force_stop(filter->streamOutput);
+
+            filter->connectAttemptingAt = os_gettime_ns();
+
+            if (!obs_output_start(filter->streamOutput)) {
+                obs_log(LOG_ERROR, "%s: Reconnect streaming output failed", obs_source_get_name(filter->filterSource));
+            }
+        }
+    }
+}
+
+void restartRecordingOutput(BranchOutputFilter *filter)
+{
+    pthread_mutex_lock(&filter->outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&filter->outputMutex);
+
+        filter->connectAttemptingAt = os_gettime_ns();
+
+        if (filter->recordingActive) {
+            obs_output_force_stop(filter->recordingOutput);
+
+            if (!obs_output_start(filter->recordingOutput)) {
+                obs_log(LOG_ERROR, "%s: Restart recording output failed", obs_source_get_name(filter->filterSource));
+            }
+        }
+    }
+}
+
 void update(void *data, obs_data_t *settings)
 {
     auto filter = (BranchOutputFilter *)data;
@@ -522,8 +558,8 @@ void intervalTask(BranchOutputFilter *filter)
     auto sourceEnabled = obs_source_enabled(filter->filterSource);
 
     if (filter->outputActive || filter->recordingActive) {
-        auto outputAlive = (filter->streamOutput && obs_output_active(filter->streamOutput)) ||
-                           (filter->recordingOutput && obs_output_active(filter->recordingOutput));
+        auto streamingAlive = filter->streamOutput && obs_output_active(filter->streamOutput);
+        auto recordingAlive = filter->recordingOutput && obs_output_active(filter->recordingOutput);
 
         if (sourceEnabled) {
             if (filter->outputActive && !connectAttemptingTimedOut(filter)) {
@@ -567,17 +603,26 @@ void intervalTask(BranchOutputFilter *filter)
                 return;
             }
 
-            if (!outputAlive) {
-                // Retry connection
+            if (filter->recordingActive && !recordingAlive) {
+                // Restart recording
                 obs_log(
-                    LOG_INFO, "%s: Attempting reactivate the stream output", obs_source_get_name(filter->filterSource)
+                    LOG_INFO, "%s: Attempting reactivate the recording output",
+                    obs_source_get_name(filter->filterSource)
                 );
-                OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
-                startOutput(filter, settings);
+                restartRecordingOutput(filter);
                 return;
             }
 
-            if (outputAlive) {
+            if (filter->outputActive && !streamingAlive) {
+                // Reconnect streaming
+                obs_log(
+                    LOG_INFO, "%s: Attempting reactivate the stream output", obs_source_get_name(filter->filterSource)
+                );
+                reconnectStreamOutput(filter);
+                return;
+            }
+
+            if (streamingAlive || recordingAlive) {
                 // Monitoring source
                 auto parent = obs_filter_get_parent(filter->filterSource);
                 auto width = obs_source_get_width(parent);
@@ -603,7 +648,7 @@ void intervalTask(BranchOutputFilter *filter)
             }
 
         } else {
-            if (outputAlive) {
+            if (streamingAlive || recordingAlive) {
                 // Clicked filter's "Eye" icon (Hide)
                 stopOutput(filter);
                 return;
