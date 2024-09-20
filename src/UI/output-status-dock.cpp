@@ -30,6 +30,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QCheckBox>
+#include <QMouseEvent>
 
 #include "../plugin-main.hpp"
 #include "output-status-dock.hpp"
@@ -122,7 +123,7 @@ void BranchOutputStatusDock::loadSettings()
     auto loadColumn = [&](int i, const char *key) {
         auto width = obs_data_get_int(settings, qUtf8Printable(QString("column.%1.width").arg(key)));
         if (width > 0) {
-            outputTable->setColumnWidth(i, width);
+            outputTable->setColumnWidth(i, (int)width);
         }
     };
 
@@ -447,7 +448,9 @@ void ParentCell::setSourceName(const QString &text)
 
 void ParentCell::mousePressEvent(QMouseEvent *event)
 {
-    obs_frontend_open_source_filters(source);
+    if (event->button() == Qt::LeftButton) {
+        obs_frontend_open_source_filters(source);
+    }
 }
 
 //--- StatusCell class ---//

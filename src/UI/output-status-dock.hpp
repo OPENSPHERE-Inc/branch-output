@@ -138,5 +138,5 @@ public:
     void removeFilter(BranchOutputFilter *filter);
     void setEabnleAll(bool enabled);
 
-    inline const int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
+    inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
 };

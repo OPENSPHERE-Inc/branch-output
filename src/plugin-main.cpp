@@ -522,8 +522,8 @@ void intervalTask(BranchOutputFilter *filter)
     auto sourceEnabled = obs_source_enabled(filter->filterSource);
 
     if (filter->outputActive || filter->recordingActive) {
-        auto outputAlive = filter->streamOutput && obs_output_active(filter->streamOutput) ||
-                           filter->recordingOutput && obs_output_active(filter->recordingOutput);
+        auto outputAlive = (filter->streamOutput && obs_output_active(filter->streamOutput)) ||
+                           (filter->recordingOutput && obs_output_active(filter->recordingOutput));
 
         if (sourceEnabled) {
             if (filter->outputActive && !connectAttemptingTimedOut(filter)) {
