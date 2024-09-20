@@ -86,7 +86,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
 
     interlockLabel = new QLabel(QTStr("Interlock"), this);
     interlockComboBox = new QComboBox(this);
-    interlockComboBox->addItem(QTStr("None"), INTERLOCK_TYPE_NONE);
+    interlockComboBox->addItem(QTStr("AlwaysOn"), INTERLOCK_TYPE_ALWAYS_ON);
     interlockComboBox->addItem(QTStr("Streaming"), INTERLOCK_TYPE_STREAMING);
     interlockComboBox->addItem(QTStr("Recording"), INTERLOCK_TYPE_RECORDING);
     interlockComboBox->addItem(QTStr("StreamingOrRecording"), INTERLOCK_TYPE_STREAMING_RECORDING);
