@@ -110,9 +110,9 @@ runs:
           Configuration = '${{ inputs.config }}'
         }
 
-# Do not build installer package for windows at this time
-#        if ( '${{ inputs.package }}' -eq 'true' ) {
-#          $PackageArgs += @{BuildInstaller = $true}
-#        }
-
+        # Do not build installer package for windows at this time
+        #if ( '${{ inputs.package }}' -eq 'true' ) {
+        #  $PackageArgs += @{BuildInstaller = $true}
+        #}
+        
         .github/scripts/Package-Windows.ps1 @PackageArgs
