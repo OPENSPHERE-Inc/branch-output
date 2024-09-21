@@ -59,12 +59,13 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     outputTable->setVerticalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
     outputTable->setSelectionMode(QTableWidget::SelectionMode::NoSelection);
     outputTable->setFocusPolicy(Qt::FocusPolicy::NoFocus);
-    outputTable->setColumnCount(7);
+    outputTable->setColumnCount(8);
 
     int col = 0;
     outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("FilterName")));
     outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("SourceName")));
     outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("Status")));
+    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("Recording")));
     outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("DropFrames")));
     outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("SentDataSize")));
     outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("BitRate")));
@@ -131,6 +132,7 @@ void BranchOutputStatusDock::loadSettings()
     loadColumn(col++, "filterName");
     loadColumn(col++, "sourceName");
     loadColumn(col++, "status");
+    loadColumn(col++, "recording");
     loadColumn(col++, "dropFrames");
     loadColumn(col++, "sentDataSize");
     loadColumn(col++, "bitRate");
@@ -150,6 +152,7 @@ void BranchOutputStatusDock::saveSettings()
     saveColumn(col++, "filterName");
     saveColumn(col++, "sourceName");
     saveColumn(col++, "status");
+    saveColumn(col++, "recording");
     saveColumn(col++, "dropFrames");
     saveColumn(col++, "sentDataSize");
     saveColumn(col++, "bitRate");
@@ -175,6 +178,9 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
         new FilterCell(QString::fromUtf8(obs_source_get_name(filter->filterSource)), filter->filterSource, this);
     ol.parentCell = new ParentCell(obs_source_get_name(parent), parent, this);
     ol.status = new StatusCell(QTStr("Status.Inactive"), this);
+    ol.status->setIcon(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
+    ol.recording = new StatusCell(QTStr("Status.Inactive"), this);
+    ol.recording->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
     ol.droppedFrames = new QLabel("", this);
     ol.megabytesSent = new QLabel("", this);
     ol.bitrate = new QLabel("", this);
@@ -186,6 +192,7 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     outputTable->setCellWidget(row, col++, ol.filterCell);
     outputTable->setCellWidget(row, col++, ol.parentCell);
     outputTable->setCellWidget(row, col++, ol.status);
+    outputTable->setCellWidget(row, col++, ol.recording);
     outputTable->setCellWidget(row, col++, ol.droppedFrames);
     outputTable->setCellWidget(row, col++, ol.megabytesSent);
     outputTable->setCellWidget(row, col++, ol.bitrate);
@@ -247,7 +254,7 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
 // Imitate UI/window-basic-stats.cpp
 void BranchOutputStatusDock::OutputTableRow::update()
 {
-    auto output = filter->streamOutput ? filter->streamOutput : filter->recordingOutput;
+    auto output = filter->streamOutput;
     uint64_t totalBytes = output ? obs_output_get_total_bytes(output) : 0;
     uint64_t curTime = os_gettime_ns();
     uint64_t bytesSent = totalBytes;
@@ -267,40 +274,37 @@ void BranchOutputStatusDock::OutputTableRow::update()
         kbps = 0.0l;
     }
 
-    QStringList statusStr;
-    QString themeID;
-    bool live = filter->streamOutput ? obs_output_active(filter->streamOutput) : false;
-    bool rec = filter->recordingOutput ? obs_output_active(filter->recordingOutput) : false;
-    if (rec) {
-        statusStr.append(QTStr("Status.Recording"));
-        themeID = "good";
-    }
-
-    if (live) {
+    // Status display
+    QString statusStr = QTStr("Status.Inactive");
+    QString themeID = "";
+    bool active = filter->streamOutput ? obs_output_active(filter->streamOutput) : false;
+    if (active) {
         bool reconnecting = filter->streamOutput ? obs_output_reconnecting(filter->streamOutput) : false;
 
         if (reconnecting) {
-            statusStr.append(QTStr("Status.Reconnecting"));
+            statusStr = QTStr("Status.Reconnecting");
             themeID = "error";
         } else {
-            statusStr.append(QTStr("Status.Live"));
+            statusStr = QTStr("Status.Live");
             themeID = "good";
         }
     }
-
-    if (!statusStr.size()) {
-        statusStr.append(QTStr("Status.Inactive"));
-    }
-
-    status->setText(statusStr.join(","));
+    status->setIconShow(active);
+    status->setText(statusStr);
     status->setTheme(themeID);
 
-    if (rec) {
-        status->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
-        status->setIconShow(true);
+    // Recording display
+    active = filter->recordingOutput ? obs_output_active(filter->recordingOutput) : false;
+    if (active) {
+        statusStr = QTStr("Status.Recording");
+        themeID = "good";
     } else {
-        status->setIconShow(false);
+        statusStr = QTStr("Status.Inactive");
+        themeID = "";
     }
+    recording->setIconShow(active);
+    recording->setText(statusStr);
+    recording->setTheme(themeID);
 
     long double num = (long double)totalBytes / (1024.0l * 1024.0l);
     const char *unit = "MiB";
@@ -351,7 +355,7 @@ void BranchOutputStatusDock::OutputTableRow::update()
 
 void BranchOutputStatusDock::OutputTableRow::reset()
 {
-    auto output = filter->streamOutput ? filter->streamOutput : filter->recordingOutput;
+    auto output = filter->streamOutput;
     if (!output) {
         return;
     }
@@ -461,6 +465,7 @@ StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent)
     statusText = new QLabel(text, this);
 
     icon->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+    icon->setVisible(false);
 
     auto layout = new QHBoxLayout();
     layout->setContentsMargins(0, 0, 0, 0);

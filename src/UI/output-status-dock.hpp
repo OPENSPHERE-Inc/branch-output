@@ -98,6 +98,7 @@ class BranchOutputStatusDock : public QFrame {
         FilterCell *filterCell;
         ParentCell *parentCell;
         StatusCell *status;
+        StatusCell *recording;
         QLabel *droppedFrames;
         QLabel *megabytesSent;
         QLabel *bitrate;
