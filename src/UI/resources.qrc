@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/branch-output">
+    <file>images/recording.svg</file>
+    <file>images/streaming.svg</file>
+  </qresource>
+</RCC>

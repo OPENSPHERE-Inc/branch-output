@@ -23,15 +23,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <util/deque.h>
 #include <util/threading.h>
-#include "dock/output-status.hpp"
 
-#define FILTER_ID "osi_branch_output"
-#define MAX_AUDIO_BUFFER_FRAMES 131071
-#define SETTINGS_JSON_NAME "recently.json"
-#define OUTPUT_MAX_RETRIES 7
-#define OUTPUT_RETRY_DELAY_SECS 1
-#define CONNECT_ATTEMPTING_TIMEOUT_NS 15000000000ULL
-#define AVAILAVILITY_CHECK_INTERVAL_NS 1000000000ULL
+#include "UI/output-status-dock.hpp"
 
 enum AudioSourceType {
     AUDIO_SOURCE_TYPE_SILENCE,
@@ -40,25 +33,36 @@ enum AudioSourceType {
     AUDIO_SOURCE_TYPE_CAPTURE,
 };
 
-struct filter_t {
-    bool filter_active; // Activate after first "Apply" click
-    bool output_active;
-    uint32_t stored_settings_rev;
-    uint32_t active_settings_rev;
-    uint64_t last_available_at;
+enum InterlockType {
+    INTERLOCK_TYPE_ALWAYS_ON,
+    INTERLOCK_TYPE_STREAMING,
+    INTERLOCK_TYPE_RECORDING,
+    INTERLOCK_TYPE_STREAMING_RECORDING,
+    INTERLOCK_TYPE_VIRTUAL_CAM,
+};
+
+// TODO: Convert to Object
+struct BranchOutputFilter {
+    bool initialized; // Activate after first "Apply" click
+    bool outputActive;
+    bool recordingActive;
+    uint32_t storedSettingsRev;
+    uint32_t activeSettingsRev;
+    uint64_t lastAvailableAt;
+    QTimer *intervalTimer;
 
     // Filter source
-    obs_source_t *source;
-    obs_weak_source_t *audio_source; // NULL means using filter's audio
+    obs_source_t *filterSource;
 
     // User choosed encoder
-    obs_encoder_t *video_encoder;
-    obs_encoder_t *audio_encoder;
+    obs_encoder_t *videoEncoder;
+    obs_encoder_t *audioEncoder;
 
     obs_view_t *view;
-    video_t *video_output;
-    audio_t *audio_output;
-    obs_output_t *stream_output;
+    video_t *videoOutput;
+    audio_t *audioOutput;
+    obs_output_t *streamOutput;
+    obs_output_t *recordingOutput;
     obs_service_t *service;
 
     // Video context
@@ -66,22 +70,24 @@ struct filter_t {
     uint32_t height;
 
     // Audio context
-    AudioSourceType audio_source_type;
-    deque audio_buffer;
-    size_t audio_buffer_frames;
-    pthread_mutex_t audio_buffer_mutex;
-    uint8_t *audio_conv_buffer;
-    size_t audio_conv_buffer_size;
-    size_t audio_mix_idx;
-    speaker_layout audio_channels;
-    uint32_t samples_per_sec;
-    uint64_t audio_skip;
+    obs_weak_source_t *audioSource; // NULL means using filter's audio
+    AudioSourceType audioSourceType;
+    deque audioBuffer;
+    size_t audioBufferFrames;
+    pthread_mutex_t audioBufferMutex;
+    uint8_t *audioConvBuffer;
+    size_t audioConvBufferSize;
+    size_t audioMixIdx;
+    speaker_layout audioChannels;
+    uint32_t samplesPerSec;
+    uint64_t audioSkip;
 
     // Stream context
-    uint64_t connect_attempting_at;
+    pthread_mutex_t outputMutex;
+    uint64_t connectAttemptingAt;
 };
 
-struct audio_buffer_chunk_header_t {
+struct AudioBufferChunkHeader {
     size_t data_idx[MAX_AUDIO_CHANNELS]; // Zero means unused channel
     uint32_t frames;
     uint64_t timestamp;
@@ -90,12 +96,12 @@ struct audio_buffer_chunk_header_t {
 };
 
 void update(void *data, obs_data_t *settings);
-void get_defaults(obs_data_t *defaults);
-obs_properties_t *get_properties(void *data);
-void audio_capture_callback(void *param, obs_source_t *, const audio_data *audio_data, bool muted);
-void master_audio_callback(void *param, size_t, audio_data *audio_data);
-obs_audio_data *audio_filter_callback(void *param, obs_audio_data *audio_data);
-bool audio_input_callback(
+void getDefaults(obs_data_t *defaults);
+obs_properties_t *getProperties(void *data);
+void audioCaptureCallback(void *param, obs_source_t *, const audio_data *audio_data, bool muted);
+void masterAudioCallback(void *param, size_t, audio_data *audio_data);
+obs_audio_data *audioFilterCallback(void *param, obs_audio_data *audio_data);
+bool audioInputCallback(
     void *param, uint64_t start_ts_in, uint64_t, uint64_t *out_ts, uint32_t mixers, audio_output_data *mixes
 );
-BranchOutputStatus *create_output_status_dock();
+BranchOutputStatusDock *createOutputStatusDock();

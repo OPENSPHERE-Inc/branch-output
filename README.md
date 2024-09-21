@@ -1,6 +1,8 @@
 # Branch Output filter (The OBS Studio Plugin)
 
-[<img src="./screenshot.jpg" />](./screenshot.jpg)
+[<img src="./screenshot1.jpg" />](./screenshot1.jpg)
+
+[<img src="./screenshot2.jpg" />](./screenshot2.jpg)
 
 ## Features
 
@@ -10,13 +12,17 @@ This is an OBS Studio plugin that allows to transmit video and audio with RTMP /
 Inspired by the [Source Record](https://github.com/exeldro/obs-source-record) plugin, but more focused on streaming.
 More reliable and proper audio handling.
 
-(*) Recording functionality is currently not available
-
 - Added “Branch Output” to source or scene effect filters.
 - One stream per Branch Output filter can be sent with dedicated encoding settings.
 - Multiple Branch Outputs can be added to a single source or scene (as PC specs allow)
 - Branch Output Selectable audio source for each filter (filter audio, any source audio, audio tracks 1-6)
 - Automatically reconnects when disconnected
+- Stream recording functionality (Various container formats, time and size division supported)
+  
+  (*) Works as recording only if connection information is left blank
+  
+- Status dock to check the status and statistics of all Branch Output filters. Support for batch or individual activation and deactivation
+- Can be interlinked with OBS Studio's streaming, recording, and virtual camera status
 
 
 **[JP]**
@@ -25,13 +31,17 @@ More reliable and proper audio handling.
 [Source Record](https://github.com/exeldro/obs-source-record) プラグインに触発されて開発しましたが、ストリーミングでの使用に重点が置かれています。
 より信頼性があり、適切なオーディオの取り扱いを行います。
 
-※録画機能は現在のところ非搭載
-
 - ソースまたはシーンのエフェクトフィルタに「Branch Output」を追加
 - フィルター1つにつき1本のストリーム送出が、専用のエンコーディング設定で可能
 - 1つのソース・シーンに複数の Branch Output を追加可能（PCのスペックが許す限り追加可能）
 - Branch Output フィルターごとに音声ソースを選択可能（フィルター音声、任意ソース音声、音声トラック1～6）
 - 接続が切れても自動的に再接続
+- 配信録画機能（各種コンテナ形式、時間・サイズ分割に対応）
+  
+  ※接続情報を空欄にすれば録画のみとして動作
+
+- ステータスドックで全 Branch Output フィルターの状態と統計を確認可能。一括ないし個別の有効化・無効化に対応。
+- OBS Studio の配信・録画・仮想カメラの状態と連動可能
 
 ## Requirements
 

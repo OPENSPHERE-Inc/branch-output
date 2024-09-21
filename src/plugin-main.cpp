@@ -17,400 +17,514 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include <obs-module.h>
-#include <plugin-support.h>
 #include <obs-frontend-api.h>
 #include <util/config-file.h>
 #include <util/deque.h>
 #include <util/threading.h>
 #include <util/platform.h>
+#include <obs.hpp>
+
+#include "plugin-support.h"
 #include "plugin-main.hpp"
+#include "utils.hpp"
+
+#define SETTINGS_JSON_NAME "recently.json"
+#define FILTER_ID "osi_branch_output"
+#define OUTPUT_MAX_RETRIES 7
+#define OUTPUT_RETRY_DELAY_SECS 1
+#define CONNECT_ATTEMPTING_TIMEOUT_NS 15000000000ULL
+#define AVAILAVILITY_CHECK_INTERVAL_NS 1000000000ULL
+#define TASK_INTERVAL_MS 1000
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-void stop_output(filter_t *filter)
+BranchOutputStatusDock *statusDock = nullptr;
+
+void stopOutput(BranchOutputFilter *filter)
 {
-    obs_source_t *parent = obs_filter_get_parent(filter->source);
-    filter->connect_attempting_at = 0;
+    pthread_mutex_lock(&filter->outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&filter->outputMutex);
 
-    if (filter->stream_output) {
-        if (filter->output_active) {
-            obs_source_dec_showing(parent);
-            obs_output_stop(filter->stream_output);
-        }
+        obs_source_t *parent = obs_filter_get_parent(filter->filterSource);
+        filter->connectAttemptingAt = 0;
 
-        obs_output_release(filter->stream_output);
-        filter->stream_output = NULL;
-    }
-
-    if (filter->service) {
-        obs_service_release(filter->service);
-        filter->service = NULL;
-    }
-
-    if (filter->audio_encoder) {
-        obs_encoder_release(filter->audio_encoder);
-        filter->audio_encoder = NULL;
-    }
-
-    if (filter->video_encoder) {
-        obs_encoder_release(filter->video_encoder);
-        filter->video_encoder = NULL;
-    }
-
-    if (filter->audio_source_type == AUDIO_SOURCE_TYPE_CAPTURE) {
-        if (filter->audio_source) {
-            auto source = obs_weak_source_get_source(filter->audio_source);
-            if (source) {
-                obs_source_remove_audio_capture_callback(source, audio_capture_callback, filter);
-                obs_source_release(source);
+        if (filter->recordingOutput) {
+            if (filter->recordingActive) {
+                obs_source_dec_showing(parent);
+                obs_output_stop(filter->recordingOutput);
             }
-            obs_weak_source_release(filter->audio_source);
-            filter->audio_source = NULL;
+
+            obs_output_release(filter->recordingOutput);
+            filter->recordingOutput = nullptr;
         }
 
-    } else if (filter->audio_source_type == AUDIO_SOURCE_TYPE_MASTER) {
-        obs_remove_raw_audio_callback(filter->audio_mix_idx, master_audio_callback, filter);
-    }
-    filter->audio_source_type = AUDIO_SOURCE_TYPE_SILENCE;
+        if (filter->streamOutput) {
+            if (filter->outputActive) {
+                obs_source_dec_showing(parent);
+                obs_output_stop(filter->streamOutput);
+            }
 
-    if (filter->audio_output) {
-        audio_output_close(filter->audio_output);
-        filter->audio_output = NULL;
+            obs_output_release(filter->streamOutput);
+            filter->streamOutput = nullptr;
+        }
+
+        if (filter->service) {
+            obs_service_release(filter->service);
+            filter->service = nullptr;
+        }
+
+        if (filter->audioEncoder) {
+            obs_encoder_release(filter->audioEncoder);
+            filter->audioEncoder = nullptr;
+        }
+
+        if (filter->videoEncoder) {
+            obs_encoder_release(filter->videoEncoder);
+            filter->videoEncoder = nullptr;
+        }
+
+        if (filter->audioSourceType == AUDIO_SOURCE_TYPE_CAPTURE) {
+            if (filter->audioSource) {
+                auto source = obs_weak_source_get_source(filter->audioSource);
+                if (source) {
+                    obs_source_remove_audio_capture_callback(source, audioCaptureCallback, filter);
+                    obs_source_release(source);
+                }
+                obs_weak_source_release(filter->audioSource);
+                filter->audioSource = nullptr;
+            }
+
+        } else if (filter->audioSourceType == AUDIO_SOURCE_TYPE_MASTER) {
+            obs_remove_raw_audio_callback(filter->audioMixIdx, masterAudioCallback, filter);
+        }
+        filter->audioSourceType = AUDIO_SOURCE_TYPE_SILENCE;
+
+        if (filter->audioOutput) {
+            audio_output_close(filter->audioOutput);
+            filter->audioOutput = nullptr;
+        }
+
+        if (filter->view) {
+            obs_view_set_source(filter->view, 0, nullptr);
+            obs_view_remove(filter->view);
+            obs_view_destroy(filter->view);
+            filter->view = nullptr;
+        }
+
+        filter->audioBufferFrames = 0;
+        filter->audioSkip = 0;
+        deque_free(&filter->audioBuffer);
+
+        if (filter->recordingActive) {
+            filter->recordingActive = false;
+            obs_log(LOG_INFO, "%s: Stopping recording output succeeded", obs_source_get_name(filter->filterSource));
+        }
+
+        if (filter->outputActive) {
+            filter->outputActive = false;
+            obs_log(LOG_INFO, "%s: Stopping stream output succeeded", obs_source_get_name(filter->filterSource));
+        }
+    }
+}
+
+obs_data_t *createRecordingSettings(BranchOutputFilter *filter, obs_data_t *settings)
+{
+    obs_data_t *recordingSettings = obs_data_create();
+    auto config = obs_frontend_get_profile_config();
+    QString filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
+    auto path = obs_data_get_string(settings, "path");
+    auto recFormat = obs_data_get_string(settings, "rec_format");
+
+    // Add filter name to filename format
+    QString sourceName = obs_source_get_name(obs_filter_get_parent(filter->filterSource));
+    QString filterName = obs_source_get_name(filter->filterSource);
+    filenameFormat = QString("%1_%2_%3")
+                         .arg(sourceName.replace(QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]"), "-"))
+                         .arg(filterName.replace(QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]"), "-"))
+                         .arg(filenameFormat);
+    auto compositePath = getOutputFilename(path, recFormat, true, false, qUtf8Printable(filenameFormat));
+
+    obs_data_set_string(recordingSettings, "path", qUtf8Printable(compositePath));
+
+    auto splitFile = obs_data_get_string(settings, "split_file");
+    if (strlen(splitFile) > 0) {
+        obs_data_set_string(recordingSettings, "directory", path);
+        obs_data_set_string(recordingSettings, "format", qUtf8Printable(filenameFormat));
+        obs_data_set_string(recordingSettings, "extension", qUtf8Printable(getFormatExt(recFormat)));
+        obs_data_set_bool(recordingSettings, "allow_spaces", false);
+        obs_data_set_bool(recordingSettings, "allow_overwrite", false);
+        obs_data_set_bool(recordingSettings, "split_file", true);
+
+        auto maxTimeSec = !strcmp(splitFile, "by_time") ? obs_data_get_int(settings, "split_file_time_mins") * 60 : 0;
+        obs_data_set_int(recordingSettings, "max_time_sec", maxTimeSec);
+
+        auto maxSizeMb = !strcmp(splitFile, "by_size") ? obs_data_get_int(settings, "split_file_size_mb") : 0;
+        obs_data_set_int(recordingSettings, "max_size_mb", maxSizeMb);
     }
 
-    if (filter->view) {
-        obs_view_set_source(filter->view, 0, NULL);
-        obs_view_remove(filter->view);
-        obs_view_destroy(filter->view);
-        filter->view = NULL;
-    }
-
-    filter->audio_buffer_frames = 0;
-    filter->audio_skip = 0;
-    deque_free(&filter->audio_buffer);
-
-    if (filter->output_active) {
-        filter->output_active = false;
-        obs_log(LOG_INFO, "%s: Stopping stream output succeeded", obs_source_get_name(filter->source));
-    }
+    return recordingSettings;
 }
 
 #define FTL_PROTOCOL "ftl"
 #define RTMP_PROTOCOL "rtmp"
 
-void start_output(filter_t *filter, obs_data_t *settings)
+void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
 {
     // Force release references
-    stop_output(filter);
+    stopOutput(filter);
 
-    // Abort when obs initializing or filter disabled.
-    if (!obs_initialized() || !obs_source_enabled(filter->source)) {
-        return;
-    }
+    pthread_mutex_lock(&filter->outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&filter->outputMutex);
 
-    // Retrieve filter source
-    auto parent = obs_filter_get_parent(filter->source);
-    if (!parent) {
-        obs_log(LOG_ERROR, "%s: Filter source not found", obs_source_get_name(filter->source));
-        return;
-    }
-
-    obs_video_info ovi = {0};
-    if (!obs_get_video_info(&ovi)) {
-        // Abort when no video situation
-        return;
-    }
-
-    // Round up to a multiple of 2
-    filter->width = obs_source_get_width(parent);
-    filter->width += (filter->width & 1);
-    // Round up to a multiple of 2
-    filter->height = obs_source_get_height(parent);
-    filter->height += (filter->height & 1);
-
-    ovi.base_width = filter->width;
-    ovi.base_height = filter->height;
-    ovi.output_width = filter->width;
-    ovi.output_height = filter->height;
-
-    if (filter->width == 0 || filter->height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
-        // Abort when invalid video parameters situation
-        return;
-    }
-
-    // Update active revision with stored settings.
-    filter->active_settings_rev = filter->stored_settings_rev;
-
-    // Create service - We always use "rtmp_custom" as service
-    filter->service = obs_service_create("rtmp_custom", obs_source_get_name(filter->source), settings, NULL);
-    if (!filter->service) {
-        obs_log(LOG_ERROR, "%s: Service creation failed", obs_source_get_name(filter->source));
-        return;
-    }
-    obs_service_apply_encoder_settings(filter->service, settings, NULL);
-
-    // Determine output type
-    auto type = obs_service_get_preferred_output_type(filter->service);
-    if (!type) {
-        type = "rtmp_output";
-        auto url = obs_service_get_connect_info(filter->service, OBS_SERVICE_CONNECT_INFO_SERVER_URL);
-        if (url != NULL && !strncmp(url, FTL_PROTOCOL, strlen(FTL_PROTOCOL))) {
-            type = "ftl_output";
-        } else if (url != NULL && strncmp(url, RTMP_PROTOCOL, strlen(RTMP_PROTOCOL))) {
-            type = "ffmpeg_mpegts_muxer";
+        // Abort when obs initializing or filter disabled.
+        if (!obs_initialized() || !obs_source_enabled(filter->filterSource) || filter->outputActive ||
+            filter->recordingActive) {
+            return;
         }
-    }
 
-    // Create stream output
-    filter->stream_output = obs_output_create(type, obs_source_get_name(filter->source), settings, NULL);
-    if (!filter->stream_output) {
-        obs_log(LOG_ERROR, "%s: Stream output creation failed", obs_source_get_name(filter->source));
-        return;
-    }
-    obs_output_set_reconnect_settings(filter->stream_output, OUTPUT_MAX_RETRIES, OUTPUT_RETRY_DELAY_SECS);
-    obs_output_set_service(filter->stream_output, filter->service);
-    filter->connect_attempting_at = os_gettime_ns();
+        // Mandatory paramters
+        if (!strlen(obs_data_get_string(settings, "server")) && !obs_data_get_string(settings, "stream_recording")) {
+            return;
+        }
 
-    // Open video output
-    // Create view and associate it with filter source
-    filter->view = obs_view_create();
+        // Retrieve filter source
+        auto parent = obs_filter_get_parent(filter->filterSource);
+        if (!parent) {
+            obs_log(LOG_ERROR, "%s: Filter source not found", obs_source_get_name(filter->filterSource));
+            return;
+        }
 
-    obs_view_set_source(filter->view, 0, parent);
-    filter->video_output = obs_view_add2(filter->view, &ovi);
-    if (!filter->video_output) {
-        obs_log(LOG_ERROR, "%s: Video output association failed", obs_source_get_name(filter->source));
-        return;
-    }
+        obs_video_info ovi = {0};
+        if (!obs_get_video_info(&ovi)) {
+            // Abort when no video situation
+            return;
+        }
 
-    // Retrieve audio source
-    filter->audio_source_type = AUDIO_SOURCE_TYPE_SILENCE;
-    filter->audio_source = NULL;
-    filter->audio_mix_idx = 0;
-    filter->audio_channels = (speaker_layout)audio_output_get_channels(obs_get_audio());
-    filter->samples_per_sec = audio_output_get_sample_rate(obs_get_audio());
-    filter->audio_buffer_frames = 0;
-    filter->audio_skip = 0;
+        // Round up to a multiple of 2
+        filter->width = obs_source_get_width(parent);
+        filter->width += (filter->width & 1);
+        // Round up to a multiple of 2
+        filter->height = obs_source_get_height(parent);
+        filter->height += (filter->height & 1);
 
-    if (obs_data_get_bool(settings, "custom_audio_source")) {
-        // Apply custom audio source
-        auto source_uuid = obs_data_get_string(settings, "audio_source");
+        ovi.base_width = filter->width;
+        ovi.base_height = filter->height;
+        ovi.output_width = filter->width;
+        ovi.output_height = filter->height;
 
-        if (strlen(source_uuid) && strcmp(source_uuid, "no_audio")) {
-            if (!strncmp(source_uuid, "master_track_", strlen("master_track_"))) {
-                // Use master audio track
-                size_t trackNo = 0;
-                sscanf(source_uuid, "master_track_%zu", &trackNo);
-                obs_log(LOG_INFO, "%s: Use master track %zu", obs_source_get_name(filter->source), trackNo);
+        if (filter->width == 0 || filter->height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
+            // Abort when invalid video parameters situation
+            return;
+        }
 
-                if (trackNo <= MAX_AUDIO_MIXES) {
-                    filter->audio_mix_idx = trackNo - 1;
+        // Update active revision with stored settings.
+        filter->activeSettingsRev = filter->storedSettingsRev;
 
-                    audio_convert_info conv = {0};
-                    conv.format = AUDIO_FORMAT_FLOAT_PLANAR;
-                    conv.samples_per_sec = filter->samples_per_sec;
-                    conv.speakers = filter->audio_channels;
-                    conv.allow_clipping = true;
+        //--- Create service and open stream output ---//
+        if (!!strlen(obs_data_get_string(settings, "server"))) {
+            // Create service - We always use "rtmp_custom" as service
+            filter->service =
+                obs_service_create("rtmp_custom", obs_source_get_name(filter->filterSource), settings, nullptr);
+            if (!filter->service) {
+                obs_log(LOG_ERROR, "%s: Service creation failed", obs_source_get_name(filter->filterSource));
+                return;
+            }
+            obs_service_apply_encoder_settings(filter->service, settings, nullptr);
 
-                    filter->audio_source_type = AUDIO_SOURCE_TYPE_MASTER;
-
-                    obs_add_raw_audio_callback(filter->audio_mix_idx, &conv, master_audio_callback, filter);
+            // Determine output type
+            auto type = obs_service_get_preferred_output_type(filter->service);
+            if (!type) {
+                type = "rtmp_output";
+                auto url = obs_service_get_connect_info(filter->service, OBS_SERVICE_CONNECT_INFO_SERVER_URL);
+                if (url != nullptr && !strncmp(url, FTL_PROTOCOL, strlen(FTL_PROTOCOL))) {
+                    type = "ftl_output";
+                } else if (url != nullptr && strncmp(url, RTMP_PROTOCOL, strlen(RTMP_PROTOCOL))) {
+                    type = "ffmpeg_mpegts_muxer";
                 }
+            }
 
-            } else {
-                auto source = obs_get_source_by_uuid(source_uuid);
-                if (source) {
-                    // Use custom audio source
-                    obs_log(
-                        LOG_INFO, "%s: Use %s as an audio source", obs_source_get_name(filter->source),
-                        obs_source_get_name(source)
-                    );
-                    filter->audio_source = obs_source_get_weak_source(source);
-                    filter->audio_source_type = AUDIO_SOURCE_TYPE_CAPTURE;
+            // Create stream output
+            filter->streamOutput =
+                obs_output_create(type, obs_source_get_name(filter->filterSource), settings, nullptr);
+            if (!filter->streamOutput) {
+                obs_log(LOG_ERROR, "%s: Stream output creation failed", obs_source_get_name(filter->filterSource));
+                return;
+            }
+            obs_output_set_reconnect_settings(filter->streamOutput, OUTPUT_MAX_RETRIES, OUTPUT_RETRY_DELAY_SECS);
+            obs_output_set_service(filter->streamOutput, filter->service);
+            filter->connectAttemptingAt = os_gettime_ns();
+        }
 
-                    if (!filter->audio_source) {
-                        obs_log(LOG_ERROR, "%s: Audio source retrieval failed", obs_source_get_name(filter->source));
-                        obs_source_release(source);
-                        return;
+        //--- Open video output ---//
+        // Create view and associate it with filter source
+        filter->view = obs_view_create();
+
+        obs_view_set_source(filter->view, 0, parent);
+        filter->videoOutput = obs_view_add2(filter->view, &ovi);
+        if (!filter->videoOutput) {
+            obs_log(LOG_ERROR, "%s: Video output association failed", obs_source_get_name(filter->filterSource));
+            return;
+        }
+
+        //--- Open audio output ---//
+        // Retrieve audio source
+        filter->audioSourceType = AUDIO_SOURCE_TYPE_SILENCE;
+        filter->audioSource = nullptr;
+        filter->audioMixIdx = 0;
+        filter->audioChannels = (speaker_layout)audio_output_get_channels(obs_get_audio());
+        filter->samplesPerSec = audio_output_get_sample_rate(obs_get_audio());
+        filter->audioBufferFrames = 0;
+        filter->audioSkip = 0;
+
+        if (obs_data_get_bool(settings, "custom_audio_source")) {
+            // Apply custom audio source
+            auto audioSourceUuid = obs_data_get_string(settings, "audio_source");
+
+            if (strlen(audioSourceUuid) && strcmp(audioSourceUuid, "no_audio")) {
+                if (!strncmp(audioSourceUuid, "master_track", strlen("master_track"))) {
+                    // Use master audio track
+                    auto trackNo = obs_data_get_int(settings, "audio_track");
+                    if (trackNo > 0 && trackNo <= MAX_AUDIO_MIXES) {
+                        filter->audioMixIdx = trackNo - 1;
+
+                        audio_convert_info conv = {0};
+                        conv.format = AUDIO_FORMAT_FLOAT_PLANAR;
+                        conv.samples_per_sec = filter->samplesPerSec;
+                        conv.speakers = filter->audioChannels;
+                        conv.allow_clipping = true;
+
+                        filter->audioSourceType = AUDIO_SOURCE_TYPE_MASTER;
+
+                        obs_add_raw_audio_callback(filter->audioMixIdx, &conv, masterAudioCallback, filter);
                     }
 
-                    // Register audio capture callback (It forwards audio to output)
-                    obs_source_add_audio_capture_callback(source, audio_capture_callback, filter);
+                } else {
+                    auto source = obs_get_source_by_uuid(audioSourceUuid);
+                    if (source) {
+                        // Use custom audio source
+                        obs_log(
+                            LOG_INFO, "%s: Use %s as an audio source", obs_source_get_name(filter->filterSource),
+                            obs_source_get_name(source)
+                        );
+                        filter->audioSource = obs_source_get_weak_source(source);
+                        filter->audioSourceType = AUDIO_SOURCE_TYPE_CAPTURE;
 
-                    obs_source_release(source);
+                        if (!filter->audioSource) {
+                            obs_log(
+                                LOG_ERROR, "%s: Audio source retrieval failed",
+                                obs_source_get_name(filter->filterSource)
+                            );
+                            obs_source_release(source);
+                            return;
+                        }
+
+                        // Register audio capture callback (It forwards audio to output)
+                        obs_source_add_audio_capture_callback(source, audioCaptureCallback, filter);
+
+                        obs_source_release(source);
+                    }
                 }
+            }
+
+        } else {
+            // Use filter's audio
+            obs_log(LOG_INFO, "%s: Use filter audio as an audio source", obs_source_get_name(filter->filterSource));
+            filter->audioSourceType = AUDIO_SOURCE_TYPE_FILTER;
+        }
+
+        if (filter->audioSourceType == AUDIO_SOURCE_TYPE_SILENCE) {
+            obs_log(LOG_INFO, "%s: Audio is disabled", obs_source_get_name(filter->filterSource));
+        }
+
+        // Open audio output (Audio will be captured from filter source via audioInputCallback)
+        audio_output_info oi = {0};
+
+        oi.name = obs_source_get_name(filter->filterSource);
+        oi.speakers = filter->audioChannels;
+        oi.samples_per_sec = filter->samplesPerSec;
+        oi.format = AUDIO_FORMAT_FLOAT_PLANAR;
+        oi.input_param = filter;
+        oi.input_callback = audioInputCallback;
+
+        if (audio_output_open(&filter->audioOutput, &oi) < 0) {
+            obs_log(LOG_ERROR, "%s: Opening audio output failed", obs_source_get_name(filter->filterSource));
+            return;
+        }
+
+        //--- Setup video encoder ---//
+        auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
+        filter->videoEncoder =
+            obs_video_encoder_create(video_encoder_id, obs_source_get_name(filter->filterSource), settings, nullptr);
+        if (!filter->videoEncoder) {
+            obs_log(LOG_ERROR, "%s: Video encoder creation failed", obs_source_get_name(filter->filterSource));
+            return;
+        }
+        obs_encoder_set_scaled_size(filter->videoEncoder, 0, 0);
+        obs_encoder_set_video(filter->videoEncoder, filter->videoOutput);
+
+        //--- Setup audo encoder ---//
+        auto audio_encoder_id = obs_data_get_string(settings, "audio_encoder");
+        auto audio_bitrate = obs_data_get_int(settings, "audio_bitrate");
+        auto audio_encoder_settings = obs_encoder_defaults(audio_encoder_id);
+        obs_data_set_int(audio_encoder_settings, "bitrate", audio_bitrate);
+
+        // Use track 0 only.
+        filter->audioEncoder = obs_audio_encoder_create(
+            audio_encoder_id, obs_source_get_name(filter->filterSource), audio_encoder_settings, 0, nullptr
+        );
+        obs_data_release(audio_encoder_settings);
+        if (!filter->audioEncoder) {
+            obs_log(LOG_ERROR, "%s: Audio encoder creation failed", obs_source_get_name(filter->filterSource));
+            return;
+        }
+        obs_encoder_set_audio(filter->audioEncoder, filter->audioOutput);
+
+        //--- Create recording output (if requested) ---//
+        if (obs_data_get_bool(settings, "stream_recording")) {
+            auto recFormat = obs_data_get_string(settings, "rec_format");
+            const char *outputId = !strcmp(recFormat, "hybrid_mp4") ? "mp4_output" : "ffmpeg_muxer";
+
+            OBSDataAutoRelease recordingSettings = createRecordingSettings(filter, settings);
+            filter->recordingOutput =
+                obs_output_create(outputId, obs_source_get_name(filter->filterSource), recordingSettings, nullptr);
+            if (!filter->recordingOutput) {
+                obs_log(LOG_ERROR, "%s: Recording output creation failed", obs_source_get_name(filter->filterSource));
+                return;
+            }
+
+            obs_output_set_audio_encoder(filter->recordingOutput, filter->audioEncoder, 0);
+            obs_output_set_video_encoder(filter->recordingOutput, filter->videoEncoder);
+
+            // Start recording output
+            if (obs_output_start(filter->recordingOutput)) {
+                filter->recordingActive = true;
+                obs_source_inc_showing(obs_filter_get_parent(filter->filterSource));
+                obs_log(LOG_INFO, "%s: Starting recording output succeeded", obs_source_get_name(filter->filterSource));
+            } else {
+                obs_log(LOG_ERROR, "%s: Starting recording output failed", obs_source_get_name(filter->filterSource));
             }
         }
 
-    } else {
-        // Use filter's audio
-        obs_log(LOG_INFO, "%s: Use filter audio as an audio source", obs_source_get_name(filter->source));
-        filter->audio_source_type = AUDIO_SOURCE_TYPE_FILTER;
+        //--- Start streaming output (if requested) ---//
+        if (filter->streamOutput) {
+            obs_output_set_audio_encoder(filter->streamOutput, filter->audioEncoder, 0);
+            obs_output_set_video_encoder(filter->streamOutput, filter->videoEncoder);
+
+            // Start streaming output
+            if (obs_output_start(filter->streamOutput)) {
+                filter->outputActive = true;
+                obs_source_inc_showing(obs_filter_get_parent(filter->filterSource));
+                obs_log(LOG_INFO, "%s: Starting streaming output succeeded", obs_source_get_name(filter->filterSource));
+            } else {
+                obs_log(LOG_ERROR, "%s: Starting streaming output failed", obs_source_get_name(filter->filterSource));
+            }
+        }
     }
+}
 
-    if (filter->audio_source_type == AUDIO_SOURCE_TYPE_SILENCE) {
-        obs_log(LOG_INFO, "%s: Audio is disabled", obs_source_get_name(filter->source));
+void reconnectStreamOutput(BranchOutputFilter *filter)
+{
+    pthread_mutex_lock(&filter->outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&filter->outputMutex);
+
+        if (filter->outputActive) {
+            obs_output_force_stop(filter->streamOutput);
+
+            filter->connectAttemptingAt = os_gettime_ns();
+
+            if (!obs_output_start(filter->streamOutput)) {
+                obs_log(LOG_ERROR, "%s: Reconnect streaming output failed", obs_source_get_name(filter->filterSource));
+            }
+        }
     }
+}
 
-    // Open audio output (Audio will be captured from filter source via audio_input_callback)
-    audio_output_info oi = {0};
+void restartRecordingOutput(BranchOutputFilter *filter)
+{
+    pthread_mutex_lock(&filter->outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&filter->outputMutex);
 
-    oi.name = obs_source_get_name(filter->source);
-    oi.speakers = filter->audio_channels;
-    oi.samples_per_sec = filter->samples_per_sec;
-    oi.format = AUDIO_FORMAT_FLOAT_PLANAR;
-    oi.input_param = filter;
-    oi.input_callback = audio_input_callback;
+        filter->connectAttemptingAt = os_gettime_ns();
 
-    if (audio_output_open(&filter->audio_output, &oi) < 0) {
-        obs_log(LOG_ERROR, "%s: Opening audio output failed", obs_source_get_name(filter->source));
-        return;
-    }
+        if (filter->recordingActive) {
+            obs_output_force_stop(filter->recordingOutput);
 
-    // Setup video encoder
-    auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
-    filter->video_encoder =
-        obs_video_encoder_create(video_encoder_id, obs_source_get_name(filter->source), settings, NULL);
-    if (!filter->video_encoder) {
-        obs_log(LOG_ERROR, "%s: Video encoder creation failed", obs_source_get_name(filter->source));
-        return;
-    }
-    obs_encoder_set_scaled_size(filter->video_encoder, 0, 0);
-    obs_encoder_set_video(filter->video_encoder, filter->video_output);
-    obs_output_set_video_encoder(filter->stream_output, filter->video_encoder);
-
-    // Setup audo encoder
-    auto audio_encoder_id = obs_data_get_string(settings, "audio_encoder");
-    auto audio_bitrate = obs_data_get_int(settings, "audio_bitrate");
-    auto audio_encoder_settings = obs_encoder_defaults(audio_encoder_id);
-    obs_data_set_int(audio_encoder_settings, "bitrate", audio_bitrate);
-
-    // Use track 0 only.
-    filter->audio_encoder = obs_audio_encoder_create(
-        audio_encoder_id, obs_source_get_name(filter->source), audio_encoder_settings, 0, NULL
-    );
-    obs_data_release(audio_encoder_settings);
-    if (!filter->audio_encoder) {
-        obs_log(LOG_ERROR, "%s: Audio encoder creation failed", obs_source_get_name(filter->source));
-        return;
-    }
-    obs_encoder_set_audio(filter->audio_encoder, filter->audio_output);
-    obs_output_set_audio_encoder(filter->stream_output, filter->audio_encoder, 0);
-
-    // Start stream output
-    if (obs_output_start(filter->stream_output)) {
-        filter->output_active = true;
-        obs_source_inc_showing(obs_filter_get_parent(filter->source));
-        obs_log(LOG_INFO, "%s: Starting stream output succeeded", obs_source_get_name(filter->source));
-    } else {
-        obs_log(LOG_ERROR, "%s: Starting stream output failed", obs_source_get_name(filter->source));
+            if (!obs_output_start(filter->recordingOutput)) {
+                obs_log(LOG_ERROR, "%s: Restart recording output failed", obs_source_get_name(filter->filterSource));
+            }
+        }
     }
 }
 
 void update(void *data, obs_data_t *settings)
 {
-    auto filter = (filter_t *)data;
-    obs_log(LOG_DEBUG, "%s: Filter updating", obs_source_get_name(filter->source));
+    auto filter = (BranchOutputFilter *)data;
+    obs_log(LOG_DEBUG, "%s: Filter updating", obs_source_get_name(filter->filterSource));
 
     // It's unwelcome to do stopping output during attempting connect to service.
-    // So we just count up revision (Settings will be applied on video_tick())
-    filter->stored_settings_rev++;
+    // So we just count up revision (Settings will be applied on videoTick())
+    filter->storedSettingsRev++;
 
     // Save settings as default
-    auto config_dir_path = obs_module_get_config_path(obs_current_module(), "");
+    OBSString config_dir_path = obs_module_get_config_path(obs_current_module(), "");
     os_mkdirs(config_dir_path);
-    bfree(config_dir_path);
 
-    auto path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
+    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
     obs_data_save_json_safe(settings, path, "tmp", "bak");
-    bfree(path);
 
-    obs_log(LOG_INFO, "%s: Filter updated", obs_source_get_name(filter->source));
+    obs_log(LOG_INFO, "%s: Filter updated", obs_source_get_name(filter->filterSource));
 }
 
-inline void load_recently(obs_data_t *settings)
+inline void loadRecently(obs_data_t *settings)
 {
     obs_log(LOG_DEBUG, "Recently settings loading");
-    auto path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
-    auto recently_settings = obs_data_create_from_json_file(path);
-    bfree(path);
+    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
+    OBSDataAutoRelease recently_settings = obs_data_create_from_json_file(path);
 
     if (recently_settings) {
         obs_data_erase(recently_settings, "server");
         obs_data_erase(recently_settings, "key");
+        obs_data_erase(recently_settings, "use_auth");
+        obs_data_erase(recently_settings, "username");
+        obs_data_erase(recently_settings, "password");
         obs_data_erase(recently_settings, "custom_audio_source");
         obs_data_erase(recently_settings, "audio_source");
+        obs_data_erase(recently_settings, "audio_track");
         obs_data_apply(settings, recently_settings);
     }
 
-    obs_data_release(recently_settings);
     obs_log(LOG_INFO, "Recently settings loaded");
 }
 
-void *create(obs_data_t *settings, obs_source_t *source)
+inline void restartOutput(BranchOutputFilter *filter)
 {
-    obs_log(LOG_DEBUG, "%s: Filter creating", obs_source_get_name(source));
-    obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
-
-    auto filter = (filter_t *)bzalloc(sizeof(filter_t));
-    pthread_mutex_init(&filter->audio_buffer_mutex, NULL);
-
-    filter->source = source;
-
-    if (!strcmp(obs_data_get_last_json(settings), "{}")) {
-        // Maybe initial creation
-        load_recently(settings);
+    if (filter->outputActive || filter->recordingActive) {
+        stopOutput(filter);
     }
 
-    // Fiter activate immediately when "server" is exists.
-    auto server = obs_data_get_string(settings, "server");
-    filter->filter_active = !!strlen(server);
-
-    obs_log(LOG_INFO, "%s: Filter created", obs_source_get_name(filter->source));
-    return filter;
-}
-
-void destroy(void *data)
-{
-    auto filter = (filter_t *)data;
-    auto source = filter->source;
-    obs_log(LOG_DEBUG, "%s: Filter destroying", obs_source_get_name(source));
-
-    stop_output(filter);
-    pthread_mutex_destroy(&filter->audio_buffer_mutex);
-    bfree(filter->audio_conv_buffer);
-    bfree(filter);
-
-    obs_log(LOG_INFO, "%s: Filter destroyed", obs_source_get_name(source));
-}
-
-inline void restart_output(filter_t *filter)
-{
-    if (filter->output_active) {
-        stop_output(filter);
+    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+    if (!!strlen(obs_data_get_string(settings, "server")) || obs_data_get_bool(settings, "stream_recording")) {
+        startOutput(filter, settings);
     }
-
-    auto settings = obs_source_get_settings(filter->source);
-    auto server = obs_data_get_string(settings, "server");
-    if (strlen(server)) {
-        start_output(filter, settings);
-    }
-    obs_data_release(settings);
 }
 
-inline bool connect_attempting_timed_out(filter_t *filter)
+inline bool connectAttemptingTimedOut(BranchOutputFilter *filter)
 {
-    return filter->connect_attempting_at &&
-           os_gettime_ns() - filter->connect_attempting_at > CONNECT_ATTEMPTING_TIMEOUT_NS;
+    return filter->connectAttemptingAt && os_gettime_ns() - filter->connectAttemptingAt > CONNECT_ATTEMPTING_TIMEOUT_NS;
 }
 
-inline bool source_available(filter_t *filter, obs_source_t *source)
+inline bool sourceAvailable(BranchOutputFilter *filter, obs_source_t *source)
 {
     auto now = os_gettime_ns();
-    if (now - filter->last_available_at < AVAILAVILITY_CHECK_INTERVAL_NS) {
+    if (now - filter->lastAvailableAt < AVAILAVILITY_CHECK_INTERVAL_NS) {
         return true;
     }
-    filter->last_available_at = now;
+    filter->lastAvailableAt = now;
 
     auto found = !!obs_scene_from_source(source);
     if (found) {
@@ -430,109 +544,229 @@ inline bool source_available(filter_t *filter, obs_source_t *source)
     return found;
 }
 
+// Controlling output status here.
+// Start / Stop should only heppen in this function as possible because rapid manipulation caused crash easily.
 // NOTE: Becareful this function is called so offen.
-void video_tick(void *data, float)
+void intervalTask(BranchOutputFilter *filter)
 {
-    auto filter = (filter_t *)data;
     // Block output initiation until filter is active.
-    if (!filter->filter_active) {
+    if (!filter->initialized) {
         return;
     }
 
-    auto source_enabled = obs_source_enabled(filter->source);
+    auto interlockType = statusDock->getInterlockType();
+    auto sourceEnabled = obs_source_enabled(filter->filterSource);
 
-    if (filter->output_active) {
-        auto stream_active = obs_output_active(filter->stream_output);
+    if (filter->outputActive || filter->recordingActive) {
+        auto streamingAlive = filter->streamOutput && obs_output_active(filter->streamOutput);
+        auto recordingAlive = filter->recordingOutput && obs_output_active(filter->recordingOutput);
 
-        if (source_enabled) {
-            if (connect_attempting_timed_out(filter)) {
-                if (!stream_active) {
-                    // Retry connection
-                    obs_log(
-                        LOG_INFO, "%s: Attempting reactivate the stream output", obs_source_get_name(filter->source)
-                    );
-                    auto settings = obs_source_get_settings(filter->source);
-                    start_output(filter, settings);
-                    obs_data_release(settings);
+        if (sourceEnabled) {
+            if (filter->outputActive && !connectAttemptingTimedOut(filter)) {
+                return;
+            }
+
+            // Check interlock condition
+            if (interlockType == INTERLOCK_TYPE_STREAMING) {
+                if (!obs_frontend_streaming_active()) {
+                    // Stop output when streaming is not active
+                    stopOutput(filter);
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_RECORDING) {
+                if (!obs_frontend_recording_active()) {
+                    // Stop output when recording is not active
+                    stopOutput(filter);
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_STREAMING_RECORDING) {
+                if (!obs_frontend_streaming_active() && !obs_frontend_recording_active()) {
+                    // Stop output when streaming and recording are not active
+                    stopOutput(filter);
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
+                if (!obs_frontend_virtualcam_active()) {
+                    // Stop output when virtual cam is not active
+                    stopOutput(filter);
+                    return;
+                }
+            }
+
+            if (filter->activeSettingsRev < filter->storedSettingsRev) {
+                // Settings has been changed
+                obs_log(
+                    LOG_INFO, "%s: Settings change detected, Attempting restart",
+                    obs_source_get_name(filter->filterSource)
+                );
+                restartOutput(filter);
+                return;
+            }
+
+            if (filter->recordingActive && !recordingAlive) {
+                // Restart recording
+                obs_log(
+                    LOG_INFO, "%s: Attempting reactivate the recording output",
+                    obs_source_get_name(filter->filterSource)
+                );
+                restartRecordingOutput(filter);
+                return;
+            }
+
+            if (filter->outputActive && !streamingAlive) {
+                // Reconnect streaming
+                obs_log(
+                    LOG_INFO, "%s: Attempting reactivate the stream output", obs_source_get_name(filter->filterSource)
+                );
+                reconnectStreamOutput(filter);
+                return;
+            }
+
+            if (streamingAlive || recordingAlive) {
+                // Monitoring source
+                auto parent = obs_filter_get_parent(filter->filterSource);
+                auto width = obs_source_get_width(parent);
+                width += (width & 1);
+                uint32_t height = obs_source_get_height(parent);
+                height += (height & 1);
+
+                if (!width || !height || !sourceAvailable(filter, parent)) {
+                    // Stop output when source resolution is zero or source had been removed
+                    stopOutput(filter);
                     return;
                 }
 
-                if (filter->active_settings_rev < filter->stored_settings_rev) {
-                    // Settings has been changed
+                if (filter->width != width || filter->height != height) {
+                    // Restart output when source resolution was changed.
                     obs_log(
-                        LOG_INFO, "%s: Settings change detected, Attempting restart",
-                        obs_source_get_name(filter->source)
+                        LOG_INFO, "%s: Attempting restart the stream output", obs_source_get_name(filter->filterSource)
                     );
-                    restart_output(filter);
+                    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+                    startOutput(filter, settings);
                     return;
-                }
-
-                if (stream_active) {
-                    // Monitoring source
-                    auto parent = obs_filter_get_parent(filter->source);
-                    auto width = obs_source_get_width(parent);
-                    width += (width & 1);
-                    uint32_t height = obs_source_get_height(parent);
-                    height += (height & 1);
-
-                    if (!width || !height || !source_available(filter, parent)) {
-                        // Stop output when source resolution is zero or source had been removed
-                        stop_output(filter);
-                        return;
-                    }
-
-                    if (filter->width != width || filter->height != height) {
-                        // Restart output when source resolution was changed.
-                        obs_log(
-                            LOG_INFO, "%s: Attempting restart the stream output", obs_source_get_name(filter->source)
-                        );
-                        auto settings = obs_source_get_settings(filter->source);
-                        start_output(filter, settings);
-                        obs_data_release(settings);
-                        return;
-                    }
                 }
             }
 
         } else {
-            if (stream_active) {
+            if (streamingAlive || recordingAlive) {
                 // Clicked filter's "Eye" icon (Hide)
-                stop_output(filter);
+                stopOutput(filter);
                 return;
             }
         }
 
     } else {
-        if (source_enabled) {
+        if (sourceEnabled) {
             // Clicked filter's "Eye" icon (Show)
-            restart_output(filter);
-            return;
+            // Check interlock condition
+            if (interlockType == INTERLOCK_TYPE_STREAMING) {
+                if (obs_frontend_streaming_active()) {
+                    restartOutput(filter);
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_RECORDING) {
+                if (obs_frontend_recording_active()) {
+                    restartOutput(filter);
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_STREAMING_RECORDING) {
+                if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+                    restartOutput(filter);
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
+                if (obs_frontend_virtualcam_active()) {
+                    restartOutput(filter);
+                    return;
+                }
+            } else {
+                restartOutput(filter);
+                return;
+            }
         }
     }
 }
 
-BranchOutputStatus *status_dock = nullptr;
+void *create(obs_data_t *settings, obs_source_t *source)
+{
+    obs_log(LOG_DEBUG, "%s: Filter creating", obs_source_get_name(source));
+    obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
 
-void filter_add(void *data, obs_source_t *)
+    auto filter = (BranchOutputFilter *)bzalloc(sizeof(BranchOutputFilter));
+    pthread_mutex_init(&filter->outputMutex, nullptr);
+    pthread_mutex_init(&filter->audioBufferMutex, nullptr);
+
+    filter->filterSource = source;
+
+    if (!strcmp(obs_data_get_last_json(settings), "{}")) {
+        // Maybe initial creation
+        loadRecently(settings);
+    }
+
+    // Migrate audio_source schema
+    auto audioSource = obs_data_get_string(settings, "audio_source");
+    if (!strncmp(audioSource, "master_track_", strlen("master_track_"))) {
+        // Separate out track number
+        size_t trackNo = 0;
+        sscanf(audioSource, "master_track_%zu", &trackNo);
+
+        obs_data_set_string(settings, "audio_source", "master_track");
+        obs_data_set_int(settings, "audio_track", trackNo);
+    }
+
+    // Fiter activate immediately when "server" or "stream_recording" is exists.
+    filter->initialized = !!strlen(obs_data_get_string(settings, "server")) ||
+                          obs_data_get_bool(settings, "stream_recording");
+
+    // Start interval timer
+    filter->intervalTimer = new QTimer();
+    filter->intervalTimer->setInterval(TASK_INTERVAL_MS);
+    filter->intervalTimer->start();
+    QObject::connect(filter->intervalTimer, &QTimer::timeout, [filter]() { intervalTask(filter); });
+
+    obs_log(LOG_INFO, "%s: Filter created", obs_source_get_name(filter->filterSource));
+    return filter;
+}
+
+void destroy(void *data)
+{
+    auto filter = (BranchOutputFilter *)data;
+    auto source = filter->filterSource;
+    obs_log(LOG_DEBUG, "%s: Filter destroying", obs_source_get_name(source));
+
+    // Stop interval timer (in proper thread)
+    filter->intervalTimer->deleteLater();
+
+    stopOutput(filter);
+    pthread_mutex_destroy(&filter->audioBufferMutex);
+    pthread_mutex_destroy(&filter->outputMutex);
+    bfree(filter->audioConvBuffer);
+    bfree(filter);
+
+    obs_log(LOG_INFO, "%s: Filter destroyed", obs_source_get_name(source));
+}
+
+void filterAdd(void *data, obs_source_t *)
 {
     // Register to output status dock
-    auto filter = (filter_t *)data;
-    status_dock->AddFilter(filter);
+    auto filter = (BranchOutputFilter *)data;
+    statusDock->addFilter(filter);
 }
 
-void filter_remove(void *data, obs_source_t *)
+void filterRemove(void *data, obs_source_t *)
 {
     // Unregister from output status dock
-    auto filter = (filter_t *)data;
-    status_dock->RemoveFilter(filter);
+    auto filter = (BranchOutputFilter *)data;
+    statusDock->removeFilter(filter);
 }
 
-const char *get_name(void *)
+void videoRender(void *data, gs_effect_t *)
 {
-    return "Branch Output";
+    auto filter = (BranchOutputFilter *)data;
+    obs_source_skip_video_filter(filter->filterSource);
 }
 
-obs_source_info create_filter_info()
+obs_source_info createFilterInfo()
 {
     obs_source_info filter_info = {0};
 
@@ -540,28 +774,29 @@ obs_source_info create_filter_info()
     filter_info.type = OBS_SOURCE_TYPE_FILTER;
     filter_info.output_flags = OBS_SOURCE_VIDEO;
 
-    filter_info.get_name = get_name;
-    filter_info.get_properties = get_properties;
-    filter_info.get_defaults = get_defaults;
+    filter_info.get_name = [](void *) {
+        return "Branch Output";
+    };
+    filter_info.get_properties = getProperties;
+    filter_info.get_defaults = getDefaults;
 
     filter_info.create = create;
     filter_info.destroy = destroy;
     filter_info.update = update;
-    filter_info.filter_add = filter_add;
-    filter_info.filter_remove = filter_remove;
-
-    filter_info.filter_audio = audio_filter_callback;
-    filter_info.video_tick = video_tick;
+    filter_info.filter_add = filterAdd;
+    filter_info.filter_remove = filterRemove;
+    filter_info.filter_audio = audioFilterCallback;
+    filter_info.video_render = videoRender;
 
     return filter_info;
 }
 
-obs_source_info filter_info;
+obs_source_info filterInfo;
 
 bool obs_module_load()
 {
-    filter_info = create_filter_info();
-    obs_register_source(&filter_info);
+    filterInfo = createFilterInfo();
+    obs_register_source(&filterInfo);
 
     obs_log(LOG_INFO, "Plugin loaded successfully (version %s)", PLUGIN_VERSION);
     return true;
@@ -569,7 +804,7 @@ bool obs_module_load()
 
 void obs_module_post_load()
 {
-    status_dock = create_output_status_dock();
+    statusDock = createOutputStatusDock();
 }
 
 void obs_module_unload()

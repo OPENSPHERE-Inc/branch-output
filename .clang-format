@@ -59,6 +59,7 @@ ForEachMacros:
   - 'json_object_foreach_safe'
   - 'json_array_foreach'
   - 'HASH_ITER'
+  - 'foreach'
 IndentAccessModifiers: false
 IncludeBlocks: Preserve
 IndentCaseLabels: false
