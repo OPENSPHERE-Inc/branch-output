@@ -254,7 +254,7 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
 // Imitate UI/window-basic-stats.cpp
 void BranchOutputStatusDock::OutputTableRow::update()
 {
-    auto output = filter->streamOutput;
+    auto output = filter->streamOutput ? filter->streamOutput : filter->recordingOutput;
     uint64_t totalBytes = output ? obs_output_get_total_bytes(output) : 0;
     uint64_t curTime = os_gettime_ns();
     uint64_t bytesSent = totalBytes;
@@ -275,36 +275,36 @@ void BranchOutputStatusDock::OutputTableRow::update()
     }
 
     // Status display
-    QString statusStr = QTStr("Status.Inactive");
-    QString themeID = "";
-    bool active = filter->streamOutput ? obs_output_active(filter->streamOutput) : false;
-    if (active) {
-        bool reconnecting = filter->streamOutput ? obs_output_reconnecting(filter->streamOutput) : false;
+    if (filter->streamOutput) {
+        bool reconnecting = filter->streamOutput ? !obs_output_active(filter->streamOutput) ||
+                                                       obs_output_reconnecting(filter->streamOutput)
+                                                 : false;
 
         if (reconnecting) {
-            statusStr = QTStr("Status.Reconnecting");
-            themeID = "error";
+            status->setText(QTStr("Status.Reconnecting"));
+            status->setTheme("error");
+            status->setIconShow(false);
         } else {
-            statusStr = QTStr("Status.Live");
-            themeID = "good";
+            status->setText(QTStr("Status.Live"));
+            status->setTheme("good");
+            status->setIconShow(true);
         }
+    } else {
+        status->setText(QTStr("Status.Inactive"));
+        status->setTheme("");
+        status->setIconShow(false);
     }
-    status->setIconShow(active);
-    status->setText(statusStr);
-    status->setTheme(themeID);
 
     // Recording display
-    active = filter->recordingOutput ? obs_output_active(filter->recordingOutput) : false;
-    if (active) {
-        statusStr = QTStr("Status.Recording");
-        themeID = "good";
+    if (filter->recordingOutput && obs_output_active(filter->recordingOutput)) {
+        recording->setText(QTStr("Status.Recording"));
+        recording->setTheme("good");
+        recording->setIconShow(true);
     } else {
-        statusStr = QTStr("Status.Inactive");
-        themeID = "";
+        recording->setText(QTStr("Status.Inactive"));
+        recording->setTheme("");
+        recording->setIconShow(false);
     }
-    recording->setIconShow(active);
-    recording->setText(statusStr);
-    recording->setTheme(themeID);
 
     long double num = (long double)totalBytes / (1024.0l * 1024.0l);
     const char *unit = "MiB";
@@ -355,7 +355,7 @@ void BranchOutputStatusDock::OutputTableRow::update()
 
 void BranchOutputStatusDock::OutputTableRow::reset()
 {
-    auto output = filter->streamOutput;
+    auto output = filter->streamOutput ? filter->streamOutput : filter->recordingOutput;
     if (!output) {
         return;
     }
