@@ -28,4 +28,4 @@
 # Except additional project files
 !screenshot1.jpg
 !screenshot2.jpg
-
+!build-windows-installer.ps1
