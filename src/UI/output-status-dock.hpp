@@ -137,6 +137,7 @@ public:
 
     void addFilter(BranchOutputFilter *filter);
     void removeFilter(BranchOutputFilter *filter);
+    BranchOutputFilter *findFilter(const QString &parentName, const QString &filterName);
     void setEabnleAll(bool enabled);
 
     inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };

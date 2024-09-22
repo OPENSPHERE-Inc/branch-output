@@ -367,6 +367,17 @@ void BranchOutputStatusDock::OutputTableRow::reset()
     bitrate->setText(QString("0 kb/s"));
 }
 
+BranchOutputFilter *BranchOutputStatusDock::findFilter(const QString &parentName, const QString &filterName)
+{
+    for (auto &row : outputTableRows) {
+        if (filterName == obs_source_get_name(row.filter->filterSource) &&
+            parentName == obs_source_get_name(obs_filter_get_parent(row.filter->filterSource))) {
+            return row.filter;
+        }
+    }
+    return nullptr;
+}
+
 //--- FilterCell class ---//
 
 FilterCell::FilterCell(const QString &text, obs_source_t *source, QWidget *parent) : QWidget(parent)
@@ -453,6 +464,7 @@ void ParentCell::setSourceName(const QString &text)
 void ParentCell::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
+        obs_log(LOG_DEBUG, "uuid=%s", obs_source_get_uuid(source));
         obs_frontend_open_source_filters(source);
     }
 }
