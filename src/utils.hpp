@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs-module.h>
 #include <obs.hpp>
+#include <obs-frontend-api.h>
 #include <util/threading.h>
 
 #include <QString>
@@ -57,4 +58,30 @@ inline void setThemeID(QWidget *widget, const QString &themeID)
 inline QString QTStr(const char *lookupVal)
 {
     return QString::fromUtf8(obs_module_text(lookupVal));
+}
+
+// Decide source/scene is displayed in frontend or not
+inline bool sourceInFrontend(obs_source_t *source)
+{
+    if (!source) {
+        return false;
+    }
+
+    auto found = false;
+
+    obs_frontend_source_list lsit = {0};
+    obs_frontend_get_scenes(&lsit);
+    {
+        for (size_t i = 0; i < lsit.sources.num && !found; i++) {
+            if (lsit.sources.array[i] == source) {
+                found = true;
+                break;
+            }
+            obs_scene_t *scene = obs_scene_from_source(lsit.sources.array[i]);
+            found = !!obs_scene_find_source_recursive(scene, obs_source_get_name(source));
+        }
+    }
+    obs_frontend_source_list_free(&lsit);
+
+    return found;
 }

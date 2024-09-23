@@ -106,11 +106,15 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     this->setLayout(outputContainerLayout);
 
     loadSettings();
+
+    obs_log(LOG_DEBUG, "BranchOutputStatusDock created");
 }
 
 BranchOutputStatusDock::~BranchOutputStatusDock()
 {
     saveSettings();
+
+    obs_log(LOG_DEBUG, "BranchOutputStatusDock destroyed");
 }
 
 void BranchOutputStatusDock::loadSettings()
@@ -171,31 +175,29 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     auto parent = obs_filter_get_parent(filter->filterSource);
     auto row = (int)outputTableRows.size();
 
-    OutputTableRow ol;
+    auto otr = new OutputTableRow(this);
 
-    ol.filter = filter;
-    ol.filterCell =
+    otr->filter = filter;
+    otr->filterCell =
         new FilterCell(QString::fromUtf8(obs_source_get_name(filter->filterSource)), filter->filterSource, this);
-    ol.parentCell = new ParentCell(obs_source_get_name(parent), parent, this);
-    ol.status = new StatusCell(QTStr("Status.Inactive"), this);
-    ol.status->setIcon(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
-    ol.recording = new StatusCell(QTStr("Status.Inactive"), this);
-    ol.recording->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
-    ol.droppedFrames = new QLabel("", this);
-    ol.megabytesSent = new QLabel("", this);
-    ol.bitrate = new QLabel("", this);
-
-    outputTableRows.push_back(ol);
+    otr->parentCell = new ParentCell(obs_source_get_name(parent), parent, this);
+    otr->status = new StatusCell(QTStr("Status.Inactive"), this);
+    otr->status->setIcon(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
+    otr->recording = new StatusCell(QTStr("Status.Inactive"), this);
+    otr->recording->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
+    otr->droppedFrames = new QLabel("", this);
+    otr->megabytesSent = new QLabel("", this);
+    otr->bitrate = new QLabel("", this);
 
     auto col = 0;
     outputTable->setRowCount(row + 1);
-    outputTable->setCellWidget(row, col++, ol.filterCell);
-    outputTable->setCellWidget(row, col++, ol.parentCell);
-    outputTable->setCellWidget(row, col++, ol.status);
-    outputTable->setCellWidget(row, col++, ol.recording);
-    outputTable->setCellWidget(row, col++, ol.droppedFrames);
-    outputTable->setCellWidget(row, col++, ol.megabytesSent);
-    outputTable->setCellWidget(row, col++, ol.bitrate);
+    outputTable->setCellWidget(row, col++, otr->filterCell);
+    outputTable->setCellWidget(row, col++, otr->parentCell);
+    outputTable->setCellWidget(row, col++, otr->status);
+    outputTable->setCellWidget(row, col++, otr->recording);
+    outputTable->setCellWidget(row, col++, otr->droppedFrames);
+    outputTable->setCellWidget(row, col++, otr->megabytesSent);
+    outputTable->setCellWidget(row, col++, otr->bitrate);
 
     outputTable->setRowHeight(row, 32);
 
@@ -206,20 +208,25 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     resetButtonContainer->setLayout(resetButtonContainerLayout);
 
     auto resetButton = new QPushButton(QTStr("Reset"), this);
-    connect(resetButton, &QPushButton::clicked, [this, row]() { outputTableRows[row].reset(); });
+    connect(resetButton, &QPushButton::clicked, [this, row]() { outputTableRows[row]->reset(); });
     resetButton->setProperty("toolButton", true);
     resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
 
     resetButtonContainerLayout->addWidget(resetButton);
     outputTable->setCellWidget(row, col, resetButtonContainer);
+
+    outputTableRows.push_back(otr);
 }
 
 void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
 {
+    // DO NOT access filter resources at this time (It may be already deleted)
     for (int i = 0; i < outputTableRows.size(); i++) {
-        if (outputTableRows[i].filter == filter) {
-            outputTableRows.removeAt(i);
+        auto otr = outputTableRows[i];
+        if (otr->filter == filter) {
             outputTable->removeRow(i);
+            outputTableRows.removeAt(i);
+            otr->deleteLater();
             break;
         }
     }
@@ -227,8 +234,13 @@ void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
 
 void BranchOutputStatusDock::update()
 {
-    for (int i = 0; i < outputTableRows.size(); i++) {
-        outputTableRows[i].update();
+    foreach (auto row, outputTableRows) {
+        if (!sourceInFrontend(obs_filter_get_parent(row->filter->filterSource))) {
+            // Remove filter that no longer exists in the frontend
+            removeFilter(row->filter);
+            continue;
+        }
+        row->update();
     }
 }
 
@@ -244,15 +256,30 @@ void BranchOutputStatusDock::hideEvent(QHideEvent *)
 
 void BranchOutputStatusDock::setEabnleAll(bool enabled)
 {
-    foreach (auto &row, outputTableRows) {
-        obs_source_set_enabled(row.filter->filterSource, enabled);
+    foreach (auto row, outputTableRows) {
+        obs_source_set_enabled(row->filter->filterSource, enabled);
     }
 }
 
-//--- BranchOutputStatusDock::OutputTableRow structure ---//
+BranchOutputFilter *BranchOutputStatusDock::findFilter(const QString &parentName, const QString &filterName)
+{
+    for (auto row : outputTableRows) {
+        if (filterName == obs_source_get_name(row->filter->filterSource) &&
+            parentName == obs_source_get_name(obs_filter_get_parent(row->filter->filterSource))) {
+            return row->filter;
+        }
+    }
+    return nullptr;
+}
+
+//--- OutputTableRow class ---//
+
+OutputTableRow::OutputTableRow(QObject *parent) : QObject(parent) {}
+
+OutputTableRow::~OutputTableRow() {}
 
 // Imitate UI/window-basic-stats.cpp
-void BranchOutputStatusDock::OutputTableRow::update()
+void OutputTableRow::update()
 {
     auto output = filter->streamOutput ? filter->streamOutput : filter->recordingOutput;
     uint64_t totalBytes = output ? obs_output_get_total_bytes(output) : 0;
@@ -353,7 +380,7 @@ void BranchOutputStatusDock::OutputTableRow::update()
     lastBytesSentTime = curTime;
 }
 
-void BranchOutputStatusDock::OutputTableRow::reset()
+void OutputTableRow::reset()
 {
     auto output = filter->streamOutput ? filter->streamOutput : filter->recordingOutput;
     if (!output) {
@@ -453,6 +480,7 @@ void ParentCell::setSourceName(const QString &text)
 void ParentCell::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
+        obs_log(LOG_DEBUG, "uuid=%s", obs_source_get_uuid(source));
         obs_frontend_open_source_filters(source);
     }
 }

@@ -130,6 +130,8 @@ void masterAudioCallback(void *param, size_t, audio_data *audioData)
     pushAudioToBuffer(filter, &filterAudioData);
 }
 
+//--- OBS Plugin Callbacks ---//
+
 // Callback from audio output
 bool audioInputCallback(
     void *param, uint64_t startTsIn, uint64_t, uint64_t *outTs, uint32_t mixers, audio_output_data *mixes

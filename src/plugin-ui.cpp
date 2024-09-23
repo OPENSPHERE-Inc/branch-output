@@ -22,6 +22,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/dstr.h>
 #include <obs.hpp>
 
+#include <QMainWindow>
+
 #include "plugin-support.h"
 #include "plugin-main.hpp"
 
@@ -515,6 +517,20 @@ inline void addVideoEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
     );
 }
 
+BranchOutputStatusDock *createOutputStatusDock()
+{
+    auto mainWindow = (QMainWindow *)obs_frontend_get_main_window();
+    if (!mainWindow) {
+        return nullptr;
+    }
+
+    auto dock = new BranchOutputStatusDock(mainWindow);
+    obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("BranchOutputStatus"), dock);
+    return dock;
+}
+
+//--- OBS Plugin Callbacks ---//
+
 obs_properties_t *getProperties(void *data)
 {
     auto filter = (BranchOutputFilter *)data;
@@ -538,13 +554,4 @@ obs_properties_t *getProperties(void *data)
     addPluginInfo(props);
 
     return props;
-}
-
-BranchOutputStatusDock *createOutputStatusDock()
-{
-    auto dock = new BranchOutputStatusDock();
-
-    obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("BranchOutputStatus"), dock);
-
-    return dock;
 }

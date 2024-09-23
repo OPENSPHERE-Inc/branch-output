@@ -24,6 +24,7 @@ More reliable and proper audio handling.
 - Status dock to check the status and statistics of all Branch Output filters. Support for batch or individual activation and deactivation
 - Can be interlinked with OBS Studio's streaming, recording, and virtual camera status
 
+> **For studio mode: Branch Output ignore studio mode's program out and always outputs preview's one**
 
 **[JP]**
 
@@ -42,6 +43,8 @@ More reliable and proper audio handling.
 
 - ステータスドックで全 Branch Output フィルターの状態と統計を確認可能。一括ないし個別の有効化・無効化に対応。
 - OBS Studio の配信・録画・仮想カメラの状態と連動可能
+
+> **スタジオモード向け: Branch Output はスタジオモードのプログラム出力を無視し、常にプレビューを出力に使用します**
 
 ## Requirements
 
