@@ -515,6 +515,17 @@ inline void addVideoEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
     );
 }
 
+BranchOutputStatusDock *createOutputStatusDock()
+{
+    auto dock = new BranchOutputStatusDock();
+
+    obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("BranchOutputStatus"), dock);
+
+    return dock;
+}
+
+//--- OBS Plugin Callbacks ---//
+
 obs_properties_t *getProperties(void *data)
 {
     auto filter = (BranchOutputFilter *)data;
@@ -538,13 +549,4 @@ obs_properties_t *getProperties(void *data)
     addPluginInfo(props);
 
     return props;
-}
-
-BranchOutputStatusDock *createOutputStatusDock()
-{
-    auto dock = new BranchOutputStatusDock();
-
-    obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("BranchOutputStatus"), dock);
-
-    return dock;
 }

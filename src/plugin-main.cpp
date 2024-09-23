@@ -167,6 +167,49 @@ obs_data_t *createRecordingSettings(BranchOutputFilter *filter, obs_data_t *sett
     return recordingSettings;
 }
 
+// Decide source/scene is private or not
+inline bool sourceIsPrivate(obs_source_t *source)
+{
+    auto finder = source;
+    auto callback = [](void *param, obs_source_t *_source) {
+        auto _finder = (obs_source_t **)param;
+        if (_source == *_finder) {
+            *_finder = nullptr;
+            return false;
+        }
+        return true;
+    };
+
+    obs_enum_scenes(callback, &finder);
+    if (finder != nullptr) {
+        obs_enum_sources(callback, &finder);
+    }
+
+    return finder != nullptr;
+}
+
+// Decide source/scene is displayed in frontend or not
+inline bool sourceInFrontend(obs_source_t *source)
+{
+    auto found = false;
+
+    obs_frontend_source_list lsit = {0};
+    obs_frontend_get_scenes(&lsit);
+    {
+        for (size_t i = 0; i < lsit.sources.num && !found; i++) {
+            if (lsit.sources.array[i] == source) {
+                found = true;
+                break;
+            }
+            obs_scene_t *scene = obs_scene_from_source(lsit.sources.array[i]);
+            found = !!obs_scene_find_source_recursive(scene, obs_source_get_name(source));
+        }
+    }
+    obs_frontend_source_list_free(&lsit);
+
+    return found;
+}
+
 #define FTL_PROTOCOL "ftl"
 #define RTMP_PROTOCOL "rtmp"
 
@@ -182,11 +225,7 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
         // Abort when obs initializing or filter disabled.
         if (!obs_initialized() || !obs_source_enabled(filter->filterSource) || filter->outputActive ||
             filter->recordingActive) {
-            return;
-        }
-
-        // Mandatory paramters
-        if (!strlen(obs_data_get_string(settings, "server")) && !obs_data_get_string(settings, "stream_recording")) {
+            obs_log(LOG_ERROR, "%s: Ignore unavailable filter", obs_source_get_name(filter->filterSource));
             return;
         }
 
@@ -197,9 +236,22 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
             return;
         }
 
+        // Ignore private sources
+        if (sourceIsPrivate(parent)) {
+            obs_log(LOG_ERROR, "%s: Ignore private source", obs_source_get_name(filter->filterSource));
+            return;
+        }
+
+        // Mandatory paramters
+        if (!strlen(obs_data_get_string(settings, "server")) && !obs_data_get_string(settings, "stream_recording")) {
+            obs_log(LOG_ERROR, "%s: Nothing to do", obs_source_get_name(filter->filterSource));
+            return;
+        }
+
         obs_video_info ovi = {0};
         if (!obs_get_video_info(&ovi)) {
             // Abort when no video situation
+            obs_log(LOG_ERROR, "%s: No video", obs_source_get_name(filter->filterSource));
             return;
         }
 
@@ -217,6 +269,7 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
 
         if (filter->width == 0 || filter->height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
             // Abort when invalid video parameters situation
+            obs_log(LOG_ERROR, "%s: Invalid video spec", obs_source_get_name(filter->filterSource));
             return;
         }
 
@@ -461,25 +514,6 @@ void restartRecordingOutput(BranchOutputFilter *filter)
     }
 }
 
-void update(void *data, obs_data_t *settings)
-{
-    auto filter = (BranchOutputFilter *)data;
-    obs_log(LOG_DEBUG, "%s: Filter updating", obs_source_get_name(filter->filterSource));
-
-    // It's unwelcome to do stopping output during attempting connect to service.
-    // So we just count up revision (Settings will be applied on videoTick())
-    filter->storedSettingsRev++;
-
-    // Save settings as default
-    OBSString config_dir_path = obs_module_get_config_path(obs_current_module(), "");
-    os_mkdirs(config_dir_path);
-
-    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
-    obs_data_save_json_safe(settings, path, "tmp", "bak");
-
-    obs_log(LOG_INFO, "%s: Filter updated", obs_source_get_name(filter->filterSource));
-}
-
 inline void loadRecently(obs_data_t *settings)
 {
     obs_log(LOG_DEBUG, "Recently settings loading");
@@ -492,6 +526,7 @@ inline void loadRecently(obs_data_t *settings)
         obs_data_erase(recently_settings, "use_auth");
         obs_data_erase(recently_settings, "username");
         obs_data_erase(recently_settings, "password");
+        obs_data_erase(recently_settings, "stream_recording");
         obs_data_erase(recently_settings, "custom_audio_source");
         obs_data_erase(recently_settings, "audio_source");
         obs_data_erase(recently_settings, "audio_track");
@@ -526,22 +561,7 @@ inline bool sourceAvailable(BranchOutputFilter *filter, obs_source_t *source)
     }
     filter->lastAvailableAt = now;
 
-    auto found = !!obs_scene_from_source(source);
-    if (found) {
-        return true;
-    }
-
-    obs_frontend_source_list scenes = {0};
-    obs_frontend_get_scenes(&scenes);
-
-    for (size_t i = 0; i < scenes.sources.num && !found; i++) {
-        obs_scene_t *scene = obs_scene_from_source(scenes.sources.array[i]);
-        found = !!obs_scene_find_source_recursive(scene, obs_source_get_name(source));
-    }
-
-    obs_frontend_source_list_free(&scenes);
-
-    return found;
+    return sourceInFrontend(source);
 }
 
 // Controlling output status here.
@@ -687,8 +707,11 @@ void intervalTask(BranchOutputFilter *filter)
     }
 }
 
+//--- OBS Plugin Callbacks ---//
+
 void *create(obs_data_t *settings, obs_source_t *source)
 {
+    // DO NOT use obs_filter_get_parent() in this function (It'll return nullptr)
     obs_log(LOG_DEBUG, "%s: Filter creating", obs_source_get_name(source));
     obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
 
@@ -718,14 +741,94 @@ void *create(obs_data_t *settings, obs_source_t *source)
     filter->initialized = !!strlen(obs_data_get_string(settings, "server")) ||
                           obs_data_get_bool(settings, "stream_recording");
 
-    // Start interval timer
+    obs_log(LOG_INFO, "%s: Filter created", obs_source_get_name(filter->filterSource));
+    return filter;
+}
+
+void filterAdd(void *data, obs_source_t *source)
+{
+    // Register to output status dock
+    auto filter = (BranchOutputFilter *)data;
+
+    // Do not start timer for private sources
+    // Do not register private sources to status dock
+    if (sourceIsPrivate(source)) {
+        obs_log(
+            LOG_DEBUG, "%s: Ignore adding to private source '%s'", obs_source_get_name(filter->filterSource),
+            obs_source_get_name(source)
+        );
+        return;
+    }
+
+    obs_log(
+        LOG_DEBUG, "%s: Filter adding to '%s'", obs_source_get_name(filter->filterSource), obs_source_get_name(source)
+    );
+
+    // Start interval timer here
     filter->intervalTimer = new QTimer();
     filter->intervalTimer->setInterval(TASK_INTERVAL_MS);
     filter->intervalTimer->start();
     QObject::connect(filter->intervalTimer, &QTimer::timeout, [filter]() { intervalTask(filter); });
 
-    obs_log(LOG_INFO, "%s: Filter created", obs_source_get_name(filter->filterSource));
-    return filter;
+    // Show in status dock (Thread-safe way)
+    QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, filter));
+
+    obs_log(
+        LOG_INFO, "%s: Filter added to '%s'", obs_source_get_name(filter->filterSource), obs_source_get_name(source)
+    );
+}
+
+void update(void *data, obs_data_t *settings)
+{
+    auto filter = (BranchOutputFilter *)data;
+    auto parent = obs_filter_get_parent(filter->filterSource);
+
+    // Do not save settings for private sources
+    if (sourceIsPrivate(parent)) {
+        obs_log(
+            LOG_DEBUG, "%s: Ignore updating in private source '%s'", obs_source_get_name(filter->filterSource),
+            obs_source_get_name(parent)
+        );
+        return;
+    }
+
+    obs_log(LOG_DEBUG, "%s: Filter updating", obs_source_get_name(filter->filterSource));
+
+    // It's unwelcome to do stopping output during attempting connect to service.
+    // So we just count up revision (Settings will be applied on videoTick())
+    filter->storedSettingsRev++;
+
+    // Save settings as default
+    OBSString config_dir_path = obs_module_get_config_path(obs_current_module(), "");
+    os_mkdirs(config_dir_path);
+
+    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
+    obs_data_save_json_safe(settings, path, "tmp", "bak");
+
+    obs_log(LOG_INFO, "%s: Filter updated", obs_source_get_name(filter->filterSource));
+}
+
+void videoRender(void *data, gs_effect_t *)
+{
+    auto filter = (BranchOutputFilter *)data;
+    obs_source_skip_video_filter(filter->filterSource);
+}
+
+void filterRemove(void *data, obs_source_t *source)
+{
+    auto filter = (BranchOutputFilter *)data;
+
+    obs_log(
+        LOG_DEBUG, "%s: Filter removing from '%s'", obs_source_get_name(filter->filterSource),
+        obs_source_get_name(source)
+    );
+
+    // Unregister from output status dock (Thread-safe way)
+    QMetaObject::invokeMethod(statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, filter));
+
+    obs_log(
+        LOG_INFO, "%s: Filter removed from '%s'", obs_source_get_name(filter->filterSource), obs_source_get_name(source)
+    );
 }
 
 void destroy(void *data)
@@ -734,8 +837,10 @@ void destroy(void *data)
     auto source = filter->filterSource;
     obs_log(LOG_DEBUG, "%s: Filter destroying", obs_source_get_name(source));
 
-    // Stop interval timer (in proper thread)
-    filter->intervalTimer->deleteLater();
+    if (filter->intervalTimer) {
+        // Stop interval timer (in proper thread)
+        filter->intervalTimer->deleteLater();
+    }
 
     stopOutput(filter);
     pthread_mutex_destroy(&filter->audioBufferMutex);
@@ -746,47 +851,29 @@ void destroy(void *data)
     obs_log(LOG_INFO, "%s: Filter destroyed", obs_source_get_name(source));
 }
 
-void filterAdd(void *data, obs_source_t *)
-{
-    // Register to output status dock
-    auto filter = (BranchOutputFilter *)data;
-    statusDock->addFilter(filter);
-}
-
-void filterRemove(void *data, obs_source_t *)
-{
-    // Unregister from output status dock
-    auto filter = (BranchOutputFilter *)data;
-    statusDock->removeFilter(filter);
-}
-
-void videoRender(void *data, gs_effect_t *)
-{
-    auto filter = (BranchOutputFilter *)data;
-    obs_source_skip_video_filter(filter->filterSource);
-}
-
 obs_source_info createFilterInfo()
 {
     obs_source_info filter_info = {0};
 
     filter_info.id = FILTER_ID;
     filter_info.type = OBS_SOURCE_TYPE_FILTER;
-    filter_info.output_flags = OBS_SOURCE_VIDEO;
+    filter_info.output_flags = OBS_SOURCE_VIDEO; // Didn't work OBS_SOURCE_DO_NOT_DUPLICATE for filter
 
     filter_info.get_name = [](void *) {
         return "Branch Output";
     };
+
+    filter_info.create = create;
+    filter_info.filter_add = filterAdd;
+    filter_info.update = update;
+    filter_info.video_render = videoRender;
+    filter_info.filter_remove = filterRemove;
+    filter_info.destroy = destroy;
+
     filter_info.get_properties = getProperties;
     filter_info.get_defaults = getDefaults;
 
-    filter_info.create = create;
-    filter_info.destroy = destroy;
-    filter_info.update = update;
-    filter_info.filter_add = filterAdd;
-    filter_info.filter_remove = filterRemove;
     filter_info.filter_audio = audioFilterCallback;
-    filter_info.video_render = videoRender;
 
     return filter_info;
 }

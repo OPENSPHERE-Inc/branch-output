@@ -36,6 +36,7 @@ class QString;
 class QCheckBox;
 class QPushButton;
 struct BranchOutputFilter;
+class OutputTableRow;
 
 class FilterCell : public QWidget {
     Q_OBJECT
@@ -93,31 +94,9 @@ public:
 class BranchOutputStatusDock : public QFrame {
     Q_OBJECT
 
-    struct OutputTableRow {
-        BranchOutputFilter *filter;
-        FilterCell *filterCell;
-        ParentCell *parentCell;
-        StatusCell *status;
-        StatusCell *recording;
-        QLabel *droppedFrames;
-        QLabel *megabytesSent;
-        QLabel *bitrate;
-
-        uint64_t lastBytesSent = 0;
-        uint64_t lastBytesSentTime = 0;
-
-        int first_total = 0;
-        int first_dropped = 0;
-
-        void update();
-        void reset();
-
-        long double kbps = 0.0l;
-    };
-
     QTimer timer;
     QTableWidget *outputTable = nullptr;
-    QList<OutputTableRow> outputTableRows;
+    QList<OutputTableRow *> outputTableRows;
     QPushButton *enableAllButton = nullptr;
     QPushButton *disableAllButton = nullptr;
     QLabel *interlockLabel = nullptr;
@@ -135,10 +114,41 @@ public:
     explicit BranchOutputStatusDock(QWidget *parent = (QWidget *)nullptr);
     ~BranchOutputStatusDock();
 
+public slots:
     void addFilter(BranchOutputFilter *filter);
     void removeFilter(BranchOutputFilter *filter);
     BranchOutputFilter *findFilter(const QString &parentName, const QString &filterName);
     void setEabnleAll(bool enabled);
 
     inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
+};
+
+class OutputTableRow : public QObject {
+    Q_OBJECT
+
+    friend class BranchOutputStatusDock;
+
+    BranchOutputFilter *filter;
+    FilterCell *filterCell;
+    ParentCell *parentCell;
+    StatusCell *status;
+    StatusCell *recording;
+    QLabel *droppedFrames;
+    QLabel *megabytesSent;
+    QLabel *bitrate;
+
+    uint64_t lastBytesSent = 0;
+    uint64_t lastBytesSentTime = 0;
+
+    int first_total = 0;
+    int first_dropped = 0;
+
+    void update();
+    void reset();
+
+    long double kbps = 0.0l;
+
+public:
+    explicit OutputTableRow(QObject *parent = (QObject *)nullptr);
+    ~OutputTableRow();
 };
