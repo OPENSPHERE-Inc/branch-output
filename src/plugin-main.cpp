@@ -541,7 +541,7 @@ void intervalTask(BranchOutputFilter *filter)
         return;
     }
 
-    auto interlockType = statusDock->getInterlockType();
+    auto interlockType = statusDock ? statusDock->getInterlockType() : INTERLOCK_TYPE_ALWAYS_ON;
     auto sourceEnabled = obs_source_enabled(filter->filterSource);
 
     if (!filter->outputActive && !filter->recordingActive) {
@@ -745,8 +745,10 @@ void filterAdd(void *data, obs_source_t *source)
     filter->intervalTimer->start();
     QObject::connect(filter->intervalTimer, &QTimer::timeout, [filter]() { intervalTask(filter); });
 
-    // Show in status dock (Thread-safe way)
-    QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, filter));
+    if (statusDock) {
+        // Show in status dock (Thread-safe way)
+        QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, filter));
+    }
 
     obs_log(
         LOG_INFO, "%s: Filter added to '%s'", obs_source_get_name(filter->filterSource), obs_source_get_name(source)
@@ -798,8 +800,10 @@ void filterRemove(void *data, obs_source_t *source)
         obs_source_get_name(source)
     );
 
-    // Unregister from output status dock (Thread-safe way)
-    QMetaObject::invokeMethod(statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, filter));
+    if (statusDock) {
+        // Unregister from output status dock (Thread-safe way)
+        QMetaObject::invokeMethod(statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, filter));
+    }
 
     obs_log(
         LOG_INFO, "%s: Filter removed from '%s'", obs_source_get_name(filter->filterSource), obs_source_get_name(source)

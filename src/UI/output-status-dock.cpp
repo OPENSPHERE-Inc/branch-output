@@ -106,11 +106,15 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     this->setLayout(outputContainerLayout);
 
     loadSettings();
+
+    obs_log(LOG_DEBUG, "BranchOutputStatusDock created");
 }
 
 BranchOutputStatusDock::~BranchOutputStatusDock()
 {
     saveSettings();
+
+    obs_log(LOG_DEBUG, "BranchOutputStatusDock destroyed");
 }
 
 void BranchOutputStatusDock::loadSettings()
