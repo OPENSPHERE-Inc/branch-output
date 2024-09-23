@@ -188,28 +188,6 @@ inline bool sourceIsPrivate(obs_source_t *source)
     return finder != nullptr;
 }
 
-// Decide source/scene is displayed in frontend or not
-inline bool sourceInFrontend(obs_source_t *source)
-{
-    auto found = false;
-
-    obs_frontend_source_list lsit = {0};
-    obs_frontend_get_scenes(&lsit);
-    {
-        for (size_t i = 0; i < lsit.sources.num && !found; i++) {
-            if (lsit.sources.array[i] == source) {
-                found = true;
-                break;
-            }
-            obs_scene_t *scene = obs_scene_from_source(lsit.sources.array[i]);
-            found = !!obs_scene_find_source_recursive(scene, obs_source_get_name(source));
-        }
-    }
-    obs_frontend_source_list_free(&lsit);
-
-    return found;
-}
-
 #define FTL_PROTOCOL "ftl"
 #define RTMP_PROTOCOL "rtmp"
 
@@ -553,17 +531,6 @@ inline bool connectAttemptingTimedOut(BranchOutputFilter *filter)
     return filter->connectAttemptingAt && os_gettime_ns() - filter->connectAttemptingAt > CONNECT_ATTEMPTING_TIMEOUT_NS;
 }
 
-inline bool sourceAvailable(BranchOutputFilter *filter, obs_source_t *source)
-{
-    auto now = os_gettime_ns();
-    if (now - filter->lastAvailableAt < AVAILAVILITY_CHECK_INTERVAL_NS) {
-        return true;
-    }
-    filter->lastAvailableAt = now;
-
-    return sourceInFrontend(source);
-}
-
 // Controlling output status here.
 // Start / Stop should only heppen in this function as possible because rapid manipulation caused crash easily.
 // NOTE: Becareful this function is called so offen.
@@ -577,7 +544,45 @@ void intervalTask(BranchOutputFilter *filter)
     auto interlockType = statusDock->getInterlockType();
     auto sourceEnabled = obs_source_enabled(filter->filterSource);
 
-    if (filter->outputActive || filter->recordingActive) {
+    if (!filter->outputActive && !filter->recordingActive) {
+        // Evaluate start condition
+        auto parent = obs_filter_get_parent(filter->filterSource);
+        if (!parent || !sourceInFrontend(parent)) {
+            // Ignore when source in no longer exists in frontend
+            return;
+        }
+
+        if (sourceEnabled) {
+            // Clicked filter's "Eye" icon (Show)
+            // Check interlock condition
+            if (interlockType == INTERLOCK_TYPE_STREAMING) {
+                if (obs_frontend_streaming_active()) {
+                    restartOutput(filter);
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_RECORDING) {
+                if (obs_frontend_recording_active()) {
+                    restartOutput(filter);
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_STREAMING_RECORDING) {
+                if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
+                    restartOutput(filter);
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
+                if (obs_frontend_virtualcam_active()) {
+                    restartOutput(filter);
+                    return;
+                }
+            } else {
+                restartOutput(filter);
+                return;
+            }
+        }
+
+    } else {
+        // Evaluate stop or restart condition
         auto streamingAlive = filter->streamOutput && obs_output_active(filter->streamOutput);
         auto recordingAlive = filter->recordingOutput && obs_output_active(filter->recordingOutput);
 
@@ -650,7 +655,7 @@ void intervalTask(BranchOutputFilter *filter)
                 uint32_t height = obs_source_get_height(parent);
                 height += (height & 1);
 
-                if (!width || !height || !sourceAvailable(filter, parent)) {
+                if (!width || !height || !sourceInFrontend(parent)) {
                     // Stop output when source resolution is zero or source had been removed
                     stopOutput(filter);
                     return;
@@ -671,36 +676,6 @@ void intervalTask(BranchOutputFilter *filter)
             if (streamingAlive || recordingAlive) {
                 // Clicked filter's "Eye" icon (Hide)
                 stopOutput(filter);
-                return;
-            }
-        }
-
-    } else {
-        if (sourceEnabled) {
-            // Clicked filter's "Eye" icon (Show)
-            // Check interlock condition
-            if (interlockType == INTERLOCK_TYPE_STREAMING) {
-                if (obs_frontend_streaming_active()) {
-                    restartOutput(filter);
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_RECORDING) {
-                if (obs_frontend_recording_active()) {
-                    restartOutput(filter);
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_STREAMING_RECORDING) {
-                if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
-                    restartOutput(filter);
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
-                if (obs_frontend_virtualcam_active()) {
-                    restartOutput(filter);
-                    return;
-                }
-            } else {
-                restartOutput(filter);
                 return;
             }
         }

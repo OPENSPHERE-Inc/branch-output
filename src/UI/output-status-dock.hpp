@@ -101,6 +101,7 @@ class BranchOutputStatusDock : public QFrame {
     QPushButton *disableAllButton = nullptr;
     QLabel *interlockLabel = nullptr;
     QComboBox *interlockComboBox = nullptr;
+    OBSSignal sourceAddedSignal;
 
     void update();
     void saveSettings();

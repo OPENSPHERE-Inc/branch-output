@@ -48,7 +48,6 @@ struct BranchOutputFilter {
     bool recordingActive;
     uint32_t storedSettingsRev;
     uint32_t activeSettingsRev;
-    uint64_t lastAvailableAt;
     QTimer *intervalTimer;
 
     // Filter source

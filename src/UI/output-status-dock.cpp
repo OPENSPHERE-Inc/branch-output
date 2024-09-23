@@ -230,8 +230,13 @@ void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
 
 void BranchOutputStatusDock::update()
 {
-    for (int i = 0; i < outputTableRows.size(); i++) {
-        outputTableRows[i]->update();
+    foreach (auto row, outputTableRows) {
+        if (!sourceInFrontend(obs_filter_get_parent(row->filter->filterSource))) {
+            // Remove filter that no longer exists in the frontend
+            removeFilter(row->filter);
+            continue;
+        }
+        row->update();
     }
 }
 
