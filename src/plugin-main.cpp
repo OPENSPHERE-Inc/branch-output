@@ -628,25 +628,6 @@ void intervalTask(BranchOutputFilter *filter)
                 return;
             }
 
-            if (filter->recordingActive && !recordingAlive) {
-                // Restart recording
-                obs_log(
-                    LOG_INFO, "%s: Attempting reactivate the recording output",
-                    obs_source_get_name(filter->filterSource)
-                );
-                restartRecordingOutput(filter);
-                return;
-            }
-
-            if (filter->outputActive && !streamingAlive) {
-                // Reconnect streaming
-                obs_log(
-                    LOG_INFO, "%s: Attempting reactivate the stream output", obs_source_get_name(filter->filterSource)
-                );
-                reconnectStreamOutput(filter);
-                return;
-            }
-
             if (streamingAlive || recordingAlive) {
                 // Monitoring source
                 auto parent = obs_filter_get_parent(filter->filterSource);
@@ -670,6 +651,25 @@ void intervalTask(BranchOutputFilter *filter)
                     startOutput(filter, settings);
                     return;
                 }
+            }
+
+            if (filter->recordingActive && !recordingAlive) {
+                // Restart recording
+                obs_log(
+                    LOG_INFO, "%s: Attempting reactivate the recording output",
+                    obs_source_get_name(filter->filterSource)
+                );
+                restartRecordingOutput(filter);
+                return;
+            }
+
+            if (filter->outputActive && !streamingAlive) {
+                // Reconnect streaming
+                obs_log(
+                    LOG_INFO, "%s: Attempting reactivate the stream output", obs_source_get_name(filter->filterSource)
+                );
+                reconnectStreamOutput(filter);
+                return;
             }
 
         } else {
