@@ -439,8 +439,7 @@ void FilterCell::setText(const QString &text)
 void FilterCell::onFilterRenamed(void *data, calldata_t *cd)
 {
     auto item = (FilterCell *)data;
-    auto newName = calldata_string(cd, "new_name");
-    item->setText(QString::fromUtf8(newName));
+    item->setText(calldata_string(cd, "new_name"));
 }
 
 void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
