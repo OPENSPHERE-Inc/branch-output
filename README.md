@@ -8,7 +8,7 @@
 
 **[EN]**
 
-This is an OBS Studio plugin that allows to transmit video and audio with RTMP / SRT etc. for each source individually.
+This is an OBS Studio plugin that allows to live stream and/or recording for each source individually.
 Inspired by the [Source Record](https://github.com/exeldro/obs-source-record) plugin, but more focused on streaming.
 More reliable and proper audio handling.
 
@@ -28,7 +28,7 @@ More reliable and proper audio handling.
 
 **[JP]**
 
-この OBS Studio プラグインでは、ソース毎に RTMP / SRT 等で送出するエフェクトフィルタを追加します。
+この OBS Studio プラグインでは、ソース毎に配信ないし録画するエフェクトフィルタを追加します。
 [Source Record](https://github.com/exeldro/obs-source-record) プラグインに触発されて開発しましたが、ストリーミングでの使用に重点が置かれています。
 より信頼性があり、適切なオーディオの取り扱いを行います。
 
