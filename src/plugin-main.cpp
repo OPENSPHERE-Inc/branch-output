@@ -95,12 +95,10 @@ void stopOutput(BranchOutputFilter *filter)
                 obs_weak_source_release(filter->audioSource);
                 filter->audioSource = nullptr;
             }
-
-        } else if (filter->audioSourceType == AUDIO_SOURCE_TYPE_MASTER) {
-            obs_remove_raw_audio_callback(filter->audioMixIdx, masterAudioCallback, filter);
-        }
+        } 
         filter->audioSourceType = AUDIO_SOURCE_TYPE_SILENCE;
 
+        // Master audio didn't give handle.
         if (filter->audioOutput) {
             audio_output_close(filter->audioOutput);
             filter->audioOutput = nullptr;
@@ -310,6 +308,8 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
         filter->audioBufferFrames = 0;
         filter->audioSkip = 0;
 
+        audio_t *audio = nullptr;
+
         if (obs_data_get_bool(settings, "custom_audio_source")) {
             // Apply custom audio source
             auto audioSourceUuid = obs_data_get_string(settings, "audio_source");
@@ -320,16 +320,7 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
                     auto trackNo = obs_data_get_int(settings, "audio_track");
                     if (trackNo > 0 && trackNo <= MAX_AUDIO_MIXES) {
                         filter->audioMixIdx = trackNo - 1;
-
-                        audio_convert_info conv = {0};
-                        conv.format = AUDIO_FORMAT_FLOAT_PLANAR;
-                        conv.samples_per_sec = filter->samplesPerSec;
-                        conv.speakers = filter->audioChannels;
-                        conv.allow_clipping = true;
-
-                        filter->audioSourceType = AUDIO_SOURCE_TYPE_MASTER;
-
-                        obs_add_raw_audio_callback(filter->audioMixIdx, &conv, masterAudioCallback, filter);
+                        audio = obs_get_audio();
                     }
 
                 } else {
@@ -371,18 +362,21 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
         }
 
         // Open audio output (Audio will be captured from filter source via audioInputCallback)
-        audio_output_info oi = {0};
+        if (!audio) {
+            audio_output_info oi = {0};
 
-        oi.name = obs_source_get_name(filter->filterSource);
-        oi.speakers = filter->audioChannels;
-        oi.samples_per_sec = filter->samplesPerSec;
-        oi.format = AUDIO_FORMAT_FLOAT_PLANAR;
-        oi.input_param = filter;
-        oi.input_callback = audioInputCallback;
+            oi.name = obs_source_get_name(filter->filterSource);
+            oi.speakers = filter->audioChannels;
+            oi.samples_per_sec = filter->samplesPerSec;
+            oi.format = AUDIO_FORMAT_FLOAT_PLANAR;
+            oi.input_param = filter;
+            oi.input_callback = audioInputCallback; // Handle all audio except master audio 
 
-        if (audio_output_open(&filter->audioOutput, &oi) < 0) {
-            obs_log(LOG_ERROR, "%s: Opening audio output failed", obs_source_get_name(filter->filterSource));
-            return;
+            if (audio_output_open(&filter->audioOutput, &oi) < 0) {
+                obs_log(LOG_ERROR, "%s: Opening audio output failed", obs_source_get_name(filter->filterSource));
+                return;
+            }
+            audio = filter->audioOutput;
         }
 
         //--- Setup video encoder ---//
@@ -411,7 +405,7 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
             obs_log(LOG_ERROR, "%s: Audio encoder creation failed", obs_source_get_name(filter->filterSource));
             return;
         }
-        obs_encoder_set_audio(filter->audioEncoder, filter->audioOutput);
+        obs_encoder_set_audio(filter->audioEncoder, audio);
 
         //--- Create recording output (if requested) ---//
         if (obs_data_get_bool(settings, "stream_recording")) {

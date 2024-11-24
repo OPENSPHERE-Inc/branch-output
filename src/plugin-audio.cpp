@@ -121,6 +121,7 @@ void audioCaptureCallback(void *param, obs_source_t *, const audio_data *audioDa
 }
 
 // Callback from master audio output
+/* // Deprecated
 void masterAudioCallback(void *param, size_t, audio_data *audioData)
 {
     auto filter = (BranchOutputFilter *)param;
@@ -129,6 +130,7 @@ void masterAudioCallback(void *param, size_t, audio_data *audioData)
     convert_audio_data(&filterAudioData, audioData);
     pushAudioToBuffer(filter, &filterAudioData);
 }
+*/
 
 //--- OBS Plugin Callbacks ---//
 

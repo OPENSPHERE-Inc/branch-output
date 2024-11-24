@@ -98,7 +98,7 @@ void update(void *data, obs_data_t *settings);
 void getDefaults(obs_data_t *defaults);
 obs_properties_t *getProperties(void *data);
 void audioCaptureCallback(void *param, obs_source_t *, const audio_data *audio_data, bool muted);
-void masterAudioCallback(void *param, size_t, audio_data *audio_data);
+//void masterAudioCallback(void *param, size_t, audio_data *audio_data);  // Deprecated
 obs_audio_data *audioFilterCallback(void *param, obs_audio_data *audio_data);
 bool audioInputCallback(
     void *param, uint64_t start_ts_in, uint64_t, uint64_t *out_ts, uint32_t mixers, audio_output_data *mixes
