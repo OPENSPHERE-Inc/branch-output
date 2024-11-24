@@ -95,7 +95,7 @@ void stopOutput(BranchOutputFilter *filter)
                 obs_weak_source_release(filter->audioSource);
                 filter->audioSource = nullptr;
             }
-        } 
+        }
         filter->audioSourceType = AUDIO_SOURCE_TYPE_SILENCE;
 
         // Master audio didn't give handle.
@@ -370,7 +370,7 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
             oi.samples_per_sec = filter->samplesPerSec;
             oi.format = AUDIO_FORMAT_FLOAT_PLANAR;
             oi.input_param = filter;
-            oi.input_callback = audioInputCallback; // Handle all audio except master audio 
+            oi.input_callback = audioInputCallback; // Handle all audio except master audio
 
             if (audio_output_open(&filter->audioOutput, &oi) < 0) {
                 obs_log(LOG_ERROR, "%s: Opening audio output failed", obs_source_get_name(filter->filterSource));
