@@ -396,9 +396,9 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
         auto audio_encoder_settings = obs_encoder_defaults(audio_encoder_id);
         obs_data_set_int(audio_encoder_settings, "bitrate", audio_bitrate);
 
-        // Use track 0 only.
         filter->audioEncoder = obs_audio_encoder_create(
-            audio_encoder_id, obs_source_get_name(filter->filterSource), audio_encoder_settings, 0, nullptr
+            audio_encoder_id, obs_source_get_name(filter->filterSource), audio_encoder_settings, filter->audioMixIdx,
+            nullptr
         );
         obs_data_release(audio_encoder_settings);
         if (!filter->audioEncoder) {
