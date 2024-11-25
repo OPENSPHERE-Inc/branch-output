@@ -390,7 +390,7 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
         obs_encoder_set_scaled_size(filter->videoEncoder, 0, 0);
         obs_encoder_set_video(filter->videoEncoder, filter->videoOutput);
 
-        //--- Setup audo encoder ---//
+        //--- Setup audio encoder ---//
         auto audio_encoder_id = obs_data_get_string(settings, "audio_encoder");
         auto audio_bitrate = obs_data_get_int(settings, "audio_bitrate");
         auto audio_encoder_settings = obs_encoder_defaults(audio_encoder_id);
