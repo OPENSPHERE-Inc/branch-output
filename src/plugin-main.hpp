@@ -86,7 +86,8 @@ struct BranchOutputFilter {
     uint64_t connectAttemptingAt;
 };
 
-Q_DECLARE_METATYPE(BranchOutputFilter);
+// The type must be registered for Linux platform
+Q_DECLARE_METATYPE(BranchOutputFilter *);
 
 struct AudioBufferChunkHeader {
     size_t data_idx[MAX_AUDIO_CHANNELS]; // Zero means unused channel
