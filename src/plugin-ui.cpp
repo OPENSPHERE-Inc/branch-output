@@ -304,11 +304,14 @@ inline void addStreamGroup(obs_properties_t *props)
     obs_properties_add_group(props, "stream", obs_module_text("Stream"), OBS_GROUP_NORMAL, streamGroup);
 }
 
-inline void addAudioGroup(obs_properties_t *props)
+inline void addAudioGroup(obs_properties_t *props, int index = 1)
 {
+    auto audioSourceListName = QString("audio_source%1").arg(index > 1 ? QString("_%1").arg(index) : "");
+    auto audioTrackListName = QString("audio_track%1").arg(index > 1 ? QString("_%1").arg(index) : "");
+
     auto audioGroup = obs_properties_create();
     auto audioSourceList = obs_properties_add_list(
-        audioGroup, "audio_source", obs_module_text("Source"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+        audioGroup, qPrintable(audioSourceListName), obs_module_text("Source"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
     );
 
     obs_property_list_add_string(audioSourceList, obs_module_text("NoAudio"), "no_audio");
