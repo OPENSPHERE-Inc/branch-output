@@ -864,8 +864,7 @@ bool obs_module_load()
 
 void obs_module_post_load()
 {
-    auto id = qRegisterMetaType<BranchOutputFilter *>();
-    obs_log(LOG_DEBUG, "qRegisterMetaType=%d",  id);
+    qRegisterMetaType<BranchOutputFilter *>();
 
     statusDock = createOutputStatusDock();
 }
