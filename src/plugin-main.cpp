@@ -855,8 +855,6 @@ obs_source_info filterInfo;
 
 bool obs_module_load()
 {
-    qRegisterMetaType<BranchOutputFilter *>();
-
     filterInfo = createFilterInfo();
     obs_register_source(&filterInfo);
 
@@ -866,6 +864,8 @@ bool obs_module_load()
 
 void obs_module_post_load()
 {
+    qRegisterMetaType<BranchOutputFilter *>();
+
     statusDock = createOutputStatusDock();
 }
 
