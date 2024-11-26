@@ -864,6 +864,8 @@ bool obs_module_load()
 
 void obs_module_post_load()
 {
+    qRegisterMetaType<BranchOutputFilter *>();
+
     statusDock = createOutputStatusDock();
 }
 
