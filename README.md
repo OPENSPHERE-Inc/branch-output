@@ -1,12 +1,18 @@
 # Branch Output filter (The OBS Studio Plugin)
 
+[日本語はこちら](./README_ja.md)
+
 [<img src="./screenshot1.jpg" />](./screenshot1.jpg)
 
 [<img src="./screenshot2.jpg" />](./screenshot2.jpg)
 
-## Features
+## Sponsored
 
-**[EN]**
+We launched a GitHub sponser program. If you would like to help, please support us.
+
+[<img src="https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86" />](https://github.com/sponsors/OPENSPHERE-Inc)
+
+## Features
 
 This is an OBS Studio plugin that allows to live stream and/or recording for each source individually.
 Inspired by the [Source Record](https://github.com/exeldro/obs-source-record) plugin, but more focused on streaming.
@@ -25,26 +31,6 @@ More reliable and proper audio handling.
 - Can be interlinked with OBS Studio's streaming, recording, and virtual camera status
 
 > **For studio mode: Branch Output ignore studio mode's program out and always outputs preview's one**
-
-**[JP]**
-
-この OBS Studio プラグインでは、ソース毎に配信ないし録画するエフェクトフィルタを追加します。
-[Source Record](https://github.com/exeldro/obs-source-record) プラグインに触発されて開発しましたが、ストリーミングでの使用に重点が置かれています。
-より信頼性があり、適切なオーディオの取り扱いを行います。
-
-- ソースまたはシーンのエフェクトフィルタに「Branch Output」を追加
-- フィルター1つにつき1本のストリーム送出が、専用のエンコーディング設定で可能
-- 1つのソース・シーンに複数の Branch Output を追加可能（PCのスペックが許す限り追加可能）
-- Branch Output フィルターごとに音声ソースを選択可能（フィルター音声、任意ソース音声、音声トラック1～6）
-- 接続が切れても自動的に再接続
-- 配信録画機能（各種コンテナ形式、時間・サイズ分割に対応）
-  
-  ※接続情報を空欄にすれば録画のみとして動作
-
-- ステータスドックで全 Branch Output フィルターの状態と統計を確認可能。一括ないし個別の有効化・無効化に対応。
-- OBS Studio の配信・録画・仮想カメラの状態と連動可能
-
-> **スタジオモード向け: Branch Output はスタジオモードのプログラム出力を無視し、常にプレビューを出力に使用します**
 
 ## Requirements
 
@@ -73,27 +59,41 @@ Please download latest install package from [Release](https://github.com/OPENSPH
 
 (*) Some sources (e.g. Local Media source) will stop stream output during inactivated scene. It's not plugin's bug.
 
-**[JP]**
+# TIPS
 
-[こちらのブログ記事](https://blog.opensphere.co.jp/posts/branchoutput001) に日本語でより詳しい使い方を掲載していますので参照ください。
+## 1. To change the resolution and layout for streaming (Work-around)
 
-1. 任意の「ソース」または「シーン」に、エフェクトフィルタとして "Branch Output" を追加
-   （注意：「シーン」はデフォルトでオーディオがありません）
-2. サーバーURLとストリームキーを入力。
-   サーバーURLは OBS のカスタム配信設定の様に RTMP や SRT 等を使用できます。
-3. オーディオソースを選択。
-   カスタムオーディオソースからチェックを外した場合、フィルターオーディオを使用します
-   （注意：「シーン」の音声は必ずカスタムオーディオソースを使用しなければなりません）
+In the current version of Branch Output, source resolution = streaming resolution.
 
-   「任意のソース」はフィルターパイプラインの後、オーディオミキサーの前で取り込まれます。
-   「音声トラック1～6」はオーディオミキサーの出力が取り込まれます。
+Therefore, if the source resolution is 4k, it will be streamed at 4k.
+If you want to down-convert it to 1080p and stream it, you can do so as follows.
 
-   「無音」も選択可能です。
-4. 音声および映像エンコーダーを設定。NVENC 等のハードウェアエンコーダーも使用可能です。
-5. 「適用」ボタンをクリックすると、送信が開始されます。
-6. 「目」アイコンでフィルターが非アクティブ化されると、出力ストリームもオフラインになります。
+1. The canvas resolution is assumed to be 1080p.
+2. Create new blank scene.
+3. Right-click on the source you want to stream and click “Copy” from the menu.
+4. Right-click on the blank scene created in step 2 and click “Paste (Reference)” from the menu.
+   Scale and crop as needed.
+5. Add Branch Output to the scene's effects filter and set up streaming
 
-※いくつかのソース（例：ローカルメディアソース）は、シーンが非アクティブの場合に送出が停止しますが、これはプラグインのバグではありません。
+“Paste (Reference)” does not duplicate the source and will not cause device conflicts.
+
+Branch Output will stream even if the scene is not active.
+
+This method should work well except for some sources (e.g., media sources) that will not play unless the scene is active.
+
+## 2. To stream program out to multiple streaming platforms.
+
+This can be done by using the plugin [Main View Source](https://obsproject.com/forum/resources/main-view-source.1501/) along with it.
+
+1. Create new blank scene (The scene for streaming)
+2. Add a “Main View Source” to the scene for streaming.
+3. Add Branch Output to the scene's effects filter and set up streaming.
+
+You can also create multiple scenes for streaming and layer additional sources to change the content for each streaming platform.
+
+For example, you might want to display Twitch comments on Twitch and YouTube comments on YouTube.
+
+However, this method adds sources but does not reduce them.
 
 # Development
 
