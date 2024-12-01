@@ -333,8 +333,8 @@ void createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool
     setAudioDestListName(audioDestListName, 13, track);
 
     auto audioSourceList = obs_properties_add_list(
-        audioGroup, qPrintable(audioSourceListName), qUtf8Printable(QTStr("TrackSource%1").arg(track)), OBS_COMBO_TYPE_LIST,
-        OBS_COMBO_FORMAT_STRING
+        audioGroup, qPrintable(audioSourceListName), qUtf8Printable(QTStr("TrackSource%1").arg(track)),
+        OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
     );
     obs_property_set_visible(audioSourceList, visible);
 
