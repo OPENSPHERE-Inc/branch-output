@@ -217,8 +217,7 @@ bool AudioCapture::audioCapture(
 }
 
 // Callback from audio_output_open
-bool AudioCapture::
-    silenceCapture(void *, uint64_t startTsIn, uint64_t, uint64_t *outTs, uint32_t, audio_output_data *)
+bool AudioCapture::silenceCapture(void *, uint64_t startTsIn, uint64_t, uint64_t *outTs, uint32_t, audio_output_data *)
 {
     *outTs = startTsIn;
     return true;
