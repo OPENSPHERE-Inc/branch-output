@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/threading.h>
 
 #include "UI/output-status-dock.hpp"
+#include "audio/audio-capture.hpp"
 
 enum AudioSourceType {
     AUDIO_SOURCE_TYPE_SILENCE,
@@ -41,6 +42,16 @@ enum InterlockType {
     INTERLOCK_TYPE_VIRTUAL_CAM,
 };
 
+struct BranchOutputAudioContext {
+    AudioCapture *capture;
+    obs_encoder_t *encoder;
+    audio_t *audio;
+    size_t mixIndex;
+    bool streaming;
+    bool recording;
+    QString name;
+};
+
 // TODO: Convert to Object
 struct BranchOutputFilter {
     bool initialized; // Activate after first "Apply" click
@@ -55,11 +66,9 @@ struct BranchOutputFilter {
 
     // User choosed encoder
     obs_encoder_t *videoEncoder;
-    obs_encoder_t *audioEncoder;
 
     obs_view_t *view;
     video_t *videoOutput;
-    audio_t *audioOutput;
     obs_output_t *streamOutput;
     obs_output_t *recordingOutput;
     obs_service_t *service;
@@ -69,17 +78,7 @@ struct BranchOutputFilter {
     uint32_t height;
 
     // Audio context
-    obs_weak_source_t *audioSource; // NULL means using filter's audio
-    AudioSourceType audioSourceType;
-    deque audioBuffer;
-    size_t audioBufferFrames;
-    pthread_mutex_t audioBufferMutex;
-    uint8_t *audioConvBuffer;
-    size_t audioConvBufferSize;
-    size_t audioMixIdx;
-    speaker_layout audioChannels;
-    uint32_t samplesPerSec;
-    uint64_t audioSkip;
+    BranchOutputAudioContext audios[MAX_AUDIO_MIXES];
 
     // Stream context
     pthread_mutex_t outputMutex;
@@ -101,10 +100,5 @@ struct AudioBufferChunkHeader {
 void update(void *data, obs_data_t *settings);
 void getDefaults(obs_data_t *defaults);
 obs_properties_t *getProperties(void *data);
-void audioCaptureCallback(void *param, obs_source_t *, const audio_data *audio_data, bool muted);
-//void masterAudioCallback(void *param, size_t, audio_data *audio_data);  // Deprecated
-obs_audio_data *audioFilterCallback(void *param, obs_audio_data *audio_data);
-bool audioInputCallback(
-    void *param, uint64_t start_ts_in, uint64_t, uint64_t *out_ts, uint32_t mixers, audio_output_data *mixes
-);
 BranchOutputStatusDock *createOutputStatusDock();
+obs_audio_data *audioFilterCallback(void *param, obs_audio_data *audioData);

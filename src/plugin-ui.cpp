@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-frontend-api.h>
 #include <util/config-file.h>
 #include <util/dstr.h>
+#include <util/platform.h>
 #include <obs.hpp>
 
 #include <QMainWindow>
@@ -195,6 +196,22 @@ void getDefaults(obs_data_t *defaults)
     obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
     obs_data_set_default_string(defaults, "audio_source", "master_track");
     obs_data_set_default_int(defaults, "audio_track", 1);
+    obs_data_set_default_string(defaults, "audio_dest", "both");
+    obs_data_set_default_string(defaults, "audio_source_2", "disabled");
+    obs_data_set_default_int(defaults, "audio_track_2", 1);
+    obs_data_set_default_string(defaults, "audio_dest_2", "both");
+    obs_data_set_default_string(defaults, "audio_source_3", "disabled");
+    obs_data_set_default_int(defaults, "audio_track_3", 1);
+    obs_data_set_default_string(defaults, "audio_dest_3", "both");
+    obs_data_set_default_string(defaults, "audio_source_4", "disabled");
+    obs_data_set_default_int(defaults, "audio_track_4", 1);
+    obs_data_set_default_string(defaults, "audio_dest_4", "both");
+    obs_data_set_default_string(defaults, "audio_source_5", "disabled");
+    obs_data_set_default_int(defaults, "audio_track_5", 1);
+    obs_data_set_default_string(defaults, "audio_dest_5", "both");
+    obs_data_set_default_string(defaults, "audio_source_6", "disabled");
+    obs_data_set_default_int(defaults, "audio_track_6", 1);
+    obs_data_set_default_string(defaults, "audio_dest_6", "both");
 
     obs_log(LOG_INFO, "Default settings applied.");
 }
@@ -304,18 +321,30 @@ inline void addStreamGroup(obs_properties_t *props)
     obs_properties_add_group(props, "stream", obs_module_text("Stream"), OBS_GROUP_NORMAL, streamGroup);
 }
 
-inline void addAudioGroup(obs_properties_t *props, int index = 1)
+void createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible = true)
 {
-    auto audioSourceListName = QString("audio_source%1").arg(index > 1 ? QString("_%1").arg(index) : "");
-    auto audioTrackListName = QString("audio_track%1").arg(index > 1 ? QString("_%1").arg(index) : "");
+    char audioSourceListName[15] = "audio_source_1";
+    setAudioSourceListName(audioSourceListName, 15, track);
 
-    auto audioGroup = obs_properties_create();
+    char audioTrackListName[14] = "audio_track_1";
+    setAudioTrackListName(audioTrackListName, 14, track);
+
+    char audioDestListName[13] = "audio_dest_1";
+    setAudioDestListName(audioDestListName, 13, track);
+
     auto audioSourceList = obs_properties_add_list(
-        audioGroup, qPrintable(audioSourceListName), obs_module_text("Source"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+        audioGroup, qPrintable(audioSourceListName), qPrintable(QTStr("TrackSource%1").arg(track)), OBS_COMBO_TYPE_LIST,
+        OBS_COMBO_FORMAT_STRING
     );
+    obs_property_set_visible(audioSourceList, visible);
 
+    if (track > 1) {
+        // Upper tracks can be disabled individually
+        obs_property_list_add_string(audioSourceList, obs_module_text("TrackDisabled"), "disabled");
+    }
     obs_property_list_add_string(audioSourceList, obs_module_text("NoAudio"), "no_audio");
     obs_property_list_add_string(audioSourceList, obs_module_text("MasterTrack"), "master_track");
+    obs_property_list_add_string(audioSourceList, obs_module_text("FilterAudio"), "filter");
     obs_enum_sources(
         [](void *param, obs_source_t *source) {
             auto prop = (obs_property_t *)param;
@@ -329,16 +358,30 @@ inline void addAudioGroup(obs_properties_t *props, int index = 1)
     );
     obs_property_set_modified_callback2(
         audioSourceList,
-        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto audioSource = obs_data_get_string(settings, "audio_source");
-            obs_property_set_enabled(obs_properties_get(_props, "audio_track"), !strcmp(audioSource, "master_track"));
+        [](void *, obs_properties_t *_props, obs_property_t *_audioSourceList, obs_data_t *settings) {
+            size_t _track = 1;
+            auto _audioSourceListName = obs_property_name(_audioSourceList);
+            sscanf(_audioSourceListName, "audio_source_%zu", &_track);
+
+            char _audioTrackListName[14] = "audio_track_1";
+            setAudioTrackListName(_audioTrackListName, 14, _track);
+
+            char _audioDestListName[13] = "audio_dest_1";
+            setAudioDestListName(_audioDestListName, 13, _track);
+
+            auto audioSource = obs_data_get_string(settings, _audioSourceListName);
+            obs_property_set_enabled(
+                obs_properties_get(_props, _audioTrackListName), !strcmp(audioSource, "master_track")
+            );
+            obs_property_set_enabled(obs_properties_get(_props, _audioDestListName), !!strcmp(audioSource, "disabled"));
+
             return true;
         },
         nullptr
     );
 
     auto audioTrackList = obs_properties_add_list(
-        audioGroup, "audio_track", obs_module_text("Track"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT
+        audioGroup, qPrintable(audioTrackListName), obs_module_text("Track"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT
     );
     for (int i = 1; i <= MAX_AUDIO_MIXES; i++) {
         char trackNo[] = "Track1";
@@ -346,6 +389,56 @@ inline void addAudioGroup(obs_properties_t *props, int index = 1)
         obs_property_list_add_int(audioTrackList, obs_module_text(trackNo), i);
     }
     obs_property_set_enabled(audioTrackList, false); // Initially disabled
+    obs_property_set_visible(audioTrackList, visible);
+
+    auto audioDestList = obs_properties_add_list(
+        audioGroup, audioDestListName, obs_module_text("AudioDestination"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+    );
+    obs_property_list_add_string(audioDestList, obs_module_text("StreamingAndRecording"), "both");
+    obs_property_list_add_string(audioDestList, obs_module_text("Streaming"), "streaming");
+    obs_property_list_add_string(audioDestList, obs_module_text("Recording"), "recording");
+    obs_property_set_enabled(audioDestList, false); // Initially disabled
+    obs_property_set_visible(audioDestList, visible);
+}
+
+inline void addAudioGroup(obs_properties_t *props)
+{
+    auto audioGroup = obs_properties_create();
+    createAudioTrackProperties(audioGroup, 1);
+
+    auto multitrackAudio = obs_properties_add_bool(audioGroup, "multitrack_audio", obs_module_text("MultitrackAudio"));
+
+    for (size_t track = 2; track <= MAX_AUDIO_MIXES; track++) {
+        createAudioTrackProperties(audioGroup, track, false);
+    }
+
+    obs_property_set_modified_callback2(
+        multitrackAudio,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            auto _multitrackAudio = obs_data_get_bool(settings, "multitrack_audio");
+
+            for (size_t track = 1; track <= MAX_AUDIO_MIXES; track++) {
+                if (track > 1) {
+                    char audioSourceListName[15] = "audio_source_1";
+                    setAudioSourceListName(audioSourceListName, 15, track);
+
+                    char audioTrackListName[14] = "audio_track_1";
+                    setAudioTrackListName(audioTrackListName, 14, track);
+
+                    obs_property_set_visible(obs_properties_get(_props, audioSourceListName), _multitrackAudio);
+                    obs_property_set_visible(obs_properties_get(_props, audioTrackListName), _multitrackAudio);
+                }
+
+                char audioDestListName[13] = "audio_dest_1";
+                setAudioDestListName(audioDestListName, 13, track);
+
+                obs_property_set_visible(obs_properties_get(_props, audioDestListName), _multitrackAudio);
+            }
+
+            return true;
+        },
+        nullptr
+    );
 
     obs_properties_add_group(
         props, "custom_audio_source", obs_module_text("CustomAudioSource"), OBS_GROUP_CHECKABLE, audioGroup
