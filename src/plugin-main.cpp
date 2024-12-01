@@ -408,7 +408,7 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
             }
         } else {
             // Filter pipeline's audio
-            obs_log(LOG_INFO, "%s: Use filter audio as an audio source", obs_source_get_name(filter->filterSource));
+            obs_log(LOG_INFO, "%s: Use filter audio for track 1", obs_source_get_name(filter->filterSource));
             auto audioContext = &filter->audios[0];
             audioContext->capture =
                 new FilterAudioCapture(obs_source_get_name(filter->filterSource), ai.samples_per_sec, ai.speakers);
