@@ -85,3 +85,30 @@ inline bool sourceInFrontend(obs_source_t *source)
 
     return found;
 }
+
+inline void setAudioSourceListName(char *name, size_t len, size_t track)
+{
+    if (track > 1) {
+        snprintf(name, len, "audio_source_%zu", track % 10);
+    } else {
+        snprintf(name, len, "audio_source");
+    }
+}
+
+inline void setAudioTrackListName(char *name, size_t len, size_t track)
+{
+    if (track > 1) {
+        snprintf(name, len, "audio_track_%zu", track % 10);
+    } else {
+        snprintf(name, len, "audio_track");
+    }
+}
+
+inline void setAudioDestListName(char *name, size_t len, size_t track)
+{
+    if (track > 1) {
+        snprintf(name, len, "audio_dest_%zu", track % 10);
+    } else {
+        snprintf(name, len, "audio_dest");
+    }
+}
