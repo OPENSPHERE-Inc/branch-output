@@ -218,7 +218,7 @@ bool AudioCapture::audioCapture(
 
 // Callback from audio_output_open
 bool AudioCapture::
-    silenceCapture(void *param, uint64_t startTsIn, uint64_t, uint64_t *outTs, uint32_t, audio_output_data *)
+    silenceCapture(void *, uint64_t startTsIn, uint64_t, uint64_t *outTs, uint32_t, audio_output_data *)
 {
     *outTs = startTsIn;
     return true;
@@ -245,7 +245,7 @@ SourceAudioCapture::~SourceAudioCapture()
 }
 
 // Callback from obs_source_add_audio_capture_callback
-void SourceAudioCapture::sourceAudioCallback(void *param, obs_source_t *source, const audio_data *audioData, bool muted)
+void SourceAudioCapture::sourceAudioCallback(void *param, obs_source_t *, const audio_data *audioData, bool muted)
 {
     if (muted) {
         return;
