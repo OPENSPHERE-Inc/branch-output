@@ -42,8 +42,6 @@ Please download latest install package from [Release](https://github.com/OPENSPH
 
 # User manual
 
-**[EN]**
-
 1. Add "Branch Output" as effect filters to any "Source" or "Scene" (NOTE: "Scene" has no audio defaultly)
 2. Input server URL and stream key. The server URL can be RTMP or SRT etc. like OBS's custom stream settings.
 3. Choose audio source. Un-checked custom audio source means use filter audio as source (NOTE: "Scene"
