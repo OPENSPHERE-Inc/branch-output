@@ -81,6 +81,8 @@ This method should work well except for some sources (e.g., media sources) that 
 
 ## 2. To stream program out to multiple streaming platforms.
 
+> **Important note**: Work in studio mode to prevent video loops.
+
 This can be done by using the plugin [Main View Source](https://obsproject.com/forum/resources/main-view-source.1501/) along with it.
 
 1. Create new blank scene (The scene for streaming)
