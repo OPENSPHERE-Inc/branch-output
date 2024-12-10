@@ -209,7 +209,8 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 
     auto resetButton = new QPushButton(QTStr("Reset"), this);
     connect(resetButton, &QPushButton::clicked, [this, row]() { outputTableRows[row]->reset(); });
-    resetButton->setProperty("toolButton", true);
+    resetButton->setProperty("toolButton", true);  // Until OBS 30
+    resetButton->setProperty("class", "btn-tool"); // Since OBS 31
     resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
 
     resetButtonContainerLayout->addWidget(resetButton);
@@ -309,27 +310,27 @@ void OutputTableRow::update()
 
         if (reconnecting) {
             status->setText(QTStr("Status.Reconnecting"));
-            status->setTheme("error");
+            status->setTheme("error", "text-danger");
             status->setIconShow(false);
         } else {
             status->setText(QTStr("Status.Live"));
-            status->setTheme("good");
+            status->setTheme("good", "text-danger");
             status->setIconShow(true);
         }
     } else {
         status->setText(QTStr("Status.Inactive"));
-        status->setTheme("");
+        status->setTheme("", "");
         status->setIconShow(false);
     }
 
     // Recording display
     if (filter->recordingOutput && obs_output_active(filter->recordingOutput)) {
         recording->setText(QTStr("Status.Recording"));
-        recording->setTheme("good");
+        recording->setTheme("good", "text-success");
         recording->setIconShow(true);
     } else {
         recording->setText(QTStr("Status.Inactive"));
-        recording->setTheme("");
+        recording->setTheme("", "");
         recording->setIconShow(false);
     }
 
@@ -369,11 +370,11 @@ void OutputTableRow::update()
     droppedFrames->setText(dropFramesStr);
 
     if (num > 5.0l) {
-        setThemeID(droppedFrames, "error");
+        setThemeID(droppedFrames, "error", "text-danger");
     } else if (num > 1.0l) {
-        setThemeID(droppedFrames, "warning");
+        setThemeID(droppedFrames, "warning", "text-warning");
     } else {
-        setThemeID(droppedFrames, "");
+        setThemeID(droppedFrames, "", "");
     }
 
     lastBytesSent = bytesSent;
@@ -401,7 +402,8 @@ FilterCell::FilterCell(const QString &text, obs_source_t *source, QWidget *paren
     setMinimumHeight(27);
 
     visibilityCheckbox = new QCheckBox(this);
-    visibilityCheckbox->setProperty("visibilityCheckBox", true);
+    visibilityCheckbox->setProperty("visibilityCheckBox", true);      // Until OBS 30
+    visibilityCheckbox->setProperty("class", "indicator-visibility"); // Since OBS 31
     visibilityCheckbox->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
     visibilityCheckbox->setChecked(obs_source_enabled(source));
     visibilityCheckbox->setCursor(Qt::PointingHandCursor);
