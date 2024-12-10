@@ -43,11 +43,22 @@ inline void pthreadMutexUnlock(pthread_mutex_t *mutex)
 using OBSMutexAutoUnlock = OBSPtr<pthread_mutex_t *, pthreadMutexUnlock>;
 
 // Imitate UI/window-basic-stats.cpp
-inline void setThemeID(QWidget *widget, const QString &themeID)
+// themeID: until OBS 30
+// themeClasses: since OBS 31
+inline void setThemeID(QWidget *widget, const QString &themeID, const QString &themeClasses)
 {
+    bool changed = false;
     if (widget->property("themeID").toString() != themeID) {
         widget->setProperty("themeID", themeID);
+        changed = true;
+    }
 
+    if (widget->property("class").toString() != themeClasses) {
+        widget->setProperty("class", themeClasses);
+        changed = true;
+    }
+
+    if (changed) {
         /* force style sheet recalculation */
         QString qss = widget->styleSheet();
         widget->setStyleSheet("/* */");

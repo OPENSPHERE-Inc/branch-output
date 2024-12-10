@@ -88,7 +88,7 @@ public:
     inline void setText(const QString &text) { statusText->setText(text); };
     inline void setIcon(const QPixmap &pixmap) { icon->setPixmap(pixmap); };
     inline void setIconShow(bool show) { icon->setVisible(show); };
-    inline void setTheme(const QString &id) { setThemeID(statusText, id); };
+    inline void setTheme(const QString &id, const QString &classes) { setThemeID(statusText, id, classes); };
 };
 
 class BranchOutputStatusDock : public QFrame {
