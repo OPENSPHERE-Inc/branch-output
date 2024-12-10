@@ -314,7 +314,7 @@ void OutputTableRow::update()
             status->setIconShow(false);
         } else {
             status->setText(QTStr("Status.Live"));
-            status->setTheme("good", "text-danger");
+            status->setTheme("good", "text-success");
             status->setIconShow(true);
         }
     } else {
