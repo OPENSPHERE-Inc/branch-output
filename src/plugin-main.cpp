@@ -120,17 +120,28 @@ obs_data_t *createRecordingSettings(BranchOutputFilter *filter, obs_data_t *sett
 {
     obs_data_t *recordingSettings = obs_data_create();
     auto config = obs_frontend_get_profile_config();
-    QString filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
+    QString filenameFormat = obs_data_get_string(settings, "filename_formatting");
+    if (filenameFormat.isEmpty()) {
+        filenameFormat = QString("%1_%2_") + QString(config_get_string(config, "Output", "FilenameFormatting"));
+    }
+
+    // Sanitize filename
+#ifdef __APPLE__
+    filenameFormat.replace(QRegularExpression("[:]"), "");
+#elif defined(_WIN32)
+    filenameFormat.replace(QRegularExpression("[<>:\"\\|\\?\\*]"), "");
+#else
+    // TODO: Add filtering for other platforms
+#endif
+
     auto path = obs_data_get_string(settings, "path");
     auto recFormat = obs_data_get_string(settings, "rec_format");
 
     // Add filter name to filename format
     QString sourceName = obs_source_get_name(obs_filter_get_parent(filter->filterSource));
     QString filterName = obs_source_get_name(filter->filterSource);
-    filenameFormat = QString("%1_%2_%3")
-                         .arg(sourceName.replace(QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]"), "-"))
-                         .arg(filterName.replace(QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]"), "-"))
-                         .arg(filenameFormat);
+    filenameFormat = filenameFormat.arg(sourceName.replace(QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]"), "-"))
+                         .arg(filterName.replace(QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]"), "-"));
     auto compositePath = getOutputFilename(path, recFormat, true, false, qUtf8Printable(filenameFormat));
 
     obs_data_set_string(recordingSettings, "path", qUtf8Printable(compositePath));
