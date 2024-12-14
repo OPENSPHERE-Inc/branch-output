@@ -104,7 +104,7 @@ inline const char *getSimpleAudioEncoder(const char *encoder)
 #define SIMPLE_ENCODER_APPLE_H264 "apple_h264"
 #define SIMPLE_ENCODER_APPLE_HEVC "apple_hevc"
 
-// Hardcoded in obs-studio/UI/window-basic-settings.cpp
+// Hardcoded in obs-studio/UI/window-basic-main-outputs.cpp
 inline const char *getSimpleVideoEncoder(const char *encoder)
 {
     if (!strcmp(encoder, SIMPLE_ENCODER_X264)) {
@@ -122,11 +122,16 @@ inline const char *getSimpleVideoEncoder(const char *encoder)
     } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD_AV1)) {
         return "av1_texture_amf";
     } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC)) {
-        return encoderAvailable("jim_nvenc") ? "jim_nvenc" : "ffmpeg_nvenc";
+        return encoderAvailable("obs_nvenc_h264_tex") ? "obs_nvenc_h264_tex" // Since OBS 31
+               : encoderAvailable("jim_nvenc")        ? "jim_nvenc"          // Until OBS 30
+                                                      : "ffmpeg_nvenc";
     } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC_HEVC)) {
-        return encoderAvailable("jim_hevc_nvenc") ? "jim_hevc_nvenc" : "ffmpeg_hevc_nvenc";
+        return encoderAvailable("obs_nvenc_hevc_tex") ? "obs_nvenc_hevc_tex" // Since OBS 31
+               : encoderAvailable("jim_hevc_nvenc")   ? "jim_hevc_nvenc"     // Until OBS 30
+                                                      : "ffmpeg_hevc_nvenc";
     } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC_AV1)) {
-        return "jim_av1_nvenc";
+        return encoderAvailable("obs_nvenc_av1_tex") ? "obs_nvenc_av1_tex" // Since OBS 31
+                                                     : "jim_av1_nvenc";    // Until OBS 30
     } else if (!strcmp(encoder, SIMPLE_ENCODER_APPLE_H264)) {
         return "com.apple.videotoolbox.videoencoder.ave.avc";
     } else if (!strcmp(encoder, SIMPLE_ENCODER_APPLE_HEVC)) {
@@ -142,7 +147,7 @@ void getDefaults(obs_data_t *defaults)
 
     auto config = obs_frontend_get_profile_config();
     auto mode = config_get_string(config, "Output", "Mode");
-    bool advancedOut = !strcmp(mode, "Advanced") || strcmp(mode, "advanced");
+    bool advancedOut = !strcmp(mode, "Advanced") || !strcmp(mode, "advanced");
 
     const char *videoEncoderId;
     const char *audioEncoderId;
@@ -191,6 +196,9 @@ void getDefaults(obs_data_t *defaults)
         }
     }
     obs_data_set_default_string(defaults, "split_file", splitFileValue);
+
+    QString filenameFormatting = QString("%1_%2_") + QString(config_get_string(config, "Output", "FilenameFormatting"));
+    obs_data_set_default_string(defaults, "filename_formatting", qUtf8Printable(filenameFormatting));
 
     obs_data_set_default_int(defaults, "split_file_time_mins", recSplitFileTimeMins);
     obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
@@ -249,6 +257,40 @@ inline void addPluginInfo(obs_properties_t *props)
     bfree(plugin_info_text);
 }
 
+// Imitate obs-studio/UI/window-basic-settings.cpp
+inline QString makeFormatToolTip()
+{
+    static const char *format_list[][2] = {
+        {"1", "FilenameFormatting.TT.1"},       {"2", "FilenameFormatting.TT.2"},
+        {"CCYY", "FilenameFormatting.TT.CCYY"}, {"YY", "FilenameFormatting.TT.YY"},
+        {"MM", "FilenameFormatting.TT.MM"},     {"DD", "FilenameFormatting.TT.DD"},
+        {"hh", "FilenameFormatting.TT.hh"},     {"mm", "FilenameFormatting.TT.mm"},
+        {"ss", "FilenameFormatting.TT.ss"},     {"%", "FilenameFormatting.TT.Percent"},
+        {"a", "FilenameFormatting.TT.a"},       {"A", "FilenameFormatting.TT.A"},
+        {"b", "FilenameFormatting.TT.b"},       {"B", "FilenameFormatting.TT.B"},
+        {"d", "FilenameFormatting.TT.d"},       {"H", "FilenameFormatting.TT.H"},
+        {"I", "FilenameFormatting.TT.I"},       {"m", "FilenameFormatting.TT.m"},
+        {"M", "FilenameFormatting.TT.M"},       {"p", "FilenameFormatting.TT.p"},
+        {"s", "FilenameFormatting.TT.s"},       {"S", "FilenameFormatting.TT.S"},
+        {"y", "FilenameFormatting.TT.y"},       {"Y", "FilenameFormatting.TT.Y"},
+        {"z", "FilenameFormatting.TT.z"},       {"Z", "FilenameFormatting.TT.Z"},
+        {"FPS", "FilenameFormatting.TT.FPS"},   {"CRES", "FilenameFormatting.TT.CRES"},
+        {"ORES", "FilenameFormatting.TT.ORES"}, {"VF", "FilenameFormatting.TT.VF"},
+    };
+
+    QString text = "";
+
+    for (auto f : format_list) {
+        text += "%";
+        text += f[0];
+        text += ": ";
+        text += QTStr(f[1]);
+        text += "\n";
+    }
+
+    return text;
+}
+
 inline void addStreamGroup(obs_properties_t *props)
 {
     auto streamGroup = obs_properties_create();
@@ -277,6 +319,7 @@ inline void addStreamGroup(obs_properties_t *props)
     auto streamRecordingChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
         auto _streamRecording = obs_data_get_bool(settings, "stream_recording");
         obs_property_set_visible(obs_properties_get(_props, "path"), _streamRecording);
+        obs_property_set_visible(obs_properties_get(_props, "filename_formatting"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "rec_format"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "split_file"), _streamRecording);
 
@@ -294,12 +337,15 @@ inline void addStreamGroup(obs_properties_t *props)
 
     //--- Recording options (initially hidden) ---//
     obs_properties_add_path(streamGroup, "path", obs_module_text("Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
+    auto filenameFormatting = obs_properties_add_text(
+        streamGroup, "filename_formatting", obs_module_text("FilenameFormatting"), OBS_TEXT_DEFAULT
+    );
+    obs_property_set_long_description(filenameFormatting, qUtf8Printable(makeFormatToolTip()));
 
     // Only support limited formats
     auto fileFormatList = obs_properties_add_list(
         streamGroup, "rec_format", obs_module_text("VideoFormat"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
     );
-    obs_property_set_visible(fileFormatList, false);
     obs_property_list_add_string(fileFormatList, obs_module_text("MKV"), "mkv");
     obs_property_list_add_string(fileFormatList, obs_module_text("hMP4"), "hybrid_mp4"); // beta
     obs_property_list_add_string(fileFormatList, obs_module_text("MP4"), "mp4");
