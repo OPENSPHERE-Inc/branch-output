@@ -22,6 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 #include <obs-frontend-api.h>
 #include <util/threading.h>
+#include <util/config-file.h>
 
 #include <QString>
 #include <QWidget>
@@ -121,5 +122,26 @@ inline void setAudioDestListName(char *name, size_t len, size_t track)
         snprintf(name, len, "audio_dest_%zu", track % 10);
     } else {
         snprintf(name, len, "audio_dest");
+    }
+}
+
+// Return value must be obs_data_release() after use
+inline obs_data_t *loadHotkeyData(const char *name)
+{
+    auto config = obs_frontend_get_profile_config();
+    auto info = config_get_string(config, "Hotkeys", name);
+    if (!info) {
+        return nullptr;
+    }
+
+    return obs_data_create_from_json(info);
+}
+
+inline void loadHotkey(obs_hotkey_id id, const char *name)
+{
+    OBSDataAutoRelease data = loadHotkeyData(name);
+    if (data) {
+        OBSDataArrayAutoRelease array = obs_data_get_array(data, "bindings");
+        obs_hotkey_load(id, array);
     }
 }

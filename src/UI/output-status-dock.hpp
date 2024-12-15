@@ -102,10 +102,15 @@ class BranchOutputStatusDock : public QFrame {
     QLabel *interlockLabel = nullptr;
     QComboBox *interlockComboBox = nullptr;
     OBSSignal sourceAddedSignal;
+    obs_hotkey_id enableAllHotkey;
+    obs_hotkey_id disableAllHotkey;
 
     void update();
     void saveSettings();
     void loadSettings();
+
+    static void onEanbleAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onDisableAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
