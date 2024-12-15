@@ -1007,8 +1007,8 @@ void filterAdd(void *data, obs_source_t *source)
     // Track filter renames for hotkey settings
     filter->filterRenamedSignal->Connect(
         obs_source_get_signal_handler(filter->filterSource), "rename",
-        [](void *data, calldata_t *) {
-            auto _filter = (BranchOutputFilter *)data;
+        [](void *_data, calldata_t *) {
+            auto _filter = (BranchOutputFilter *)_data;
             registerHotkey(_filter);
         },
         filter

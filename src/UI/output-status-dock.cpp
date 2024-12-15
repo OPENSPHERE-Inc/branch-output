@@ -287,7 +287,7 @@ BranchOutputFilter *BranchOutputStatusDock::findFilter(const QString &parentName
     return nullptr;
 }
 
-void BranchOutputStatusDock::onEanbleAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *hotkey, bool pressed)
+void BranchOutputStatusDock::onEanbleAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     auto dock = (BranchOutputStatusDock *)data;
     if (pressed) {
@@ -295,7 +295,7 @@ void BranchOutputStatusDock::onEanbleAllHotkeyPressed(void *data, obs_hotkey_id,
     }
 }
 
-void BranchOutputStatusDock::onDisableAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *hotkey, bool pressed)
+void BranchOutputStatusDock::onDisableAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     auto dock = (BranchOutputStatusDock *)data;
     if (pressed) {
