@@ -186,6 +186,59 @@ inline bool sourceIsPrivate(obs_source_t *source)
     return finder != nullptr;
 }
 
+inline void determineOutputResolution(BranchOutputFilter *filter, obs_data_t *settings, obs_video_info *ovi)
+{
+    auto resolution = obs_data_get_string(settings, "resolution");
+    if (!strcmp(resolution, "custom")) {
+        // Custom resolution
+        ovi->output_width = obs_data_get_int(settings, "custom_width");
+        ovi->output_height = obs_data_get_int(settings, "custom_height");
+
+    } else if (!strcmp(resolution, "output")) {
+        // Nothing to do
+
+    } else if (!strcmp(resolution, "canvas")) {
+        // Copy canvas resolution
+        ovi->output_width = ovi->base_width;
+        ovi->output_height = ovi->base_height;
+
+    } else if (!strcmp(resolution, "three_quarters")) {
+        // Rescale source resolution
+        ovi->output_width = filter->width * 3 / 4;
+        ovi->output_height = filter->height * 3 / 4;
+
+    } else if (!strcmp(resolution, "half")) {
+        // Rescale source resolution
+        ovi->output_width = filter->width / 2;
+        ovi->output_height = filter->height / 2;
+
+    } else if (!strcmp(resolution, "quarter")) {
+        // Rescale source resolution
+        ovi->output_width = filter->width / 4;
+        ovi->output_height = filter->height / 4;
+
+    } else {
+        // Copy source resolution
+        ovi->output_width = filter->width;
+        ovi->output_height = filter->height;
+    }
+
+    // Round up to a multiple of 2
+    ovi->output_width += (ovi->output_width & 1);
+    ovi->output_height += (ovi->output_height & 1);
+
+    auto downscaleFilter = obs_data_get_string(settings, "downscale_filter");
+    if (!strcmp(downscaleFilter, "bilinear")) {
+        ovi->scale_type = OBS_SCALE_BILINEAR;
+    } else if (!strcmp(downscaleFilter, "area")) {
+        ovi->scale_type = OBS_SCALE_AREA;
+    } else if (!strcmp(downscaleFilter, "bicubic")) {
+        ovi->scale_type = OBS_SCALE_BICUBIC;
+    } else if (!strcmp(downscaleFilter, "lanczos")) {
+        ovi->scale_type = OBS_SCALE_LANCZOS;
+    }
+}
+
 #define FTL_PROTOCOL "ftl"
 #define RTMP_PROTOCOL "rtmp"
 
@@ -231,6 +284,8 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
             return;
         }
 
+        obs_video_info encvi = ovi;
+
         // Round up to a multiple of 2
         filter->width = obs_source_get_width(parent);
         filter->width += (filter->width & 1);
@@ -240,8 +295,8 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
 
         ovi.base_width = filter->width;
         ovi.base_height = filter->height;
-        ovi.output_width = filter->width;
-        ovi.output_height = filter->height;
+        ovi.output_width = encvi.base_width = filter->width;
+        ovi.output_height = encvi.base_height = filter->height;
 
         if (filter->width == 0 || filter->height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
             // Abort when invalid video parameters situation
@@ -444,7 +499,20 @@ void startOutput(BranchOutputFilter *filter, obs_data_t *settings)
             obs_log(LOG_ERROR, "%s: Video encoder creation failed", obs_source_get_name(filter->filterSource));
             return;
         }
-        obs_encoder_set_scaled_size(filter->videoEncoder, 0, 0);
+
+        determineOutputResolution(filter, settings, &encvi);
+
+        if (encvi.base_width == encvi.output_width && encvi.base_height == encvi.output_height) {
+            // No scaling
+            obs_encoder_set_scaled_size(filter->videoEncoder, 0, 0);
+        } else {
+            obs_log(
+                LOG_DEBUG, "%s: Output resolution is %dx%d (scaling=%d)", obs_source_get_name(filter->filterSource),
+                encvi.output_width, encvi.output_height, encvi.scale_type
+            );
+            obs_encoder_set_scaled_size(filter->videoEncoder, encvi.output_width, encvi.output_height);
+            obs_encoder_set_gpu_scale_type(filter->videoEncoder, encvi.scale_type);
+        }
         obs_encoder_set_video(filter->videoEncoder, filter->videoOutput);
 
         //--- Setup audio encoder ---//
@@ -640,6 +708,10 @@ inline void loadRecently(obs_data_t *settings)
         obs_data_erase(recently_settings, "audio_source_6");
         obs_data_erase(recently_settings, "audio_track_6");
         obs_data_erase(recently_settings, "audio_dest_6");
+        obs_data_erase(recently_settings, "resolution");
+        obs_data_erase(recently_settings, "custom_width");
+        obs_data_erase(recently_settings, "custom_height");
+        obs_data_erase(recently_settings, "downscale_filter");
         obs_data_apply(settings, recently_settings);
     }
 

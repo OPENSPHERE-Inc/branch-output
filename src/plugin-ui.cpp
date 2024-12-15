@@ -220,6 +220,8 @@ void getDefaults(obs_data_t *defaults)
     obs_data_set_default_string(defaults, "audio_source_6", "disabled");
     obs_data_set_default_int(defaults, "audio_track_6", 1);
     obs_data_set_default_string(defaults, "audio_dest_6", "both");
+    obs_data_set_default_int(defaults, "custom_width", config_get_int(config, "Video", "OutputCX"));
+    obs_data_set_default_int(defaults, "custom_height", config_get_int(config, "Video", "OutputCY"));
 
     obs_log(LOG_INFO, "Default settings applied.");
 }
@@ -278,17 +280,18 @@ inline QString makeFormatToolTip()
         {"ORES", "FilenameFormatting.TT.ORES"}, {"VF", "FilenameFormatting.TT.VF"},
     };
 
-    QString text = "";
+    QString html = "<table>";
 
     for (auto f : format_list) {
-        text += "%";
-        text += f[0];
-        text += ": ";
-        text += QTStr(f[1]);
-        text += "\n";
+        html += "<tr><th align='left'>%";
+        html += f[0];
+        html += "</th><td>";
+        html += QTStr(f[1]);
+        html += "</td></tr>";
     }
 
-    return text;
+    html += "</table>";
+    return html;
 }
 
 inline void addStreamGroup(obs_properties_t *props)
@@ -594,6 +597,54 @@ inline void addAudioEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
 inline void addVideoEncoderGroup(BranchOutputFilter *filter, obs_properties_t *props)
 {
     auto videoEncoderGroup = obs_properties_create();
+
+    // Resolution prop
+    auto resolutionList = obs_properties_add_list(
+        videoEncoderGroup, "resolution", obs_module_text("Resolution"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+    );
+    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Source"), "");
+    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Output"), "output");
+    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Canvas"), "canvas");
+    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.ThreeQuarters"), "three_quarters");
+    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Half"), "half");
+    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Quarter"), "quarter");
+    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Custom"), "custom");
+
+    obs_property_set_modified_callback2(
+        resolutionList,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            auto resolution = obs_data_get_string(settings, "resolution");
+
+            auto _customResolutionGroup = obs_properties_get(_props, "custom_resolution_group");
+            obs_property_set_visible(_customResolutionGroup, !strcmp(resolution, "custom"));
+
+            auto _downscaleFilterList = obs_properties_get(_props, "downscale_filter");
+            obs_property_set_enabled(_downscaleFilterList, strlen(resolution) != 0);
+
+            return true;
+        },
+        nullptr
+    );
+
+    auto customResolutionGroup = obs_properties_create();
+    obs_properties_add_int(customResolutionGroup, "custom_width", obs_module_text("Width"), 2, 8192, 2);
+    obs_properties_add_int(customResolutionGroup, "custom_height", obs_module_text("Height"), 2, 8192, 2);
+
+    obs_properties_add_group(
+        videoEncoderGroup, "custom_resolution_group", obs_module_text("CustomResolution"), OBS_GROUP_NORMAL,
+        customResolutionGroup
+    );
+
+    // "Downscale Filter" prop
+    auto downscaleFilterList = obs_properties_add_list(
+        videoEncoderGroup, "downscale_filter", obs_module_text("DownscaleFilter"), OBS_COMBO_TYPE_LIST,
+        OBS_COMBO_FORMAT_STRING
+    );
+    obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Global"), "");
+    obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Bilinear"), "bilinear");
+    obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Area"), "area");
+    obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Bicubic"), "bicubic");
+    obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Lanczos"), "lanczos");
 
     // "Video Encoder" prop
     auto videoEncoderList = obs_properties_add_list(
