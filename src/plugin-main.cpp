@@ -191,8 +191,8 @@ inline void determineOutputResolution(BranchOutputFilter *filter, obs_data_t *se
     auto resolution = obs_data_get_string(settings, "resolution");
     if (!strcmp(resolution, "custom")) {
         // Custom resolution
-        ovi->output_width = obs_data_get_int(settings, "custom_width");
-        ovi->output_height = obs_data_get_int(settings, "custom_height");
+        ovi->output_width = (uint32_t)obs_data_get_int(settings, "custom_width");
+        ovi->output_height = (uint32_t)obs_data_get_int(settings, "custom_height");
 
     } else if (!strcmp(resolution, "output")) {
         // Nothing to do
