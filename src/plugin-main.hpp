@@ -83,6 +83,10 @@ struct BranchOutputFilter {
     // Stream context
     pthread_mutex_t outputMutex;
     uint64_t connectAttemptingAt;
+
+    // Hotkey context
+    obs_hotkey_pair_id hotkeyPairId;
+    OBSSignal *filterRenamedSignal;
 };
 
 // The type must be registered for Linux platform

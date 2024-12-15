@@ -886,6 +886,36 @@ void intervalTask(BranchOutputFilter *filter)
     }
 }
 
+bool onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    BranchOutputFilter *filter = (BranchOutputFilter *)data;
+    if (obs_source_enabled(filter->filterSource)) {
+        return false;
+    }
+
+    obs_source_set_enabled(filter->filterSource, true);
+    return true;
+}
+
+bool onDisableFilterHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    BranchOutputFilter *filter = (BranchOutputFilter *)data;
+    if (!obs_source_enabled(filter->filterSource)) {
+        return false;
+    }
+
+    obs_source_set_enabled(filter->filterSource, false);
+    return true;
+}
+
 //--- OBS Plugin Callbacks ---//
 
 void *create(obs_data_t *settings, obs_source_t *source)
@@ -896,6 +926,7 @@ void *create(obs_data_t *settings, obs_source_t *source)
 
     auto filter = (BranchOutputFilter *)bzalloc(sizeof(BranchOutputFilter));
     pthread_mutex_init(&filter->outputMutex, nullptr);
+    filter->filterRenamedSignal = new OBSSignal();
 
     filter->filterSource = source;
 
@@ -921,6 +952,24 @@ void *create(obs_data_t *settings, obs_source_t *source)
 
     obs_log(LOG_INFO, "%s: Filter created", obs_source_get_name(filter->filterSource));
     return filter;
+}
+
+inline void registerHotkey(BranchOutputFilter *filter)
+{
+    if (filter->hotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        // Unregsiter previous
+        obs_hotkey_pair_unregister(filter->hotkeyPairId);
+    }
+
+    auto name0 = QString("EnableFilter.%1").arg(obs_source_get_uuid(filter->filterSource));
+    auto description0 = QString(obs_module_text("EnableHotkey")).arg(obs_source_get_name(filter->filterSource));
+    auto name1 = QString("DisableFilter.%1").arg(obs_source_get_uuid(filter->filterSource));
+    auto description1 = QString(obs_module_text("DisableHotkey")).arg(obs_source_get_name(filter->filterSource));
+    filter->hotkeyPairId = obs_hotkey_pair_register_source(
+        obs_filter_get_parent(filter->filterSource), qUtf8Printable(name0), qUtf8Printable(description0),
+        qUtf8Printable(name1), qUtf8Printable(description1), onEnableFilterHotkeyPressed, onDisableFilterHotkeyPressed,
+        filter, filter
+    );
 }
 
 void filterAdd(void *data, obs_source_t *source)
@@ -952,6 +1001,18 @@ void filterAdd(void *data, obs_source_t *source)
         // Show in status dock (Thread-safe way)
         QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, filter));
     }
+
+    // Register hotkeys
+    registerHotkey(filter);
+    // Track filter renames for hotkey settings
+    filter->filterRenamedSignal->Connect(
+        obs_source_get_signal_handler(filter->filterSource), "rename",
+        [](void *data, calldata_t *) {
+            auto _filter = (BranchOutputFilter *)data;
+            registerHotkey(_filter);
+        },
+        filter
+    );
 
     obs_log(
         LOG_INFO, "%s: Filter added to '%s'", obs_source_get_name(filter->filterSource), obs_source_get_name(source)
@@ -1008,6 +1069,11 @@ void filterRemove(void *data, obs_source_t *source)
         QMetaObject::invokeMethod(statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, filter));
     }
 
+    if (filter->hotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        // Unregsiter hotkeys
+        obs_hotkey_pair_unregister(filter->hotkeyPairId);
+    }
+
     obs_log(
         LOG_INFO, "%s: Filter removed from '%s'", obs_source_get_name(filter->filterSource), obs_source_get_name(source)
     );
@@ -1026,6 +1092,7 @@ void destroy(void *data)
 
     stopOutput(filter);
     pthread_mutex_destroy(&filter->outputMutex);
+    delete filter->filterRenamedSignal;
     bfree(filter);
 
     obs_log(LOG_INFO, "%s: Filter destroyed", obs_source_get_name(source));

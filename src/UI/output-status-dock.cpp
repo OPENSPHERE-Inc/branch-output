@@ -105,7 +105,17 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     outputContainerLayout->addLayout(buttonsContainerLayout);
     this->setLayout(outputContainerLayout);
 
+    // Register hotkeys
+    enableAllHotkey = obs_hotkey_register_frontend(
+        "EnableAllBranchOutputsHotkey", obs_module_text("EnableAllHotkey"), onEanbleAllHotkeyPressed, this
+    );
+    disableAllHotkey = obs_hotkey_register_frontend(
+        "DisableAllBranchOutputsHotkey", obs_module_text("DisableAllHotkey"), onDisableAllHotkeyPressed, this
+    );
+
     loadSettings();
+    loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
+    loadHotkey(disableAllHotkey, "DisableAllBranchOutputsHotkey");
 
     obs_log(LOG_DEBUG, "BranchOutputStatusDock created");
 }
@@ -113,6 +123,10 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
 BranchOutputStatusDock::~BranchOutputStatusDock()
 {
     saveSettings();
+
+    // Unregister hotkeys
+    obs_hotkey_unregister(enableAllHotkey);
+    obs_hotkey_unregister(disableAllHotkey);
 
     obs_log(LOG_DEBUG, "BranchOutputStatusDock destroyed");
 }
@@ -271,6 +285,22 @@ BranchOutputFilter *BranchOutputStatusDock::findFilter(const QString &parentName
         }
     }
     return nullptr;
+}
+
+void BranchOutputStatusDock::onEanbleAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *hotkey, bool pressed)
+{
+    auto dock = (BranchOutputStatusDock *)data;
+    if (pressed) {
+        dock->setEabnleAll(true);
+    }
+}
+
+void BranchOutputStatusDock::onDisableAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *hotkey, bool pressed)
+{
+    auto dock = (BranchOutputStatusDock *)data;
+    if (pressed) {
+        dock->setEabnleAll(false);
+    }
 }
 
 //--- OutputTableRow class ---//
