@@ -46,6 +46,7 @@ BranchOutputStatusDock *statusDock = nullptr;
 
 BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent)
     : QObject(parent),
+      name(obs_source_get_name(source)),
       filterSource(source),
       initialized(false),
       outputActive(false),
@@ -65,7 +66,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       hotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID)
 {
     // DO NOT use obs_filter_get_parent() in this function (It'll return nullptr)
-    obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", obs_source_get_name(source));
+    obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", qUtf8Printable(name));
     obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
 
     // Do not use memset
@@ -94,22 +95,12 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     // Fiter activate immediately when "server" or "stream_recording" is exists.
     initialized = !!strlen(obs_data_get_string(settings, "server")) || obs_data_get_bool(settings, "stream_recording");
 
-    obs_log(LOG_INFO, "%s: BranchOutputFilter created", obs_source_get_name(source));
+    obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
 }
 
 BranchOutputFilter::~BranchOutputFilter()
 {
-    obs_log(LOG_DEBUG, "%s: BranchOutputFilter destroying", obs_source_get_name(filterSource));
-
-    if (intervalTimer) {
-        // Stop interval timer (in proper thread)
-        intervalTimer->deleteLater();
-    }
-
-    stopOutput();
     pthread_mutex_destroy(&outputMutex);
-
-    obs_log(LOG_INFO, "%s: BranchOutputFilter destroyed", obs_source_get_name(filterSource));
 }
 
 void BranchOutputFilter::addCallback(obs_source_t *source)
@@ -118,13 +109,12 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
     // Do not register private sources to status dock
     if (sourceIsPrivate(source)) {
         obs_log(
-            LOG_DEBUG, "%s: Ignore adding to private source '%s'", obs_source_get_name(filterSource),
-            obs_source_get_name(source)
+            LOG_DEBUG, "%s: Ignore adding to private source '%s'", qUtf8Printable(name), obs_source_get_name(source)
         );
         return;
     }
 
-    obs_log(LOG_DEBUG, "%s: Filter adding to '%s'", obs_source_get_name(filterSource), obs_source_get_name(source));
+    obs_log(LOG_DEBUG, "%s: Filter adding to '%s'", qUtf8Printable(name), obs_source_get_name(source));
 
     // Start interval timer here
     intervalTimer = new QTimer(this);
@@ -140,17 +130,18 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
 
     // Register hotkeys
     registerHotkey();
-    // Track filter renames for hotkey settings
+    // Track filter renames for name and hotkey settings
     filterRenamedSignal.Connect(
         obs_source_get_signal_handler(filterSource), "rename",
-        [](void *_data, calldata_t *) {
+        [](void *_data, calldata_t *cd) {
             auto _filter = (BranchOutputFilter *)_data;
             _filter->registerHotkey();
+            _filter->name = calldata_string(cd, "new_name");
         },
         this
     );
 
-    obs_log(LOG_INFO, "%s: Filter added to '%s'", obs_source_get_name(filterSource), obs_source_get_name(source));
+    obs_log(LOG_INFO, "%s: Filter added to '%s'", qUtf8Printable(name), obs_source_get_name(source));
 }
 
 void BranchOutputFilter::updateCallback(obs_data_t *settings)
@@ -160,13 +151,12 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
     // Do not save settings for private sources
     if (sourceIsPrivate(source)) {
         obs_log(
-            LOG_DEBUG, "%s: Ignore updating in private source '%s'", obs_source_get_name(filterSource),
-            obs_source_get_name(source)
+            LOG_DEBUG, "%s: Ignore updating in private source '%s'", qUtf8Printable(name), obs_source_get_name(source)
         );
         return;
     }
 
-    obs_log(LOG_DEBUG, "%s: Filter updating", obs_source_get_name(filterSource));
+    obs_log(LOG_DEBUG, "%s: Filter updating", qUtf8Printable(name));
 
     // It's unwelcome to do stopping output during attempting connect to service.
     // So we just count up revision (Settings will be applied on videoTick())
@@ -179,7 +169,7 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
     OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
     obs_data_save_json_safe(settings, path, "tmp", "bak");
 
-    obs_log(LOG_INFO, "%s: Filter updated", obs_source_get_name(filterSource));
+    obs_log(LOG_INFO, "%s: Filter updated", qUtf8Printable(name));
 }
 
 void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
@@ -187,12 +177,20 @@ void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
     obs_source_skip_video_filter(filterSource);
 }
 
-void BranchOutputFilter::removeCallback(obs_source_t *source)
+// This method possibly called in different thread from UI thread
+void BranchOutputFilter::removeCallback()
 {
-    obs_log(LOG_DEBUG, "%s: Filter removing from '%s'", obs_source_get_name(filterSource), obs_source_get_name(source));
+    obs_log(LOG_DEBUG, "%s: Filter removing", qUtf8Printable(name));
+
+    if (intervalTimer) {
+        // Stop interval timer (In proper thread)
+        QMetaObject::invokeMethod(intervalTimer, "stop", Qt::QueuedConnection);
+    }
+
+    // Do not call stopOutput() here as this will cause a crash.
 
     if (statusDock) {
-        // Unregister from output status dock (Thread-safe way)
+        // Unregister from output status dock (In proper thread)
         QMetaObject::invokeMethod(statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
     }
 
@@ -201,7 +199,20 @@ void BranchOutputFilter::removeCallback(obs_source_t *source)
         obs_hotkey_pair_unregister(hotkeyPairId);
     }
 
-    obs_log(LOG_INFO, "%s: Filter removed from '%s'", obs_source_get_name(filterSource), obs_source_get_name(source));
+    obs_log(LOG_INFO, "%s: Filter removed", qUtf8Printable(name));
+}
+
+void BranchOutputFilter::destroyCallback()
+{
+    obs_log(LOG_DEBUG, "%s: BranchOutputFilter destroying", qUtf8Printable(name));
+
+    // Release all handles
+    stopOutput();
+
+    // Delete self in proper thread
+    deleteLater();
+
+    obs_log(LOG_INFO, "%s: BranchOutputFilter destroyed", qUtf8Printable(name));
 }
 
 void BranchOutputFilter::stopOutput()
@@ -251,12 +262,12 @@ void BranchOutputFilter::stopOutput()
 
         if (recordingActive) {
             recordingActive = false;
-            obs_log(LOG_INFO, "%s: Stopping recording output succeeded", obs_source_get_name(filterSource));
+            obs_log(LOG_INFO, "%s: Stopping recording output succeeded", qUtf8Printable(name));
         }
 
         if (outputActive) {
             outputActive = false;
-            obs_log(LOG_INFO, "%s: Stopping stream output succeeded", obs_source_get_name(filterSource));
+            obs_log(LOG_INFO, "%s: Stopping stream output succeeded", qUtf8Printable(name));
         }
     }
 }
@@ -284,7 +295,7 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings)
 
     // Add filter name to filename format
     QString sourceName = obs_source_get_name(obs_filter_get_parent(filterSource));
-    QString filterName = obs_source_get_name(filterSource);
+    QString filterName = qUtf8Printable(name);
     filenameFormat = filenameFormat.arg(sourceName.replace(QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]"), "-"))
                          .arg(filterName.replace(QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]"), "-"));
     auto compositePath = getOutputFilename(path, recFormat, true, false, qUtf8Printable(filenameFormat));
@@ -377,33 +388,33 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
 
         // Abort when obs initializing or filter disabled.
         if (!obs_initialized() || !obs_source_enabled(filterSource) || outputActive || recordingActive) {
-            obs_log(LOG_ERROR, "%s: Ignore unavailable filter", obs_source_get_name(filterSource));
+            obs_log(LOG_ERROR, "%s: Ignore unavailable filter", qUtf8Printable(name));
             return;
         }
 
         // Retrieve filter source
         auto parent = obs_filter_get_parent(filterSource);
         if (!parent) {
-            obs_log(LOG_ERROR, "%s: Filter source not found", obs_source_get_name(filterSource));
+            obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
             return;
         }
 
         // Ignore private sources
         if (sourceIsPrivate(parent)) {
-            obs_log(LOG_ERROR, "%s: Ignore private source", obs_source_get_name(filterSource));
+            obs_log(LOG_ERROR, "%s: Ignore private source", qUtf8Printable(name));
             return;
         }
 
         // Mandatory paramters
         if (!strlen(obs_data_get_string(settings, "server")) && !obs_data_get_string(settings, "stream_recording")) {
-            obs_log(LOG_ERROR, "%s: Nothing to do", obs_source_get_name(filterSource));
+            obs_log(LOG_ERROR, "%s: Nothing to do", qUtf8Printable(name));
             return;
         }
 
         obs_video_info ovi = {0};
         if (!obs_get_video_info(&ovi)) {
             // Abort when no video situation
-            obs_log(LOG_ERROR, "%s: No video", obs_source_get_name(filterSource));
+            obs_log(LOG_ERROR, "%s: No video", qUtf8Printable(name));
             return;
         }
 
@@ -423,7 +434,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
 
         if (width == 0 || height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
             // Abort when invalid video parameters situation
-            obs_log(LOG_ERROR, "%s: Invalid video spec", obs_source_get_name(filterSource));
+            obs_log(LOG_ERROR, "%s: Invalid video spec", qUtf8Printable(name));
             return;
         }
 
@@ -433,9 +444,9 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         //--- Create service and open stream output ---//
         if (!!strlen(obs_data_get_string(settings, "server"))) {
             // Create service - We always use "rtmp_custom" as service
-            service = obs_service_create("rtmp_custom", obs_source_get_name(filterSource), settings, nullptr);
+            service = obs_service_create("rtmp_custom", qUtf8Printable(name), settings, nullptr);
             if (!service) {
-                obs_log(LOG_ERROR, "%s: Service creation failed", obs_source_get_name(filterSource));
+                obs_log(LOG_ERROR, "%s: Service creation failed", qUtf8Printable(name));
                 return;
             }
             obs_service_apply_encoder_settings(service, settings, nullptr);
@@ -453,9 +464,9 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             }
 
             // Create stream output
-            streamOutput = obs_output_create(type, obs_source_get_name(filterSource), settings, nullptr);
+            streamOutput = obs_output_create(type, qUtf8Printable(name), settings, nullptr);
             if (!streamOutput) {
-                obs_log(LOG_ERROR, "%s: Stream output creation failed", obs_source_get_name(filterSource));
+                obs_log(LOG_ERROR, "%s: Stream output creation failed", qUtf8Printable(name));
                 return;
             }
             obs_output_set_reconnect_settings(streamOutput, OUTPUT_MAX_RETRIES, OUTPUT_RETRY_DELAY_SECS);
@@ -470,7 +481,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         obs_view_set_source(view, 0, parent);
         videoOutput = obs_view_add2(view, &ovi);
         if (!videoOutput) {
-            obs_log(LOG_ERROR, "%s: Video output association failed", obs_source_get_name(filterSource));
+            obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
             return;
         }
 
@@ -482,7 +493,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
 
         obs_audio_info ai = {0};
         if (!obs_get_audio_info(&ai)) {
-            obs_log(LOG_ERROR, "%s: Failed to get audio info", obs_source_get_name(filterSource));
+            obs_log(LOG_ERROR, "%s: Failed to get audio info", qUtf8Printable(name));
             return;
         }
 
@@ -515,17 +526,16 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
                 auto audioSourceUuid = obs_data_get_string(settings, audioSourceListName);
                 if (!strcmp(audioSourceUuid, "disabled")) {
                     // Disabled track
-                    obs_log(LOG_INFO, "%s: Track %d is disabled", obs_source_get_name(filterSource), track);
+                    obs_log(LOG_INFO, "%s: Track %d is disabled", qUtf8Printable(name), track);
                     continue;
 
                 } else if (!strcmp(audioSourceUuid, "no_audio")) {
                     // Silence audio
-                    obs_log(
-                        LOG_INFO, "%s: Use silence for track %d (%s)", obs_source_get_name(filterSource), track,
-                        audioDest
-                    );
+                    obs_log(LOG_INFO, "%s: Use silence for track %d (%s)", qUtf8Printable(name), track, audioDest);
 
-                    audioContext->capture = new AudioCapture("Silence", ai.samples_per_sec, ai.speakers);
+                    audioContext->capture = new AudioCapture(
+                        "Silence", ai.samples_per_sec, ai.speakers, AudioCapture::silenceCapture, this
+                    );
                     audioContext->audio = audioContext->capture->getAudio();
                     audioContext->name = audioContext->capture->getName();
 
@@ -534,14 +544,14 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
                     auto masterTrack = obs_data_get_int(settings, audioTrackListName);
                     if (masterTrack < 1 || masterTrack > MAX_AUDIO_MIXES) {
                         obs_log(
-                            LOG_ERROR, "%s: Invalid master audio track No.%d for track %d",
-                            obs_source_get_name(filterSource), masterTrack, track
+                            LOG_ERROR, "%s: Invalid master audio track No.%d for track %d", qUtf8Printable(name),
+                            masterTrack, track
                         );
                         return;
                     }
                     obs_log(
-                        LOG_INFO, "%s: Use master audio track No.%d for track %d (%s)",
-                        obs_source_get_name(filterSource), masterTrack, track, audioDest
+                        LOG_INFO, "%s: Use master audio track No.%d for track %d (%s)", qUtf8Printable(name),
+                        masterTrack, track, audioDest
                     );
 
                     audioContext->mixIndex = masterTrack - 1;
@@ -550,13 +560,10 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
 
                 } else if (!strcmp(audioSourceUuid, "filter")) {
                     // Filter pipline's audio
-                    obs_log(
-                        LOG_INFO, "%s: Use filter audio for track %d (%s)", obs_source_get_name(filterSource), track,
-                        audioDest
-                    );
+                    obs_log(LOG_INFO, "%s: Use filter audio for track %d (%s)", qUtf8Printable(name), track, audioDest);
 
                     audioContext->capture =
-                        new FilterAudioCapture(obs_source_get_name(filterSource), ai.samples_per_sec, ai.speakers);
+                        new FilterAudioCapture(qUtf8Printable(name), ai.samples_per_sec, ai.speakers, this);
                     audioContext->audio = audioContext->capture->getAudio();
                     audioContext->name = audioContext->capture->getName();
 
@@ -566,27 +573,26 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
                     if (!source) {
                         // Non-stopping error
                         obs_log(
-                            LOG_WARNING, "%s: Ignore audio source for track %d (%s)", obs_source_get_name(filterSource),
-                            track, audioDest
+                            LOG_WARNING, "%s: Ignore audio source for track %d (%s)", qUtf8Printable(name), track,
+                            audioDest
                         );
                         continue;
                     }
 
                     // Use custom audio source
                     obs_log(
-                        LOG_INFO, "%s: Use %s audio for track %d", obs_source_get_name(filterSource),
-                        obs_source_get_name(source), track
+                        LOG_INFO, "%s: Use %s audio for track %d", qUtf8Printable(name), obs_source_get_name(source),
+                        track
                     );
 
-                    audioContext->capture = new SourceAudioCapture(source, ai.samples_per_sec, ai.speakers);
+                    audioContext->capture = new SourceAudioCapture(source, ai.samples_per_sec, ai.speakers, this);
                     audioContext->audio = audioContext->capture->getAudio();
                     audioContext->name = audioContext->capture->getName();
                 }
 
                 if (!audioContext->audio) {
                     obs_log(
-                        LOG_ERROR, "%s: Audio creation failed for track %d (%s)", obs_source_get_name(filterSource),
-                        track, audioDest
+                        LOG_ERROR, "%s: Audio creation failed for track %d (%s)", qUtf8Printable(name), track, audioDest
                     );
                     if (audioContext->capture) {
                         delete audioContext->capture;
@@ -597,17 +603,16 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             }
         } else {
             // Filter pipeline's audio
-            obs_log(LOG_INFO, "%s: Use filter audio for track 1", obs_source_get_name(filterSource));
+            obs_log(LOG_INFO, "%s: Use filter audio for track 1", qUtf8Printable(name));
             auto audioContext = &audios[0];
-            audioContext->capture =
-                new FilterAudioCapture(obs_source_get_name(filterSource), ai.samples_per_sec, ai.speakers);
+            audioContext->capture = new FilterAudioCapture(qUtf8Printable(name), ai.samples_per_sec, ai.speakers, this);
             audioContext->audio = audioContext->capture->getAudio();
             audioContext->streaming = true;
             audioContext->recording = true;
             audioContext->name = audioContext->capture->getName();
 
             if (!audioContext->audio) {
-                obs_log(LOG_ERROR, "%s: Audio creation failed", obs_source_get_name(filterSource));
+                obs_log(LOG_ERROR, "%s: Audio creation failed", qUtf8Printable(name));
                 delete audioContext->capture;
                 audioContext->capture = nullptr;
                 return;
@@ -616,9 +621,9 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
 
         //--- Setup video encoder ---//
         auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
-        videoEncoder = obs_video_encoder_create(video_encoder_id, obs_source_get_name(filterSource), settings, nullptr);
+        videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), settings, nullptr);
         if (!videoEncoder) {
-            obs_log(LOG_ERROR, "%s: Video encoder creation failed", obs_source_get_name(filterSource));
+            obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));
             return;
         }
 
@@ -629,8 +634,8 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             obs_encoder_set_scaled_size(videoEncoder, 0, 0);
         } else {
             obs_log(
-                LOG_DEBUG, "%s: Output resolution is %dx%d (scaling=%d)", obs_source_get_name(filterSource),
-                encvi.output_width, encvi.output_height, encvi.scale_type
+                LOG_DEBUG, "%s: Output resolution is %dx%d (scaling=%d)", qUtf8Printable(name), encvi.output_width,
+                encvi.output_height, encvi.scale_type
             );
             obs_encoder_set_scaled_size(videoEncoder, encvi.output_width, encvi.output_height);
             obs_encoder_set_gpu_scale_type(videoEncoder, encvi.scale_type);
@@ -654,10 +659,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
                 nullptr
             );
             if (!audioContext->encoder) {
-                obs_log(
-                    LOG_ERROR, "%s: Audio encoder creation failed for track %d", obs_source_get_name(filterSource),
-                    i + 1
-                );
+                obs_log(LOG_ERROR, "%s: Audio encoder creation failed for track %d", qUtf8Printable(name), i + 1);
                 return;
             }
             obs_encoder_set_audio(audioContext->encoder, audioContext->audio);
@@ -669,10 +671,9 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             const char *outputId = !strcmp(recFormat, "hybrid_mp4") ? "mp4_output" : "ffmpeg_muxer";
 
             OBSDataAutoRelease recordingSettings = createRecordingSettings(settings);
-            recordingOutput =
-                obs_output_create(outputId, obs_source_get_name(filterSource), recordingSettings, nullptr);
+            recordingOutput = obs_output_create(outputId, qUtf8Printable(name), recordingSettings, nullptr);
             if (!recordingOutput) {
-                obs_log(LOG_ERROR, "%s: Recording output creation failed", obs_source_get_name(filterSource));
+                obs_log(LOG_ERROR, "%s: Recording output creation failed", qUtf8Printable(name));
                 return;
             }
 
@@ -693,14 +694,14 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
                     if (audioContext->encoder) {
                         obs_log(
                             LOG_WARNING, "%s: No audio encoder selected for recording, using track %d",
-                            obs_source_get_name(filterSource), i + 1
+                            qUtf8Printable(name), i + 1
                         );
                         obs_output_set_audio_encoder(recordingOutput, audioContext->encoder, encIndex++);
                         break;
                     }
                 }
                 if (!encIndex) {
-                    obs_log(LOG_ERROR, "%s: No audio encoder for recording", obs_source_get_name(filterSource));
+                    obs_log(LOG_ERROR, "%s: No audio encoder for recording", qUtf8Printable(name));
                     return;
                 }
             }
@@ -711,9 +712,9 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             if (obs_output_start(recordingOutput)) {
                 recordingActive = true;
                 obs_source_inc_showing(obs_filter_get_parent(filterSource));
-                obs_log(LOG_INFO, "%s: Starting recording output succeeded", obs_source_get_name(filterSource));
+                obs_log(LOG_INFO, "%s: Starting recording output succeeded", qUtf8Printable(name));
             } else {
-                obs_log(LOG_ERROR, "%s: Starting recording output failed", obs_source_get_name(filterSource));
+                obs_log(LOG_ERROR, "%s: Starting recording output failed", qUtf8Printable(name));
             }
         }
 
@@ -736,14 +737,14 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
                     if (audioContext->encoder) {
                         obs_log(
                             LOG_WARNING, "%s: No audio encoder selected for streaming, using track %d",
-                            obs_source_get_name(filterSource), i + 1
+                            qUtf8Printable(name), i + 1
                         );
                         obs_output_set_audio_encoder(streamOutput, audioContext->encoder, encIndex++);
                         break;
                     }
                 }
                 if (!encIndex) {
-                    obs_log(LOG_ERROR, "%s: No audio encoder for streaming", obs_source_get_name(filterSource));
+                    obs_log(LOG_ERROR, "%s: No audio encoder for streaming", qUtf8Printable(name));
                     return;
                 }
             }
@@ -754,9 +755,9 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             if (obs_output_start(streamOutput)) {
                 outputActive = true;
                 obs_source_inc_showing(obs_filter_get_parent(filterSource));
-                obs_log(LOG_INFO, "%s: Starting streaming output succeeded", obs_source_get_name(filterSource));
+                obs_log(LOG_INFO, "%s: Starting streaming output succeeded", qUtf8Printable(name));
             } else {
-                obs_log(LOG_ERROR, "%s: Starting streaming output failed", obs_source_get_name(filterSource));
+                obs_log(LOG_ERROR, "%s: Starting streaming output failed", qUtf8Printable(name));
             }
         }
     }
@@ -774,7 +775,7 @@ void BranchOutputFilter::reconnectStreamOutput()
             connectAttemptingAt = os_gettime_ns();
 
             if (!obs_output_start(streamOutput)) {
-                obs_log(LOG_ERROR, "%s: Reconnect streaming output failed", obs_source_get_name(filterSource));
+                obs_log(LOG_ERROR, "%s: Reconnect streaming output failed", qUtf8Printable(name));
             }
         }
     }
@@ -792,7 +793,7 @@ void BranchOutputFilter::restartRecordingOutput()
             obs_output_force_stop(recordingOutput);
 
             if (!obs_output_start(recordingOutput)) {
-                obs_log(LOG_ERROR, "%s: Restart recording output failed", obs_source_get_name(filterSource));
+                obs_log(LOG_ERROR, "%s: Restart recording output failed", qUtf8Printable(name));
             }
         }
     }
@@ -814,6 +815,7 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
         obs_data_erase(recently_settings, "custom_audio_source");
         obs_data_erase(recently_settings, "audio_source");
         obs_data_erase(recently_settings, "audio_track");
+        obs_data_erase(recently_settings, "audio_dest");
         obs_data_erase(recently_settings, "multitrack_audio");
         obs_data_erase(recently_settings, "audio_source_2");
         obs_data_erase(recently_settings, "audio_track_2");
@@ -946,7 +948,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
             if (activeSettingsRev < storedSettingsRev) {
                 // Settings has been changed
-                obs_log(LOG_INFO, "%s: Settings change detected, Attempting restart", obs_source_get_name(filterSource));
+                obs_log(LOG_INFO, "%s: Settings change detected, Attempting restart", qUtf8Printable(name));
                 restartOutput();
                 return;
             }
@@ -967,7 +969,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
                 if (width != sourceWidth || height != sourceHeight) {
                     // Restart output when source resolution was changed.
-                    obs_log(LOG_INFO, "%s: Attempting restart the stream output", obs_source_get_name(filterSource));
+                    obs_log(LOG_INFO, "%s: Attempting restart the stream output", qUtf8Printable(name));
                     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
                     startOutput(settings);
                     return;
@@ -976,14 +978,14 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
             if (recordingActive && !recordingAlive) {
                 // Restart recording
-                obs_log(LOG_INFO, "%s: Attempting reactivate the recording output", obs_source_get_name(filterSource));
+                obs_log(LOG_INFO, "%s: Attempting reactivate the recording output", qUtf8Printable(name));
                 restartRecordingOutput();
                 return;
             }
 
             if (outputActive && !streamingAlive) {
                 // Reconnect streaming
-                obs_log(LOG_INFO, "%s: Attempting reactivate the stream output", obs_source_get_name(filterSource));
+                obs_log(LOG_INFO, "%s: Attempting reactivate the stream output", qUtf8Printable(name));
                 reconnectStreamOutput();
                 return;
             }
@@ -1036,9 +1038,9 @@ void BranchOutputFilter::registerHotkey()
     }
 
     auto name0 = QString("EnableFilter.%1").arg(obs_source_get_uuid(filterSource));
-    auto description0 = QString(obs_module_text("EnableHotkey")).arg(obs_source_get_name(filterSource));
+    auto description0 = QString(obs_module_text("EnableHotkey")).arg(name);
     auto name1 = QString("DisableFilter.%1").arg(obs_source_get_uuid(filterSource));
-    auto description1 = QString(obs_module_text("DisableHotkey")).arg(obs_source_get_name(filterSource));
+    auto description1 = QString(obs_module_text("DisableHotkey")).arg(name);
 
     hotkeyPairId = obs_hotkey_pair_register_source(
         obs_filter_get_parent(filterSource), qUtf8Printable(name0), qUtf8Printable(description0), qUtf8Printable(name1),
@@ -1088,13 +1090,13 @@ obs_source_info BranchOutputFilter::createFilterInfo()
         auto filter = (BranchOutputFilter *)data;
         filter->videoRenderCallback(effect);
     };
-    info.filter_remove = [](void *data, obs_source_t *source) {
+    info.filter_remove = [](void *data, obs_source_t *) {
         auto filter = (BranchOutputFilter *)data;
-        filter->removeCallback(source);
+        filter->removeCallback();
     };
     info.destroy = [](void *data) {
         auto filter = (BranchOutputFilter *)data;
-        filter->deleteLater();
+        filter->destroyCallback();
     };
 
     info.get_properties = [](void *data) -> obs_properties_t * {

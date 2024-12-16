@@ -30,7 +30,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
 
-// TODO: Convert to Object
 class BranchOutputFilter : public QObject {
     Q_OBJECT
 
@@ -55,6 +54,7 @@ class BranchOutputFilter : public QObject {
         QString name;
     };
 
+    QString name;
     bool initialized; // Activate after first "Apply" click
     bool outputActive;
     bool recordingActive;
@@ -100,7 +100,7 @@ class BranchOutputFilter : public QObject {
     bool connectAttemptingTimedOut();
     void registerHotkey();
 
-    // Defined in plugin-ui.cpp
+    // Implemented in plugin-ui.cpp
     void addApplyButton(obs_properties_t *props);
     void addPluginInfo(obs_properties_t *props);
     void addStreamGroup(obs_properties_t *props);
@@ -109,12 +109,14 @@ class BranchOutputFilter : public QObject {
     void addAudioEncoderGroup(obs_properties_t *props);
     void addVideoEncoderGroup(obs_properties_t *props);
 
+    // Callbacks from obs core
     static bool onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
     static bool onDisableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
+
     void addCallback(obs_source_t *source);
     void updateCallback(obs_data_t *settings);
     void videoRenderCallback(gs_effect_t *effect);
-    void removeCallback(obs_source_t *source);
+    void destroyCallback();
     obs_properties_t *getProperties();
 
     static obs_audio_data *audioFilterCallback(void *param, obs_audio_data *audioData);
@@ -122,11 +124,14 @@ class BranchOutputFilter : public QObject {
 
 private slots:
     void onIntervalTimerTimeout();
+    void removeCallback();
 
 public:
     explicit BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
     ~BranchOutputFilter();
 
     static obs_source_info createFilterInfo();
+
+    // Implemented in plugin-ui.cpp
     static BranchOutputStatusDock *createOutputStatusDock();
 };
