@@ -38,7 +38,6 @@ target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE src/plugin-main.cpp
           src/plugin-ui.cpp
-          src/plugin-audio.cpp
           src/utils.cpp
           src/audio/audio-capture.cpp
           src/UI/output-status-dock.cpp

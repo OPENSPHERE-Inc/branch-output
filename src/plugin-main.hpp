@@ -21,39 +21,40 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 //#define NO_AUDIO
 
 #include <obs-module.h>
+#include <obs.hpp>
 #include <util/deque.h>
 #include <util/threading.h>
+
+#include <QObject>
 
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
 
-enum AudioSourceType {
-    AUDIO_SOURCE_TYPE_SILENCE,
-    AUDIO_SOURCE_TYPE_FILTER,
-    AUDIO_SOURCE_TYPE_MASTER,
-    AUDIO_SOURCE_TYPE_CAPTURE,
-};
-
-enum InterlockType {
-    INTERLOCK_TYPE_ALWAYS_ON,
-    INTERLOCK_TYPE_STREAMING,
-    INTERLOCK_TYPE_RECORDING,
-    INTERLOCK_TYPE_STREAMING_RECORDING,
-    INTERLOCK_TYPE_VIRTUAL_CAM,
-};
-
-struct BranchOutputAudioContext {
-    AudioCapture *capture;
-    obs_encoder_t *encoder;
-    audio_t *audio;
-    size_t mixIndex;
-    bool streaming;
-    bool recording;
-    QString name;
-};
-
 // TODO: Convert to Object
-struct BranchOutputFilter {
+class BranchOutputFilter : public QObject {
+    Q_OBJECT
+
+    friend class BranchOutputStatusDock;
+    friend class OutputTableRow;
+
+    enum InterlockType {
+        INTERLOCK_TYPE_ALWAYS_ON,
+        INTERLOCK_TYPE_STREAMING,
+        INTERLOCK_TYPE_RECORDING,
+        INTERLOCK_TYPE_STREAMING_RECORDING,
+        INTERLOCK_TYPE_VIRTUAL_CAM,
+    };
+
+    struct BranchOutputAudioContext {
+        AudioCapture *capture;
+        OBSEncoderAutoRelease encoder;
+        audio_t *audio;
+        size_t mixIndex;
+        bool streaming;
+        bool recording;
+        QString name;
+    };
+
     bool initialized; // Activate after first "Apply" click
     bool outputActive;
     bool recordingActive;
@@ -61,17 +62,17 @@ struct BranchOutputFilter {
     uint32_t activeSettingsRev;
     QTimer *intervalTimer;
 
-    // Filter source
+    // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
 
     // User choosed encoder
-    obs_encoder_t *videoEncoder;
+    OBSEncoderAutoRelease videoEncoder;
 
-    obs_view_t *view;
+    OBSView view;
     video_t *videoOutput;
-    obs_output_t *streamOutput;
-    obs_output_t *recordingOutput;
-    obs_service_t *service;
+    OBSOutputAutoRelease streamOutput;
+    OBSOutputAutoRelease recordingOutput;
+    OBSServiceAutoRelease service;
 
     // Video context
     uint32_t width;
@@ -86,23 +87,46 @@ struct BranchOutputFilter {
 
     // Hotkey context
     obs_hotkey_pair_id hotkeyPairId;
-    OBSSignal *filterRenamedSignal;
+    OBSSignal filterRenamedSignal;
+
+    void startOutput(obs_data_t *settings);
+    void stopOutput();
+    obs_data_t *createRecordingSettings(obs_data_t *settings);
+    void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi);
+    void reconnectStreamOutput();
+    void restartRecordingOutput();
+    void loadRecently(obs_data_t *settings);
+    void restartOutput();
+    bool connectAttemptingTimedOut();
+    void registerHotkey();
+
+    // Defined in plugin-ui.cpp
+    void addApplyButton(obs_properties_t *props);
+    void addPluginInfo(obs_properties_t *props);
+    void addStreamGroup(obs_properties_t *props);
+    void createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible = true);
+    void addAudioGroup(obs_properties_t *props);
+    void addAudioEncoderGroup(obs_properties_t *props);
+    void addVideoEncoderGroup(obs_properties_t *props);
+
+    static bool onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
+    static bool onDisableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
+    void addCallback(obs_source_t *source);
+    void updateCallback(obs_data_t *settings);
+    void videoRenderCallback(gs_effect_t *effect);
+    void removeCallback(obs_source_t *source);
+    obs_properties_t *getProperties();
+
+    static obs_audio_data *audioFilterCallback(void *param, obs_audio_data *audioData);
+    static void getDefaults(obs_data_t *settings);
+
+private slots:
+    void onIntervalTimerTimeout();
+
+public:
+    explicit BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
+    ~BranchOutputFilter();
+
+    static obs_source_info createFilterInfo();
+    static BranchOutputStatusDock *createOutputStatusDock();
 };
-
-// The type must be registered for Linux platform
-Q_DECLARE_METATYPE(BranchOutputFilter)
-Q_DECLARE_OPAQUE_POINTER(BranchOutputFilter *)
-
-struct AudioBufferChunkHeader {
-    size_t data_idx[MAX_AUDIO_CHANNELS]; // Zero means unused channel
-    uint32_t frames;
-    uint64_t timestamp;
-    size_t offset;
-    size_t channels;
-};
-
-void update(void *data, obs_data_t *settings);
-void getDefaults(obs_data_t *defaults);
-obs_properties_t *getProperties(void *data);
-BranchOutputStatusDock *createOutputStatusDock();
-obs_audio_data *audioFilterCallback(void *param, obs_audio_data *audioData);
