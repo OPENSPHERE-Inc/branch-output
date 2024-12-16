@@ -518,10 +518,10 @@ void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
             continue;
         }
 
-        auto name = obs_encoder_get_display_name(encoderId);
+        auto encoderName = obs_encoder_get_display_name(encoderId);
 
         if (obs_get_encoder_type(encoderId) == OBS_ENCODER_AUDIO) {
-            obs_property_list_add_string(audioEncoderList, name, encoderId);
+            obs_property_list_add_string(audioEncoderList, encoderName, encoderId);
         }
     }
 
@@ -533,7 +533,7 @@ void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
         audioEncoderList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
             auto filter = (BranchOutputFilter *)param;
-            obs_log(LOG_DEBUG, "%s: Audio encoder chainging.", obs_source_get_name(filter->filterSource));
+            obs_log(LOG_DEBUG, "%s: Audio encoder chainging.", qUtf8Printable(filter->name));
 
             const auto encoder_id = obs_data_get_string(settings, "audio_encoder");
             const auto encoder_props = obs_get_encoder_properties(encoder_id);
@@ -565,8 +565,8 @@ void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
                 const auto format = obs_property_list_format(encoder_bitrate_prop);
                 if (format != OBS_COMBO_FORMAT_INT) {
                     obs_log(
-                        LOG_ERROR, "%s: Invalid bitrate property given by encoder: %s",
-                        obs_source_get_name(filter->filterSource), encoder_id
+                        LOG_ERROR, "%s: Invalid bitrate property given by encoder: %s", qUtf8Printable(filter->name),
+                        encoder_id
                     );
                     result = false;
                     break;
@@ -589,7 +589,7 @@ void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
                 break;
             }
 
-            obs_log(LOG_INFO, "%s: Audio encoder changed.", obs_source_get_name(filter->filterSource));
+            obs_log(LOG_INFO, "%s: Audio encoder changed.", qUtf8Printable(filter->name));
             return result;
         },
         this
@@ -664,10 +664,10 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
             continue;
         }
 
-        auto name = obs_encoder_get_display_name(encoderId);
+        auto encoderName = obs_encoder_get_display_name(encoderId);
 
         if (obs_get_encoder_type(encoderId) == OBS_ENCODER_VIDEO) {
-            obs_property_list_add_string(videoEncoderList, name, encoderId);
+            obs_property_list_add_string(videoEncoderList, encoderName, encoderId);
         }
     }
 
@@ -675,7 +675,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
         videoEncoderList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
             auto filter = (BranchOutputFilter *)param;
-            obs_log(LOG_DEBUG, "%s: Video encoder chainging.", obs_source_get_name(filter->filterSource));
+            obs_log(LOG_DEBUG, "%s: Video encoder chainging.", qUtf8Printable(filter->name));
 
             auto video_encoder_group = obs_property_group_content(obs_properties_get(_props, "video_encoder_group"));
             auto encoder_id = obs_data_get_string(settings, "video_encoder");
@@ -694,7 +694,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
             OBSDataAutoRelease encoder_defaults = obs_encoder_defaults(encoder_id);
             applyDefaults(settings, encoder_defaults);
 
-            obs_log(LOG_INFO, "%s: Video encoder changed.", obs_source_get_name(filter->filterSource));
+            obs_log(LOG_INFO, "%s: Video encoder changed.", qUtf8Printable(filter->name));
             return true;
         },
         this

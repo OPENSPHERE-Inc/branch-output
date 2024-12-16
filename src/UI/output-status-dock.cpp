@@ -192,8 +192,7 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     auto otr = new OutputTableRow(this);
 
     otr->filter = filter;
-    otr->filterCell =
-        new FilterCell(QString::fromUtf8(obs_source_get_name(filter->filterSource)), filter->filterSource, this);
+    otr->filterCell = new FilterCell(filter->name, filter->filterSource, this);
     otr->parentCell = new ParentCell(obs_source_get_name(parent), parent, this);
     otr->status = new StatusCell(QTStr("Status.Inactive"), this);
     otr->status->setIcon(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
@@ -279,7 +278,7 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
 BranchOutputFilter *BranchOutputStatusDock::findFilter(const QString &parentName, const QString &filterName)
 {
     for (auto row : outputTableRows) {
-        if (filterName == obs_source_get_name(row->filter->filterSource) &&
+        if (filterName == row->filter->name &&
             parentName == obs_source_get_name(obs_filter_get_parent(row->filter->filterSource))) {
             return row->filter;
         }
