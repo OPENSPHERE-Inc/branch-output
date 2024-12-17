@@ -680,6 +680,10 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
             auto video_encoder_group = obs_property_group_content(obs_properties_get(_props, "video_encoder_group"));
             auto encoder_id = obs_data_get_string(settings, "video_encoder");
 
+            // Apply encoder's defaults
+            OBSDataAutoRelease encoder_defaults = obs_encoder_defaults(encoder_id);
+            applyDefaults(settings, encoder_defaults);
+
             obs_properties_remove_by_name(video_encoder_group, "video_encoder_settings_group");
 
             auto encoder_props = obs_get_encoder_properties(encoder_id);
@@ -690,9 +694,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
                 );
             }
 
-            // Apply encoder's defaults
-            OBSDataAutoRelease encoder_defaults = obs_encoder_defaults(encoder_id);
-            applyDefaults(settings, encoder_defaults);
+            obs_properties_apply_settings(video_encoder_group, settings);
 
             obs_log(LOG_INFO, "%s: Video encoder changed.", qUtf8Printable(filter->name));
             return true;
