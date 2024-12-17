@@ -263,10 +263,10 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_log(LOG_INFO, "Default settings applied.");
 }
 
-void BranchOutputFilter::addApplyButton(obs_properties_t *props)
+void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char* name)
 {
     obs_properties_add_button2(
-        props, "apply", obs_module_text("Apply"),
+        props, name, obs_module_text("Apply"),
         [](obs_properties_t *, obs_property_t *, void *param) {
             auto filter = (BranchOutputFilter *)param;
 
@@ -722,6 +722,8 @@ obs_properties_t *BranchOutputFilter::getProperties()
     //--- "Stream" group ---//
     addStreamGroup(props);
 
+    addApplyButton(props, "apply1");
+
     //--- "Audio" gorup ---//
     addAudioGroup(props);
 
@@ -731,7 +733,7 @@ obs_properties_t *BranchOutputFilter::getProperties()
     //--- "Video Encoder" group ---//
     addVideoEncoderGroup(props);
 
-    addApplyButton(props);
+    addApplyButton(props, "apply2");
     addPluginInfo(props);
 
     return props;
