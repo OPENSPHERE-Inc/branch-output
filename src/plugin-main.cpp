@@ -665,10 +665,14 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             obs_encoder_set_audio(audioContext->encoder, audioContext->audio);
         }
 
-        //--- Create recording output (if requested) ---//
+        //--- Start recording output (if requested) ---//
         if (obs_data_get_bool(settings, "stream_recording")) {
             auto recFormat = obs_data_get_string(settings, "rec_format");
             const char *outputId = !strcmp(recFormat, "hybrid_mp4") ? "mp4_output" : "ffmpeg_muxer";
+
+            // Ensure base path exists
+            auto path = obs_data_get_string(settings, "path");
+            os_mkdirs(path);
 
             OBSDataAutoRelease recordingSettings = createRecordingSettings(settings);
             recordingOutput = obs_output_create(outputId, qUtf8Printable(name), recordingSettings, nullptr);
