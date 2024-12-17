@@ -31,6 +31,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 QString getOutputFilename(const char *path, const char *container, bool noSpace, bool overwrite, const char *format);
 QString getFormatExt(const char *container);
 
+using OBSProperties = OBSPtr<obs_properties_t *, obs_properties_destroy>;
+using OBSAudio = OBSPtr<audio_t *, audio_output_close>;
+
 inline void strFree(char *ptr)
 {
     bfree(ptr);
@@ -96,6 +99,27 @@ inline bool sourceInFrontend(obs_source_t *source)
     obs_frontend_source_list_free(&lsit);
 
     return found;
+}
+
+// Decide source/scene is private or not
+inline bool sourceIsPrivate(obs_source_t *source)
+{
+    auto finder = source;
+    auto callback = [](void *param, obs_source_t *_source) {
+        auto _finder = (obs_source_t **)param;
+        if (_source == *_finder) {
+            *_finder = nullptr;
+            return false;
+        }
+        return true;
+    };
+
+    obs_enum_scenes(callback, &finder);
+    if (finder != nullptr) {
+        obs_enum_sources(callback, &finder);
+    }
+
+    return finder != nullptr;
 }
 
 inline void setAudioSourceListName(char *name, size_t len, size_t track)

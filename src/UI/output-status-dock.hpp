@@ -35,7 +35,7 @@ class QTableWidget;
 class QString;
 class QCheckBox;
 class QPushButton;
-struct BranchOutputFilter;
+class BranchOutputFilter;
 class OutputTableRow;
 
 class FilterCell : public QWidget {

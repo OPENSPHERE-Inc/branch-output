@@ -141,7 +141,44 @@ inline const char *getSimpleVideoEncoder(const char *encoder)
     return "obs_x264";
 }
 
-void getDefaults(obs_data_t *defaults)
+// Imitate obs-studio/UI/window-basic-settings.cpp
+inline QString makeFormatToolTip()
+{
+    static const char *format_list[][2] = {
+        {"1", "FilenameFormatting.TT.1"},       {"2", "FilenameFormatting.TT.2"},
+        {"CCYY", "FilenameFormatting.TT.CCYY"}, {"YY", "FilenameFormatting.TT.YY"},
+        {"MM", "FilenameFormatting.TT.MM"},     {"DD", "FilenameFormatting.TT.DD"},
+        {"hh", "FilenameFormatting.TT.hh"},     {"mm", "FilenameFormatting.TT.mm"},
+        {"ss", "FilenameFormatting.TT.ss"},     {"%", "FilenameFormatting.TT.Percent"},
+        {"a", "FilenameFormatting.TT.a"},       {"A", "FilenameFormatting.TT.A"},
+        {"b", "FilenameFormatting.TT.b"},       {"B", "FilenameFormatting.TT.B"},
+        {"d", "FilenameFormatting.TT.d"},       {"H", "FilenameFormatting.TT.H"},
+        {"I", "FilenameFormatting.TT.I"},       {"m", "FilenameFormatting.TT.m"},
+        {"M", "FilenameFormatting.TT.M"},       {"p", "FilenameFormatting.TT.p"},
+        {"s", "FilenameFormatting.TT.s"},       {"S", "FilenameFormatting.TT.S"},
+        {"y", "FilenameFormatting.TT.y"},       {"Y", "FilenameFormatting.TT.Y"},
+        {"z", "FilenameFormatting.TT.z"},       {"Z", "FilenameFormatting.TT.Z"},
+        {"FPS", "FilenameFormatting.TT.FPS"},   {"CRES", "FilenameFormatting.TT.CRES"},
+        {"ORES", "FilenameFormatting.TT.ORES"}, {"VF", "FilenameFormatting.TT.VF"},
+    };
+
+    QString html = "<table>";
+
+    for (auto f : format_list) {
+        html += "<tr><th align='left'>%";
+        html += f[0];
+        html += "</th><td>";
+        html += QTStr(f[1]);
+        html += "</td></tr>";
+    }
+
+    html += "</table>";
+    return html;
+}
+
+//--- BranchOutputFiilter class ---//
+
+void BranchOutputFilter::getDefaults(obs_data_t *defaults)
 {
     obs_log(LOG_DEBUG, "Default settings applying.");
 
@@ -226,26 +263,26 @@ void getDefaults(obs_data_t *defaults)
     obs_log(LOG_INFO, "Default settings applied.");
 }
 
-inline void addApplyButton(BranchOutputFilter *filter, obs_properties_t *props)
+void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char *propName)
 {
     obs_properties_add_button2(
-        props, "apply", obs_module_text("Apply"),
+        props, propName, obs_module_text("Apply"),
         [](obs_properties_t *, obs_property_t *, void *param) {
-            auto _filter = (BranchOutputFilter *)param;
+            auto filter = (BranchOutputFilter *)param;
 
             // Force filter activation
-            _filter->initialized = true;
+            filter->initialized = true;
 
-            OBSDataAutoRelease settings = obs_source_get_settings(_filter->filterSource);
-            update(_filter, settings);
+            OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+            filter->updateCallback(settings);
 
             return true;
         },
-        filter
+        this
     );
 }
 
-inline void addPluginInfo(obs_properties_t *props)
+void BranchOutputFilter::addPluginInfo(obs_properties_t *props)
 {
     char plugin_info_format[] = "<a href=\"https://github.com/OPENSPHERE-Inc/branch-output\">Branch Output</a> (v%s) "
                                 "developed by <a href=\"https://opensphere.co.jp\">OPENSPHERE Inc.</a>";
@@ -259,42 +296,7 @@ inline void addPluginInfo(obs_properties_t *props)
     bfree(plugin_info_text);
 }
 
-// Imitate obs-studio/UI/window-basic-settings.cpp
-inline QString makeFormatToolTip()
-{
-    static const char *format_list[][2] = {
-        {"1", "FilenameFormatting.TT.1"},       {"2", "FilenameFormatting.TT.2"},
-        {"CCYY", "FilenameFormatting.TT.CCYY"}, {"YY", "FilenameFormatting.TT.YY"},
-        {"MM", "FilenameFormatting.TT.MM"},     {"DD", "FilenameFormatting.TT.DD"},
-        {"hh", "FilenameFormatting.TT.hh"},     {"mm", "FilenameFormatting.TT.mm"},
-        {"ss", "FilenameFormatting.TT.ss"},     {"%", "FilenameFormatting.TT.Percent"},
-        {"a", "FilenameFormatting.TT.a"},       {"A", "FilenameFormatting.TT.A"},
-        {"b", "FilenameFormatting.TT.b"},       {"B", "FilenameFormatting.TT.B"},
-        {"d", "FilenameFormatting.TT.d"},       {"H", "FilenameFormatting.TT.H"},
-        {"I", "FilenameFormatting.TT.I"},       {"m", "FilenameFormatting.TT.m"},
-        {"M", "FilenameFormatting.TT.M"},       {"p", "FilenameFormatting.TT.p"},
-        {"s", "FilenameFormatting.TT.s"},       {"S", "FilenameFormatting.TT.S"},
-        {"y", "FilenameFormatting.TT.y"},       {"Y", "FilenameFormatting.TT.Y"},
-        {"z", "FilenameFormatting.TT.z"},       {"Z", "FilenameFormatting.TT.Z"},
-        {"FPS", "FilenameFormatting.TT.FPS"},   {"CRES", "FilenameFormatting.TT.CRES"},
-        {"ORES", "FilenameFormatting.TT.ORES"}, {"VF", "FilenameFormatting.TT.VF"},
-    };
-
-    QString html = "<table>";
-
-    for (auto f : format_list) {
-        html += "<tr><th align='left'>%";
-        html += f[0];
-        html += "</th><td>";
-        html += QTStr(f[1]);
-        html += "</td></tr>";
-    }
-
-    html += "</table>";
-    return html;
-}
-
-inline void addStreamGroup(obs_properties_t *props)
+void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
 {
     auto streamGroup = obs_properties_create();
     obs_properties_add_text(streamGroup, "server", obs_module_text("Server"), OBS_TEXT_DEFAULT);
@@ -370,7 +372,7 @@ inline void addStreamGroup(obs_properties_t *props)
     obs_properties_add_group(props, "stream", obs_module_text("Stream"), OBS_GROUP_NORMAL, streamGroup);
 }
 
-void createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible = true)
+void BranchOutputFilter::createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible)
 {
     char audioSourceListName[15] = "audio_source_1";
     setAudioSourceListName(audioSourceListName, 15, track);
@@ -450,7 +452,7 @@ void createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool
     obs_property_set_visible(audioDestList, visible);
 }
 
-inline void addAudioGroup(obs_properties_t *props)
+void BranchOutputFilter::addAudioGroup(obs_properties_t *props)
 {
     auto audioGroup = obs_properties_create();
     createAudioTrackProperties(audioGroup, 1);
@@ -494,7 +496,7 @@ inline void addAudioGroup(obs_properties_t *props)
     );
 }
 
-inline void addAudioEncoderGroup(BranchOutputFilter *filter, obs_properties_t *props)
+void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
 {
     auto audioEncoderGroup = obs_properties_create();
     auto audioEncoderList = obs_properties_add_list(
@@ -516,10 +518,10 @@ inline void addAudioEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
             continue;
         }
 
-        auto name = obs_encoder_get_display_name(encoderId);
+        auto encoderName = obs_encoder_get_display_name(encoderId);
 
         if (obs_get_encoder_type(encoderId) == OBS_ENCODER_AUDIO) {
-            obs_property_list_add_string(audioEncoderList, name, encoderId);
+            obs_property_list_add_string(audioEncoderList, encoderName, encoderId);
         }
     }
 
@@ -530,8 +532,8 @@ inline void addAudioEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
     obs_property_set_modified_callback2(
         audioEncoderList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto _filter = (BranchOutputFilter *)param;
-            obs_log(LOG_DEBUG, "%s: Audio encoder chainging.", obs_source_get_name(_filter->filterSource));
+            auto filter = (BranchOutputFilter *)param;
+            obs_log(LOG_DEBUG, "%s: Audio encoder chainging.", qUtf8Printable(filter->name));
 
             const auto encoder_id = obs_data_get_string(settings, "audio_encoder");
             const auto encoder_props = obs_get_encoder_properties(encoder_id);
@@ -563,8 +565,8 @@ inline void addAudioEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
                 const auto format = obs_property_list_format(encoder_bitrate_prop);
                 if (format != OBS_COMBO_FORMAT_INT) {
                     obs_log(
-                        LOG_ERROR, "%s: Invalid bitrate property given by encoder: %s",
-                        obs_source_get_name(_filter->filterSource), encoder_id
+                        LOG_ERROR, "%s: Invalid bitrate property given by encoder: %s", qUtf8Printable(filter->name),
+                        encoder_id
                     );
                     result = false;
                     break;
@@ -587,14 +589,14 @@ inline void addAudioEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
                 break;
             }
 
-            obs_log(LOG_INFO, "%s: Audio encoder changed.", obs_source_get_name(_filter->filterSource));
+            obs_log(LOG_INFO, "%s: Audio encoder changed.", qUtf8Printable(filter->name));
             return result;
         },
-        filter
+        this
     );
 }
 
-inline void addVideoEncoderGroup(BranchOutputFilter *filter, obs_properties_t *props)
+void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 {
     auto videoEncoderGroup = obs_properties_create();
 
@@ -662,21 +664,25 @@ inline void addVideoEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
             continue;
         }
 
-        auto name = obs_encoder_get_display_name(encoderId);
+        auto encoderName = obs_encoder_get_display_name(encoderId);
 
         if (obs_get_encoder_type(encoderId) == OBS_ENCODER_VIDEO) {
-            obs_property_list_add_string(videoEncoderList, name, encoderId);
+            obs_property_list_add_string(videoEncoderList, encoderName, encoderId);
         }
     }
 
     obs_property_set_modified_callback2(
         videoEncoderList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto _filter = (BranchOutputFilter *)param;
-            obs_log(LOG_DEBUG, "%s: Video encoder chainging.", obs_source_get_name(_filter->filterSource));
+            auto filter = (BranchOutputFilter *)param;
+            obs_log(LOG_DEBUG, "%s: Video encoder chainging.", qUtf8Printable(filter->name));
 
             auto video_encoder_group = obs_property_group_content(obs_properties_get(_props, "video_encoder_group"));
             auto encoder_id = obs_data_get_string(settings, "video_encoder");
+
+            // Apply encoder's defaults
+            OBSDataAutoRelease encoder_defaults = obs_encoder_defaults(encoder_id);
+            applyDefaults(settings, encoder_defaults);
 
             obs_properties_remove_by_name(video_encoder_group, "video_encoder_settings_group");
 
@@ -688,14 +694,12 @@ inline void addVideoEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
                 );
             }
 
-            // Apply encoder's defaults
-            OBSDataAutoRelease encoder_defaults = obs_encoder_defaults(encoder_id);
-            applyDefaults(settings, encoder_defaults);
+            obs_properties_apply_settings(video_encoder_group, settings);
 
-            obs_log(LOG_INFO, "%s: Video encoder changed.", obs_source_get_name(_filter->filterSource));
+            obs_log(LOG_INFO, "%s: Video encoder changed.", qUtf8Printable(filter->name));
             return true;
         },
-        filter
+        this
     );
 
     //--- "Video Encoder Settings" group (Initially empty) ---//
@@ -710,7 +714,32 @@ inline void addVideoEncoderGroup(BranchOutputFilter *filter, obs_properties_t *p
     );
 }
 
-BranchOutputStatusDock *createOutputStatusDock()
+obs_properties_t *BranchOutputFilter::getProperties()
+{
+    auto props = obs_properties_create();
+    obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
+
+    //--- "Stream" group ---//
+    addStreamGroup(props);
+
+    addApplyButton(props, "apply1");
+
+    //--- "Audio" gorup ---//
+    addAudioGroup(props);
+
+    //--- "Audio Encoder" group ---//
+    addAudioEncoderGroup(props);
+
+    //--- "Video Encoder" group ---//
+    addVideoEncoderGroup(props);
+
+    addApplyButton(props, "apply2");
+    addPluginInfo(props);
+
+    return props;
+}
+
+BranchOutputStatusDock *BranchOutputFilter::createOutputStatusDock()
 {
     auto mainWindow = (QMainWindow *)obs_frontend_get_main_window();
     if (!mainWindow) {
@@ -720,31 +749,4 @@ BranchOutputStatusDock *createOutputStatusDock()
     auto dock = new BranchOutputStatusDock(mainWindow);
     obs_frontend_add_dock_by_id("BranchOutputStatusDock", obs_module_text("BranchOutputStatus"), dock);
     return dock;
-}
-
-//--- OBS Plugin Callbacks ---//
-
-obs_properties_t *getProperties(void *data)
-{
-    auto filter = (BranchOutputFilter *)data;
-
-    auto props = obs_properties_create();
-    obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
-
-    //--- "Stream" group ---//
-    addStreamGroup(props);
-
-    //--- "Audio" gorup ---//
-    addAudioGroup(props);
-
-    //--- "Audio Encoder" group ---//
-    addAudioEncoderGroup(filter, props);
-
-    //--- "Video Encoder" group ---//
-    addVideoEncoderGroup(filter, props);
-
-    addApplyButton(filter, props);
-    addPluginInfo(props);
-
-    return props;
 }

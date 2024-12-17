@@ -87,11 +87,11 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
 
     interlockLabel = new QLabel(QTStr("Interlock"), this);
     interlockComboBox = new QComboBox(this);
-    interlockComboBox->addItem(QTStr("AlwaysOn"), INTERLOCK_TYPE_ALWAYS_ON);
-    interlockComboBox->addItem(QTStr("Streaming"), INTERLOCK_TYPE_STREAMING);
-    interlockComboBox->addItem(QTStr("Recording"), INTERLOCK_TYPE_RECORDING);
-    interlockComboBox->addItem(QTStr("StreamingOrRecording"), INTERLOCK_TYPE_STREAMING_RECORDING);
-    interlockComboBox->addItem(QTStr("VirtualCam"), INTERLOCK_TYPE_VIRTUAL_CAM);
+    interlockComboBox->addItem(QTStr("AlwaysOn"), BranchOutputFilter::INTERLOCK_TYPE_ALWAYS_ON);
+    interlockComboBox->addItem(QTStr("Streaming"), BranchOutputFilter::INTERLOCK_TYPE_STREAMING);
+    interlockComboBox->addItem(QTStr("Recording"), BranchOutputFilter::INTERLOCK_TYPE_RECORDING);
+    interlockComboBox->addItem(QTStr("StreamingOrRecording"), BranchOutputFilter::INTERLOCK_TYPE_STREAMING_RECORDING);
+    interlockComboBox->addItem(QTStr("VirtualCam"), BranchOutputFilter::INTERLOCK_TYPE_VIRTUAL_CAM);
 
     auto buttonsContainerLayout = new QHBoxLayout();
     buttonsContainerLayout->addWidget(enableAllButton);
@@ -192,8 +192,7 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     auto otr = new OutputTableRow(this);
 
     otr->filter = filter;
-    otr->filterCell =
-        new FilterCell(QString::fromUtf8(obs_source_get_name(filter->filterSource)), filter->filterSource, this);
+    otr->filterCell = new FilterCell(filter->name, filter->filterSource, this);
     otr->parentCell = new ParentCell(obs_source_get_name(parent), parent, this);
     otr->status = new StatusCell(QTStr("Status.Inactive"), this);
     otr->status->setIcon(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
@@ -279,7 +278,7 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
 BranchOutputFilter *BranchOutputStatusDock::findFilter(const QString &parentName, const QString &filterName)
 {
     for (auto row : outputTableRows) {
-        if (filterName == obs_source_get_name(row->filter->filterSource) &&
+        if (filterName == row->filter->name &&
             parentName == obs_source_get_name(obs_filter_get_parent(row->filter->filterSource))) {
             return row->filter;
         }
@@ -312,7 +311,7 @@ OutputTableRow::~OutputTableRow() {}
 // Imitate UI/window-basic-stats.cpp
 void OutputTableRow::update()
 {
-    auto output = filter->streamOutput ? filter->streamOutput : filter->recordingOutput;
+    auto output = filter->streamOutput ? filter->streamOutput.Get() : filter->recordingOutput.Get();
     uint64_t totalBytes = output ? obs_output_get_total_bytes(output) : 0;
     uint64_t curTime = os_gettime_ns();
     uint64_t bytesSent = totalBytes;
@@ -413,7 +412,7 @@ void OutputTableRow::update()
 
 void OutputTableRow::reset()
 {
-    auto output = filter->streamOutput ? filter->streamOutput : filter->recordingOutput;
+    auto output = filter->streamOutput ? filter->streamOutput.Get() : filter->recordingOutput.Get();
     if (!output) {
         return;
     }
