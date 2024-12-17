@@ -263,10 +263,10 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_log(LOG_INFO, "Default settings applied.");
 }
 
-void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char* name)
+void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char *propName)
 {
     obs_properties_add_button2(
-        props, name, obs_module_text("Apply"),
+        props, propName, obs_module_text("Apply"),
         [](obs_properties_t *, obs_property_t *, void *param) {
             auto filter = (BranchOutputFilter *)param;
 

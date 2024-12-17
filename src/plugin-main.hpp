@@ -101,7 +101,7 @@ class BranchOutputFilter : public QObject {
     void registerHotkey();
 
     // Implemented in plugin-ui.cpp
-    void addApplyButton(obs_properties_t *props, const char* name = "apply");
+    void addApplyButton(obs_properties_t *props, const char *propName = "apply");
     void addPluginInfo(obs_properties_t *props);
     void addStreamGroup(obs_properties_t *props);
     void createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible = true);
