@@ -61,10 +61,8 @@ Please download latest install package from [Release](https://github.com/OPENSPH
 
 ## 1. To change the resolution and layout for streaming (Work-around)
 
-In the current version of Branch Output, source resolution = streaming resolution.
-
-Therefore, if the source resolution is 4k, it will be streamed at 4k.
-If you want to down-convert it to 1080p and stream it, you can do so as follows.
+> Changing Resolution feature is integrated since 1.0.0
+> Below step is alternative method with more flexibilities (Cropping, Zooming, Adding black bg etc...)
 
 1. The canvas resolution is assumed to be 1080p.
 2. Create new blank scene.
