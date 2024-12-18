@@ -4,7 +4,7 @@
 
 [<img src="./screenshot2.jpg" />](./screenshot2.jpg)
 
-## Sponsored
+## Sponsor program
 
 GitHub のスポンサープログラムを開始しました！もしよろしければご支援ください。
 

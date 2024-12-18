@@ -6,7 +6,7 @@
 
 [<img src="./screenshot2.jpg" />](./screenshot2.jpg)
 
-## Sponsored
+## Sponsor program
 
 We launched a GitHub sponser program. If you would like to help, please support us.
 
