@@ -62,7 +62,8 @@ Please download latest install package from [Release](https://github.com/OPENSPH
 ## 1. To change the resolution and layout for streaming (Work-around)
 
 > Changing Resolution feature is integrated since 1.0.0
-> Below step is alternative method with more flexibilities (Cropping, Zooming, Adding black bg etc...)
+> 
+> Below steps are alternative method with more flexibilities (Cropping, Zooming, Adding black bg etc...)
 
 1. The canvas resolution is assumed to be 1080p.
 2. Create new blank scene.
