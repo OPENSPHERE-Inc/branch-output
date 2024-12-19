@@ -677,24 +677,25 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
             auto filter = (BranchOutputFilter *)param;
             obs_log(LOG_DEBUG, "%s: Video encoder chainging.", qUtf8Printable(filter->name));
 
-            auto video_encoder_group = obs_property_group_content(obs_properties_get(_props, "video_encoder_group"));
-            auto encoder_id = obs_data_get_string(settings, "video_encoder");
+            auto _videoEncoderGroup = obs_property_group_content(obs_properties_get(_props, "video_encoder_group"));
+            auto _encoderId = obs_data_get_string(settings, "video_encoder");
 
             // Apply encoder's defaults
-            OBSDataAutoRelease encoder_defaults = obs_encoder_defaults(encoder_id);
-            applyDefaults(settings, encoder_defaults);
+            OBSDataAutoRelease encoderEefaults = obs_encoder_defaults(_encoderId);
+            applyDefaults(settings, encoderEefaults);
 
-            obs_properties_remove_by_name(video_encoder_group, "video_encoder_settings_group");
+            obs_properties_remove_by_name(_videoEncoderGroup, "video_encoder_settings_group");
 
-            auto encoder_props = obs_get_encoder_properties(encoder_id);
-            if (encoder_props) {
+            auto encoderProps = obs_get_encoder_properties(_encoderId);
+            if (encoderProps) {
                 obs_properties_add_group(
-                    video_encoder_group, "video_encoder_settings_group", obs_encoder_get_display_name(encoder_id),
-                    OBS_GROUP_NORMAL, encoder_props
+                    _videoEncoderGroup, "video_encoder_settings_group", obs_encoder_get_display_name(_encoderId),
+                    OBS_GROUP_NORMAL, encoderProps
                 );
-            }
 
-            obs_properties_apply_settings(video_encoder_group, settings);
+                // Do not apply to _videoEncoderGroup because it will cause memoryleak.
+                obs_properties_apply_settings(encoderProps, settings);
+            }
 
             obs_log(LOG_INFO, "%s: Video encoder changed.", qUtf8Printable(filter->name));
             return true;
