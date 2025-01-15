@@ -30,6 +30,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
 
+#define MAX_SERVICES 8
+
 class BranchOutputFilter : public QObject {
     Q_OBJECT
 
@@ -54,10 +56,15 @@ class BranchOutputFilter : public QObject {
         QString name;
     };
 
+    struct BranchOutputStreamingContext {
+        OBSOutputAutoRelease output;
+        OBSServiceAutoRelease service;
+        uint64_t connectAttemptingAt;
+        bool active;
+    };
+
     QString name;
     bool initialized; // Activate after first "Apply" click
-    bool outputActive;
-    bool recordingActive;
     uint32_t storedSettingsRev;
     uint32_t activeSettingsRev;
     QTimer *intervalTimer;
@@ -68,22 +75,22 @@ class BranchOutputFilter : public QObject {
     // User choosed encoder
     OBSEncoderAutoRelease videoEncoder;
 
+    // Video context
     OBSView view;
     video_t *videoOutput;
-    OBSOutputAutoRelease streamOutput;
-    OBSOutputAutoRelease recordingOutput;
-    OBSServiceAutoRelease service;
-
-    // Video context
     uint32_t width;
     uint32_t height;
 
     // Audio context
     BranchOutputAudioContext audios[MAX_AUDIO_MIXES];
 
-    // Stream context
+    // Recording context
+    bool recordingActive;
+    OBSOutputAutoRelease recordingOutput;
+
+    // Streaming context
     pthread_mutex_t outputMutex;
-    uint64_t connectAttemptingAt;
+    BranchOutputStreamingContext streamings[MAX_SERVICES];
 
     // Hotkey context
     obs_hotkey_pair_id hotkeyPairId;
@@ -92,18 +99,29 @@ class BranchOutputFilter : public QObject {
     void startOutput(obs_data_t *settings);
     void stopOutput();
     obs_data_t *createRecordingSettings(obs_data_t *settings);
+    obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi);
-    void reconnectStreamOutput();
+    BranchOutputStreamingContext createSreaming(obs_data_t *settings, size_t index = 0);
+    void startStreamingOutput(size_t index = 0);
+    void reconnectStreamingOutput(size_t index = 0);
     void restartRecordingOutput();
     void loadRecently(obs_data_t *settings);
     void restartOutput();
-    bool connectAttemptingTimedOut();
+    bool connectAttemptingTimedOut(size_t index = 0);
+    bool everyConnectAttemptingsTimedOut();
+    int countEnabledStreamings(obs_data_t *settings);
+    int countAliveStreamings();
+    int countActiveStreamings();
+    bool isStreamingEnabled(obs_data_t *settings, size_t index = 0);
+    bool isRecordingEnabled(obs_data_t *settings);
     void registerHotkey();
 
     // Implemented in plugin-ui.cpp
     void addApplyButton(obs_properties_t *props, const char *propName = "apply");
     void addPluginInfo(obs_properties_t *props);
     void addStreamGroup(obs_properties_t *props);
+    void addServices(obs_properties_t *props);
+    void createServiceProperties(obs_properties_t *props, size_t index, bool visible = true);
     void createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible = true);
     void addAudioGroup(obs_properties_t *props);
     void addAudioEncoderGroup(obs_properties_t *props);

@@ -28,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "plugin-support.h"
 #include "plugin-main.hpp"
 
+
 inline bool encoderAvailable(const char *encoder)
 {
     const char *val;
@@ -268,7 +269,7 @@ void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char *pro
     obs_properties_add_button2(
         props, propName, obs_module_text("Apply"),
         [](obs_properties_t *, obs_property_t *, void *param) {
-            auto filter = (BranchOutputFilter *)param;
+            auto filter = static_cast<BranchOutputFilter *>(param);
 
             // Force filter activation
             filter->initialized = true;
@@ -296,28 +297,116 @@ void BranchOutputFilter::addPluginInfo(obs_properties_t *props)
     bfree(plugin_info_text);
 }
 
-void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
+// index 0: No prefix on prop names (for compatibility)
+// index 1~: "service_x." prefix on prop names
+void BranchOutputFilter::createServiceProperties(obs_properties_t *props, size_t index, bool visible)
 {
-    auto streamGroup = obs_properties_create();
-    obs_properties_add_text(streamGroup, "server", obs_module_text("Server"), OBS_TEXT_DEFAULT);
-    obs_properties_add_text(streamGroup, "key", obs_module_text("Key"), OBS_TEXT_PASSWORD);
+    QString propNameFormat = getIndexedPropNameFormat(index);
 
-    auto useAuth = obs_properties_add_bool(streamGroup, "use_auth", obs_module_text("UseAuthentication"));
-    auto username = obs_properties_add_text(streamGroup, "username", obs_module_text("Username"), OBS_TEXT_DEFAULT);
+    // Add gap line
+    obs_properties_add_text(props, qUtf8Printable(propNameFormat.arg("service_group")), "", OBS_TEXT_INFO);
+
+    obs_properties_add_text(
+        props, qUtf8Printable(propNameFormat.arg("server")), qUtf8Printable(QTStr("Server%1").arg(index + 1)),
+        OBS_TEXT_DEFAULT
+    );
+    obs_properties_add_text(props, qUtf8Printable(propNameFormat.arg("key")), obs_module_text("Key"), OBS_TEXT_PASSWORD);
+
+    auto useAuth = obs_properties_add_bool(
+        props, qUtf8Printable(propNameFormat.arg("use_auth")), obs_module_text("UseAuthentication")
+    );
+    auto username = obs_properties_add_text(
+        props, qUtf8Printable(propNameFormat.arg("username")), obs_module_text("Username"), OBS_TEXT_DEFAULT
+    );
     obs_property_set_visible(username, false);
-    auto password = obs_properties_add_text(streamGroup, "password", obs_module_text("Password"), OBS_TEXT_PASSWORD);
+    auto password = obs_properties_add_text(
+        props, qUtf8Printable(propNameFormat.arg("password")), obs_module_text("Password"), OBS_TEXT_PASSWORD
+    );
     obs_property_set_visible(password, false);
 
     obs_property_set_modified_callback2(
         useAuth,
-        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto _useAuth = obs_data_get_bool(settings, "use_auth");
-            obs_property_set_visible(obs_properties_get(_props, "username"), _useAuth);
-            obs_property_set_visible(obs_properties_get(_props, "password"), _useAuth);
+        [](void *, obs_properties_t *_props, obs_property_t *_prop, obs_data_t *settings) {
+            size_t _index = 0;
+            auto useAuthPropName = obs_property_name(_prop);
+            sscanf(useAuthPropName, "use_auth_%zu", &_index);
+
+            auto _useAuth = obs_data_get_bool(settings, useAuthPropName);
+            auto count = (size_t)obs_data_get_int(settings, "service_count");
+
+            QString _propNameFormat = getIndexedPropNameFormat(_index);
+            obs_property_set_visible(
+                obs_properties_get(_props, qUtf8Printable(_propNameFormat.arg("username"))), _useAuth && _index < count
+            );
+            obs_property_set_visible(
+                obs_properties_get(_props, qUtf8Printable(_propNameFormat.arg("password"))), _useAuth && _index < count
+            );
             return true;
         },
         nullptr
     );
+}
+
+void BranchOutputFilter::addServices(obs_properties_t *props)
+{
+    auto serviceCountList = obs_properties_add_list(
+        props, "service_count", obs_module_text("ServiceCount"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT
+    );
+
+    for (int n = 1; n <= MAX_SERVICES; n++) {
+        obs_property_list_add_int(serviceCountList, qUtf8Printable(QString("%1").arg(n)), n);
+    }
+
+    createServiceProperties(props, 0);
+    for (size_t i = 1; i < MAX_SERVICES; i++) {
+        createServiceProperties(props, i, false);
+    }
+
+    obs_property_set_modified_callback2(
+        serviceCountList,
+        [](void *param, obs_properties_t *_props, obs_property_t *_audioSourceList, obs_data_t *settings) {
+            auto filter = static_cast<BranchOutputFilter *>(param);
+            auto count = obs_data_get_int(settings, "service_count");
+
+            for (int i = 0; i < MAX_SERVICES; i++) {
+                QString propNameFormat = getIndexedPropNameFormat(i);
+                auto useAuth = obs_data_get_bool(settings, qUtf8Printable(propNameFormat.arg("use_auth")));
+
+                obs_property_set_visible(
+                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("service_group"))), i < count
+                );
+                obs_property_set_visible(
+                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("server"))), i < count
+                );
+                obs_property_set_visible(
+                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("key"))), i < count
+                );
+                obs_property_set_visible(
+                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("use_auth"))), i < count
+                );
+                obs_property_set_visible(
+                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("username"))), useAuth && i < count
+                );
+                obs_property_set_visible(
+                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("password"))), useAuth && i < count
+                );
+            }
+
+            return true;
+        },
+        this
+    );
+}
+
+void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
+{
+    auto streamGroup = obs_properties_create();
+
+    // Add multi services properties
+    addServices(streamGroup);
+
+    // Add gap line
+    auto gap = obs_properties_add_text(streamGroup, "stream_recording_group", "", OBS_TEXT_INFO);
 
     auto streamRecording = obs_properties_add_bool(streamGroup, "stream_recording", obs_module_text("StreamRecording"));
 
@@ -374,18 +463,18 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
 
 void BranchOutputFilter::createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible)
 {
-    char audioSourceListName[15] = "audio_source_1";
-    setAudioSourceListName(audioSourceListName, 15, track);
+    auto propNameFormat = getIndexedPropNameFormat(track, 1);
 
-    char audioTrackListName[14] = "audio_track_1";
-    setAudioTrackListName(audioTrackListName, 14, track);
-
-    char audioDestListName[13] = "audio_dest_1";
-    setAudioDestListName(audioDestListName, 13, track);
+    if (track > 1) {
+        // Add gap line (Except track 1)
+        obs_properties_add_text(
+            audioGroup, qUtf8Printable(propNameFormat.arg("multitrack_audio_group")), "", OBS_TEXT_INFO
+        );
+    }
 
     auto audioSourceList = obs_properties_add_list(
-        audioGroup, qPrintable(audioSourceListName), qUtf8Printable(QTStr("TrackSource%1").arg(track)),
-        OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+        audioGroup, qUtf8Printable(propNameFormat.arg("audio_source")),
+        qUtf8Printable(QTStr("TrackSource%1").arg(track)), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
     );
     obs_property_set_visible(audioSourceList, visible);
 
@@ -414,17 +503,17 @@ void BranchOutputFilter::createAudioTrackProperties(obs_properties_t *audioGroup
             auto _audioSourceListName = obs_property_name(_audioSourceList);
             sscanf(_audioSourceListName, "audio_source_%zu", &_track);
 
-            char _audioTrackListName[14] = "audio_track_1";
-            setAudioTrackListName(_audioTrackListName, 14, _track);
-
-            char _audioDestListName[13] = "audio_dest_1";
-            setAudioDestListName(_audioDestListName, 13, _track);
+            auto _propNameFormat = getIndexedPropNameFormat(_track, 1);
 
             auto audioSource = obs_data_get_string(settings, _audioSourceListName);
             obs_property_set_enabled(
-                obs_properties_get(_props, _audioTrackListName), !strcmp(audioSource, "master_track")
+                obs_properties_get(_props, qUtf8Printable(_propNameFormat.arg("audio_track"))),
+                !strcmp(audioSource, "master_track")
             );
-            obs_property_set_enabled(obs_properties_get(_props, _audioDestListName), !!strcmp(audioSource, "disabled"));
+            obs_property_set_enabled(
+                obs_properties_get(_props, qUtf8Printable(_propNameFormat.arg("audio_dest"))),
+                !!strcmp(audioSource, "disabled")
+            );
 
             return true;
         },
@@ -432,7 +521,8 @@ void BranchOutputFilter::createAudioTrackProperties(obs_properties_t *audioGroup
     );
 
     auto audioTrackList = obs_properties_add_list(
-        audioGroup, qPrintable(audioTrackListName), obs_module_text("Track"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT
+        audioGroup, qUtf8Printable(propNameFormat.arg("audio_track")), obs_module_text("Track"), OBS_COMBO_TYPE_LIST,
+        OBS_COMBO_FORMAT_INT
     );
     for (int i = 1; i <= MAX_AUDIO_MIXES; i++) {
         char trackNo[] = "Track1";
@@ -443,7 +533,8 @@ void BranchOutputFilter::createAudioTrackProperties(obs_properties_t *audioGroup
     obs_property_set_visible(audioTrackList, visible);
 
     auto audioDestList = obs_properties_add_list(
-        audioGroup, audioDestListName, obs_module_text("AudioDestination"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+        audioGroup, qUtf8Printable(propNameFormat.arg("audio_dest")), obs_module_text("AudioDestination"),
+        OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
     );
     obs_property_list_add_string(audioDestList, obs_module_text("StreamingAndRecording"), "both");
     obs_property_list_add_string(audioDestList, obs_module_text("Streaming"), "streaming");
@@ -469,21 +560,24 @@ void BranchOutputFilter::addAudioGroup(obs_properties_t *props)
             auto _multitrackAudio = obs_data_get_bool(settings, "multitrack_audio");
 
             for (size_t track = 1; track <= MAX_AUDIO_MIXES; track++) {
+                auto propNameFormat = getIndexedPropNameFormat(track, 1);
+
                 if (track > 1) {
-                    char audioSourceListName[15] = "audio_source_1";
-                    setAudioSourceListName(audioSourceListName, 15, track);
-
-                    char audioTrackListName[14] = "audio_track_1";
-                    setAudioTrackListName(audioTrackListName, 14, track);
-
-                    obs_property_set_visible(obs_properties_get(_props, audioSourceListName), _multitrackAudio);
-                    obs_property_set_visible(obs_properties_get(_props, audioTrackListName), _multitrackAudio);
+                    obs_property_set_visible(
+                        obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("multitrack_audio_group"))),
+                        _multitrackAudio
+                    );
+                    obs_property_set_visible(
+                        obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("audio_source"))), _multitrackAudio
+                    );
+                    obs_property_set_visible(
+                        obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("audio_track"))), _multitrackAudio
+                    );
                 }
 
-                char audioDestListName[13] = "audio_dest_1";
-                setAudioDestListName(audioDestListName, 13, track);
-
-                obs_property_set_visible(obs_properties_get(_props, audioDestListName), _multitrackAudio);
+                obs_property_set_visible(
+                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("audio_dest"))), _multitrackAudio
+                );
             }
 
             return true;
@@ -532,7 +626,7 @@ void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
     obs_property_set_modified_callback2(
         audioEncoderList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto filter = (BranchOutputFilter *)param;
+            auto filter = static_cast<BranchOutputFilter *>(param);
             obs_log(LOG_DEBUG, "%s: Audio encoder chainging.", qUtf8Printable(filter->name));
 
             const auto encoder_id = obs_data_get_string(settings, "audio_encoder");
@@ -674,7 +768,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_set_modified_callback2(
         videoEncoderList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto filter = (BranchOutputFilter *)param;
+            auto filter = static_cast<BranchOutputFilter *>(param);
             obs_log(LOG_DEBUG, "%s: Video encoder chainging.", qUtf8Printable(filter->name));
 
             auto _videoEncoderGroup = obs_property_group_content(obs_properties_get(_props, "video_encoder_group"));
