@@ -144,7 +144,7 @@ class OutputTableRow : public QObject {
     QLabel *droppedFrames;
     QLabel *megabytesSent;
     QLabel *bitrate;
-    QLabel *output;
+    QLabel *outputName;
 
     uint64_t lastBytesSent = 0;
     uint64_t lastBytesSentTime = 0;

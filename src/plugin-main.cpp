@@ -874,7 +874,7 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
             obs_data_erase(recently_settings, qUtf8Printable(propNameFormat.arg("username")));
             obs_data_erase(recently_settings, qUtf8Printable(propNameFormat.arg("password")));
         }
-        
+
         obs_data_erase(recently_settings, "stream_recording");
         obs_data_erase(recently_settings, "custom_audio_source");
         obs_data_erase(recently_settings, "multitrack_audio");
@@ -968,7 +968,6 @@ bool BranchOutputFilter::isRecordingEnabled(obs_data_t *settings)
 {
     return obs_data_get_bool(settings, "stream_recording");
 }
-
 
 // Controlling output status here.
 // Start / Stop should only heppen in this function as possible because rapid manipulation caused crash easily.

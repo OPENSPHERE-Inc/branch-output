@@ -28,7 +28,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "plugin-support.h"
 #include "plugin-main.hpp"
 
-
 inline bool encoderAvailable(const char *encoder)
 {
     const char *val;
@@ -304,21 +303,30 @@ void BranchOutputFilter::createServiceProperties(obs_properties_t *props, size_t
     QString propNameFormat = getIndexedPropNameFormat(index);
 
     // Add gap line
-    obs_properties_add_text(props, qUtf8Printable(propNameFormat.arg("service_group")), "", OBS_TEXT_INFO);
+    auto gap = obs_properties_add_text(props, qUtf8Printable(propNameFormat.arg("service_group")), "", OBS_TEXT_INFO);
+    obs_property_set_visible(gap, visible);
 
-    obs_properties_add_text(
+    auto server = obs_properties_add_text(
         props, qUtf8Printable(propNameFormat.arg("server")), qUtf8Printable(QTStr("Server%1").arg(index + 1)),
         OBS_TEXT_DEFAULT
     );
-    obs_properties_add_text(props, qUtf8Printable(propNameFormat.arg("key")), obs_module_text("Key"), OBS_TEXT_PASSWORD);
+    obs_property_set_visible(server, visible);
+
+    auto key = obs_properties_add_text(
+        props, qUtf8Printable(propNameFormat.arg("key")), obs_module_text("Key"), OBS_TEXT_PASSWORD
+    );
+    obs_property_set_visible(key, visible);
 
     auto useAuth = obs_properties_add_bool(
         props, qUtf8Printable(propNameFormat.arg("use_auth")), obs_module_text("UseAuthentication")
     );
+    obs_property_set_visible(useAuth, visible);
+
     auto username = obs_properties_add_text(
         props, qUtf8Printable(propNameFormat.arg("username")), obs_module_text("Username"), OBS_TEXT_DEFAULT
     );
     obs_property_set_visible(username, false);
+
     auto password = obs_properties_add_text(
         props, qUtf8Printable(propNameFormat.arg("password")), obs_module_text("Password"), OBS_TEXT_PASSWORD
     );
@@ -364,8 +372,7 @@ void BranchOutputFilter::addServices(obs_properties_t *props)
 
     obs_property_set_modified_callback2(
         serviceCountList,
-        [](void *param, obs_properties_t *_props, obs_property_t *_audioSourceList, obs_data_t *settings) {
-            auto filter = static_cast<BranchOutputFilter *>(param);
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
             auto count = obs_data_get_int(settings, "service_count");
 
             for (int i = 0; i < MAX_SERVICES; i++) {
@@ -394,7 +401,7 @@ void BranchOutputFilter::addServices(obs_properties_t *props)
 
             return true;
         },
-        this
+        nullptr
     );
 }
 
@@ -406,7 +413,7 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     addServices(streamGroup);
 
     // Add gap line
-    auto gap = obs_properties_add_text(streamGroup, "stream_recording_group", "", OBS_TEXT_INFO);
+    obs_properties_add_text(streamGroup, "stream_recording_group", "", OBS_TEXT_INFO);
 
     auto streamRecording = obs_properties_add_bool(streamGroup, "stream_recording", obs_module_text("StreamRecording"));
 

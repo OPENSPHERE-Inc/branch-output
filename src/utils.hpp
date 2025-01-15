@@ -145,5 +145,5 @@ inline void loadHotkey(obs_hotkey_id id, const char *name)
 
 inline QString getIndexedPropNameFormat(size_t index, size_t base = 0)
 {
-    return index == base ? QString("%1") : QString("%%1_%1").arg(index);   
+    return index == base ? QString("%1") : QString("%%1_%1").arg(index);
 }

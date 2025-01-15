@@ -193,7 +193,7 @@ void BranchOutputStatusDock::addRow(BranchOutputFilter *filter, size_t streaming
     otr->filter = filter;
     otr->filterCell = new FilterCell(filter->name, filter->filterSource, this);
     otr->parentCell = new ParentCell(obs_source_get_name(parent), parent, this);
-    otr->output = new QLabel(recording ? QTStr("Recording") : QTStr("Streaming%1").arg(streamingIndex + 1), this);
+    otr->outputName = new QLabel(recording ? QTStr("Recording") : QTStr("Streaming%1").arg(streamingIndex + 1), this);
     otr->status = new StatusCell(QTStr("Status.Inactive"), this);
     if (recording) {
         otr->status->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
@@ -211,7 +211,7 @@ void BranchOutputStatusDock::addRow(BranchOutputFilter *filter, size_t streaming
     outputTable->setRowCount(row + 1);
     outputTable->setCellWidget(row, col++, otr->filterCell);
     outputTable->setCellWidget(row, col++, otr->parentCell);
-    outputTable->setCellWidget(row, col++, otr->output);
+    outputTable->setCellWidget(row, col++, otr->outputName);
     outputTable->setCellWidget(row, col++, otr->status);
     outputTable->setCellWidget(row, col++, otr->droppedFrames);
     outputTable->setCellWidget(row, col++, otr->megabytesSent);
@@ -265,7 +265,7 @@ void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
     // DO NOT access filter resources at this time (It may be already deleted)
     foreach (auto row, outputTableRows) {
         if (row->filter == filter) {
-            outputTable->removeRow(outputTableRows.indexOf(row));
+            outputTable->removeRow((int)outputTableRows.indexOf(row));
             outputTableRows.removeOne(row);
             row->deleteLater();
         }
@@ -329,9 +329,9 @@ OutputTableRow::~OutputTableRow() {}
 // Imitate UI/window-basic-stats.cpp
 void OutputTableRow::update()
 {
-    auto output = recording              ? filter->recordingOutput.Get()
+    auto output = recording                       ? filter->recordingOutput.Get()
                   : streamingIndex < MAX_SERVICES ? filter->streamings[streamingIndex].output.Get()
-                                         : nullptr;
+                                                  : nullptr;
     uint64_t totalBytes = output ? obs_output_get_total_bytes(output) : 0;
     uint64_t curTime = os_gettime_ns();
     uint64_t bytesSent = totalBytes;
@@ -424,9 +424,9 @@ void OutputTableRow::update()
 
 void OutputTableRow::reset()
 {
-    auto output = recording              ? filter->recordingOutput.Get()
+    auto output = recording                       ? filter->recordingOutput.Get()
                   : streamingIndex < MAX_SERVICES ? filter->streamings[streamingIndex].output.Get()
-                                         : nullptr;
+                                                  : nullptr;
     if (!output) {
         return;
     }
