@@ -2,15 +2,18 @@
 
 [日本語はこちら](./README_ja.md)
 
+> ## Sponsor program benefits
+> 
+> We'll upload pre-release builds on private repository for GitHub sponser subscribers. 
+> If you would like to help our projects, please support us.
+>
+> [<img src="https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86" />](https://github.com/sponsors/OPENSPHERE-Inc)
+>
+> (*) Still everyone can access to source code of latest version.
+
 [<img src="./screenshot1.jpg" />](./screenshot1.jpg)
 
 [<img src="./screenshot2.jpg" />](./screenshot2.jpg)
-
-## Sponsor program
-
-We launched a GitHub sponser program. If you would like to help, please support us.
-
-[<img src="https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86" />](https://github.com/sponsors/OPENSPHERE-Inc)
 
 ## Features
 
