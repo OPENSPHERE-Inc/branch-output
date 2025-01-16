@@ -122,33 +122,6 @@ inline bool sourceIsPrivate(obs_source_t *source)
     return finder != nullptr;
 }
 
-inline void setAudioSourceListName(char *name, size_t len, size_t track)
-{
-    if (track > 1) {
-        snprintf(name, len, "audio_source_%zu", track % 10);
-    } else {
-        snprintf(name, len, "audio_source");
-    }
-}
-
-inline void setAudioTrackListName(char *name, size_t len, size_t track)
-{
-    if (track > 1) {
-        snprintf(name, len, "audio_track_%zu", track % 10);
-    } else {
-        snprintf(name, len, "audio_track");
-    }
-}
-
-inline void setAudioDestListName(char *name, size_t len, size_t track)
-{
-    if (track > 1) {
-        snprintf(name, len, "audio_dest_%zu", track % 10);
-    } else {
-        snprintf(name, len, "audio_dest");
-    }
-}
-
 // Return value must be obs_data_release() after use
 inline obs_data_t *loadHotkeyData(const char *name)
 {
@@ -168,4 +141,9 @@ inline void loadHotkey(obs_hotkey_id id, const char *name)
         OBSDataArrayAutoRelease array = obs_data_get_array(data, "bindings");
         obs_hotkey_load(id, array);
     }
+}
+
+inline QString getIndexedPropNameFormat(size_t index, size_t base = 0)
+{
+    return index == base ? QString("%1") : QString("%%1_%1").arg(index);
 }

@@ -121,9 +121,9 @@ public:
     ~BranchOutputStatusDock();
 
 public slots:
+    void addRow(BranchOutputFilter *filter, size_t streamingIndex, bool recording = false, size_t groupIndex = 0);
     void addFilter(BranchOutputFilter *filter);
     void removeFilter(BranchOutputFilter *filter);
-    BranchOutputFilter *findFilter(const QString &parentName, const QString &filterName);
     void setEabnleAll(bool enabled);
 
     inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
@@ -138,10 +138,13 @@ class OutputTableRow : public QObject {
     FilterCell *filterCell;
     ParentCell *parentCell;
     StatusCell *status;
-    StatusCell *recording;
+    bool recording;
+    size_t streamingIndex;
+    size_t groupIndex;
     QLabel *droppedFrames;
     QLabel *megabytesSent;
     QLabel *bitrate;
+    QLabel *outputName;
 
     uint64_t lastBytesSent = 0;
     uint64_t lastBytesSentTime = 0;
