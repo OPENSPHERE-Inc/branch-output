@@ -89,6 +89,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     interlockComboBox = new QComboBox(this);
     interlockComboBox->addItem(QTStr("AlwaysOn"), BranchOutputFilter::INTERLOCK_TYPE_ALWAYS_ON);
     interlockComboBox->addItem(QTStr("Streaming"), BranchOutputFilter::INTERLOCK_TYPE_STREAMING);
+    interlockComboBox->addItem(QTStr("Recording"), BranchOutputFilter::INTERLOCK_TYPE_RECORDING);
     interlockComboBox->addItem(QTStr("StreamingOrRecording"), BranchOutputFilter::INTERLOCK_TYPE_STREAMING_RECORDING);
     interlockComboBox->addItem(QTStr("VirtualCam"), BranchOutputFilter::INTERLOCK_TYPE_VIRTUAL_CAM);
 
