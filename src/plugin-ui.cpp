@@ -637,9 +637,8 @@ void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
             obs_log(LOG_DEBUG, "%s: Audio encoder chainging.", qUtf8Printable(filter->name));
 
             const auto encoder_id = obs_data_get_string(settings, "audio_encoder");
-            const auto encoder_props = obs_get_encoder_properties(encoder_id);
+            const OBSProperties encoder_props = obs_get_encoder_properties(encoder_id);
             const auto encoder_bitrate_prop = obs_properties_get(encoder_props, "bitrate");
-            obs_properties_destroy(encoder_props);
 
             auto audio_encoder_group = obs_property_group_content(obs_properties_get(_props, "audio_encoder_group"));
             auto audio_bitrate_prop = obs_properties_get(audio_encoder_group, "audio_bitrate");
