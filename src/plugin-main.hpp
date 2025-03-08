@@ -105,6 +105,7 @@ class BranchOutputFilter : public QObject {
     void startStreamingOutput(size_t index = 0);
     void reconnectStreamingOutput(size_t index = 0);
     void restartRecordingOutput();
+    void loadProfile(obs_data_t *settings);
     void loadRecently(obs_data_t *settings);
     void restartOutput();
     bool connectAttemptingTimedOut(size_t index = 0);

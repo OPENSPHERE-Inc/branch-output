@@ -79,6 +79,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
 
     if (!strcmp(obs_data_get_last_json(settings), "{}")) {
         // Maybe initial creation
+        loadProfile(settings);
         loadRecently(settings);
     }
 
@@ -857,6 +858,54 @@ void BranchOutputFilter::restartRecordingOutput()
             }
         }
     }
+}
+
+void BranchOutputFilter::loadProfile(obs_data_t *settings)
+{
+    obs_log(LOG_DEBUG, "Profile settings loading");
+
+    auto config = obs_frontend_get_profile_config();
+    auto mode = config_get_string(config, "Output", "Mode");
+    bool advancedOut = !strcmp(mode, "Advanced") || !strcmp(mode, "advanced");
+    
+    const char *videoEncoderId;
+    const char *audioEncoderId;
+    uint64_t audioBitrate;
+
+    if (advancedOut) {
+        videoEncoderId = config_get_string(config, "AdvOut", "Encoder");
+        audioEncoderId = config_get_string(config, "AdvOut", "AudioEncoder");
+        audioBitrate = config_get_uint(config, "AdvOut", "FFABitrate");
+
+        OBSString profilePath = obs_frontend_get_current_profile_path();
+        auto encoderJsonPath = QString("%1/%2").arg(QString(profilePath)).arg("streamEncoder.json");
+        OBSDataAutoRelease encoderSettings = obs_data_create_from_json_file(qUtf8Printable(encoderJsonPath));
+
+        if (encoderSettings) {
+            // Include video bitrate
+            obs_data_apply(settings, encoderSettings);
+        }
+
+    } else {
+        videoEncoderId = getSimpleVideoEncoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
+        audioEncoderId = getSimpleAudioEncoder(config_get_string(config, "SimpleOutput", "StreamAudioEncoder"));
+        audioBitrate = config_get_uint(config, "SimpleOutput", "ABitrate");
+
+        auto videoBitrate = config_get_uint(config, "SimpleOutput", "VBitrate");
+        obs_data_set_int(settings, "bitrate", videoBitrate);
+
+        auto preset = config_get_string(config, "SimpleOutput", "Preset");
+        obs_data_set_string(settings, "preset", preset);
+
+        auto preset2 = config_get_string(config, "SimpleOutput", "NVENCPreset2");
+        obs_data_set_string(settings, "preset2", preset2);
+    }
+
+    obs_data_set_string(settings, "audio_encoder", audioEncoderId);
+    obs_data_set_string(settings, "video_encoder", videoEncoderId);
+    obs_data_set_int(settings, "audio_bitrate", audioBitrate);
+
+    obs_log(LOG_INFO, "Profile settings loaded");
 }
 
 void BranchOutputFilter::loadRecently(obs_data_t *settings)
