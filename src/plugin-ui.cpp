@@ -336,7 +336,7 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
         streamGroup, "use_profile_recording_settings", obs_module_text("UseProfileRecordingSettings")
     );
 
-    auto useProfileSettingsChangeHandler = [](void *param, obs_properties_t *_props, obs_property_t *,
+    auto useProfileSettingsChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *,
                                               obs_data_t *settings) {
         auto _useProfileSettings = obs_data_get_bool(settings, "use_profile_recording_settings");
         obs_property_set_enabled(obs_properties_get(_props, "path"), !_useProfileSettings);

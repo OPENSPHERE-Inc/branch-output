@@ -233,8 +233,6 @@ inline bool isAdvancedMode(config_t *config = obs_frontend_get_profile_config())
 // Return value must be obs_data_release() after use
 inline obs_data_t *getProfileRecordingSettings(config_t *config = obs_frontend_get_profile_config())
 {
-    bool advancedOut = isAdvancedMode(config);
-
     obs_data_t *settings = obs_data_create();
 
     const char *recFormat;
