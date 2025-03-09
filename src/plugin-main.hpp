@@ -98,13 +98,14 @@ class BranchOutputFilter : public QObject {
 
     void startOutput(obs_data_t *settings);
     void stopOutput();
-    obs_data_t *createRecordingSettings(obs_data_t *settings);
+    obs_data_t *createRecordingSettings(obs_data_t *settings, bool createFolder = false);
     obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi);
     BranchOutputStreamingContext createSreaming(obs_data_t *settings, size_t index = 0);
     void startStreamingOutput(size_t index = 0);
     void reconnectStreamingOutput(size_t index = 0);
     void restartRecordingOutput();
+    void loadProfile(obs_data_t *settings);
     void loadRecently(obs_data_t *settings);
     void restartOutput();
     bool connectAttemptingTimedOut(size_t index = 0);

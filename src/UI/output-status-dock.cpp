@@ -184,7 +184,9 @@ void BranchOutputStatusDock::saveSettings()
     obs_data_save_json_safe(settings, path, "tmp", "bak");
 }
 
-void BranchOutputStatusDock::addRow(BranchOutputFilter *filter, size_t streamingIndex, bool recording, size_t groupIndex)
+void BranchOutputStatusDock::addRow(
+    BranchOutputFilter *filter, size_t streamingIndex, RowOutputType outputType, size_t groupIndex
+)
 {
     auto parent = obs_filter_get_parent(filter->filterSource);
     auto row = (int)outputTableRows.size();
@@ -194,15 +196,24 @@ void BranchOutputStatusDock::addRow(BranchOutputFilter *filter, size_t streaming
     otr->filter = filter;
     otr->filterCell = new FilterCell(filter->name, filter->filterSource, this);
     otr->parentCell = new ParentCell(obs_source_get_name(parent), parent, this);
-    otr->outputName = new QLabel(recording ? QTStr("Recording") : QTStr("Streaming%1").arg(streamingIndex + 1), this);
     otr->status = new StatusCell(QTStr("Status.Inactive"), this);
-    if (recording) {
-        otr->status->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
-    } else {
+
+    switch (outputType) {
+    case ROW_OUTPUT_STREAMING:
+        otr->outputName = new QLabel(QTStr("Streaming%1").arg(streamingIndex + 1), this);
         otr->status->setIcon(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
+        break;
+    case ROW_OUTPUT_RECORDING:
+        otr->outputName = new QLabel(QTStr("Recording"), this);
+        otr->status->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
+        break;
+    default:
+        otr->outputName = new QLabel(QTStr("None"), this);
+        otr->status->setIcon(QPixmap());
     }
+
     otr->streamingIndex = streamingIndex;
-    otr->recording = recording;
+    otr->outputType = outputType;
     otr->groupIndex = groupIndex;
     otr->droppedFrames = new QLabel("", this);
     otr->megabytesSent = new QLabel("", this);
@@ -249,15 +260,20 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 
     // Recording row
     if (filter->isRecordingEnabled(settings)) {
-        addRow(filter, 0, true, groupIndex++);
+        addRow(filter, 0, ROW_OUTPUT_RECORDING, groupIndex++);
     }
 
     // Streaming rows
     auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
     for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
         if (filter->isStreamingEnabled(settings, i)) {
-            addRow(filter, i, false, groupIndex++);
+            addRow(filter, i, ROW_OUTPUT_STREAMING, groupIndex++);
         }
+    }
+
+    if (groupIndex == 0) {
+        // Add disabled row
+        addRow(filter, 0, ROW_OUTPUT_NONE, groupIndex++);
     }
 }
 
@@ -330,10 +346,63 @@ OutputTableRow::~OutputTableRow() {}
 // Imitate UI/window-basic-stats.cpp
 void OutputTableRow::update()
 {
-    auto output = recording                       ? filter->recordingOutput.Get()
-                  : streamingIndex < MAX_SERVICES ? filter->streamings[streamingIndex].output.Get()
-                                                  : nullptr;
-    uint64_t totalBytes = output ? obs_output_get_total_bytes(output) : 0;
+    obs_output_t *output;
+
+    switch (outputType) {
+    case ROW_OUTPUT_STREAMING:
+        output = filter->streamings[streamingIndex].output.Get();
+        break;
+    case ROW_OUTPUT_RECORDING:
+        output = filter->recordingOutput.Get();
+        break;
+    default:
+        output = nullptr;
+        break;
+    }
+
+    // Status display
+    if (output) {
+        bool reconnecting;
+
+        switch (outputType) {
+        case ROW_OUTPUT_STREAMING:
+            reconnecting = output ? !obs_output_active(output) || obs_output_reconnecting(output) : false;
+            break;
+        default:
+            reconnecting = false;
+            break;
+        }
+
+        if (reconnecting) {
+            status->setText(QTStr("Status.Reconnecting"));
+            status->setTheme("error", "text-danger");
+            status->setIconShow(false);
+        } else {
+            switch (outputType) {
+            case ROW_OUTPUT_STREAMING:
+                status->setText(QTStr("Status.Streaming"));
+                break;
+            case ROW_OUTPUT_RECORDING:
+                status->setText(QTStr("Status.Recording"));
+                break;
+            default:
+                status->setText(QTStr("Status.Inactive"));
+            }
+
+            status->setTheme("good", "text-success");
+            status->setIconShow(true);
+        }
+    } else {
+        status->setText(QTStr("Status.Inactive"));
+        status->setTheme("", "");
+        status->setIconShow(false);
+        droppedFrames->setText("");
+        megabytesSent->setText("");
+        bitrate->setText("");
+        return;
+    }
+
+    uint64_t totalBytes = obs_output_get_total_bytes(output);
     uint64_t curTime = os_gettime_ns();
     uint64_t bytesSent = totalBytes;
 
@@ -352,37 +421,13 @@ void OutputTableRow::update()
         kbps = 0.0l;
     }
 
-    // Status display
-    if (output) {
-        bool reconnecting = !recording && output ? !obs_output_active(output) || obs_output_reconnecting(output)
-                                                 : false;
-
-        if (reconnecting) {
-            status->setText(QTStr("Status.Reconnecting"));
-            status->setTheme("error", "text-danger");
-            status->setIconShow(false);
-        } else {
-            if (recording) {
-                status->setText(QTStr("Status.Recording"));
-            } else {
-                status->setText(QTStr("Status.Live"));
-            }
-            status->setTheme("good", "text-success");
-            status->setIconShow(true);
-        }
-    } else {
-        status->setText(QTStr("Status.Inactive"));
-        status->setTheme("", "");
-        status->setIconShow(false);
-    }
-
     long double num = (long double)totalBytes / (1024.0l * 1024.0l);
     const char *unit = "MiB";
     if (num > 1024) {
         num /= 1024;
         unit = "GiB";
     }
-    megabytesSent->setText(QString("%1 %2").arg((double)num, 0, 'f', 1).arg(unit));
+    megabytesSent->setText(outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 1).arg(unit) : "");
 
     num = kbps;
     unit = "kb/s";
@@ -390,7 +435,7 @@ void OutputTableRow::update()
         num /= 1000;
         unit = "Mb/s";
     }
-    bitrate->setText(QString("%1 %2").arg((double)num, 0, 'f', 0).arg(unit));
+    bitrate->setText(outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 0).arg(unit) : "");
 
     // Calculate statistics
     int total = output ? obs_output_get_total_frames(output) : 0;
@@ -409,7 +454,7 @@ void OutputTableRow::update()
     QString dropFramesStr =
         QString("%1 / %2 (%3%)")
             .arg(QString::number(dropped), QString::number(total), QString::number((double)num, 'f', 1));
-    droppedFrames->setText(dropFramesStr);
+    droppedFrames->setText(outputType != ROW_OUTPUT_NONE ? dropFramesStr : "");
 
     if (num > 5.0l) {
         setThemeID(droppedFrames, "error", "text-danger");
@@ -425,10 +470,23 @@ void OutputTableRow::update()
 
 void OutputTableRow::reset()
 {
-    auto output = recording                       ? filter->recordingOutput.Get()
-                  : streamingIndex < MAX_SERVICES ? filter->streamings[streamingIndex].output.Get()
-                                                  : nullptr;
+    obs_output_t *output;
+
+    switch (outputType) {
+    case ROW_OUTPUT_STREAMING:
+        output = streamingIndex < MAX_SERVICES ? filter->streamings[streamingIndex].output.Get() : nullptr;
+        break;
+    case ROW_OUTPUT_RECORDING:
+        output = filter->recordingOutput.Get();
+        break;
+    default:
+        output = nullptr;
+    }
+
     if (!output) {
+        droppedFrames->setText("");
+        megabytesSent->setText("");
+        bitrate->setText("");
         return;
     }
 

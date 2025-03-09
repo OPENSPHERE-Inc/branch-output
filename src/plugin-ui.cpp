@@ -28,20 +28,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "plugin-support.h"
 #include "plugin-main.hpp"
 
-inline bool encoderAvailable(const char *encoder)
-{
-    const char *val;
-    int i = 0;
-
-    while (obs_enum_encoder_types(i++, &val)) {
-        if (strcmp(val, encoder) == 0) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 inline void applyDefaults(obs_data_t *dest, obs_data_t *src)
 {
     for (auto item = obs_data_first(src); item; obs_data_item_next(&item)) {
@@ -78,67 +64,6 @@ inline void applyDefaults(obs_data_t *dest, obs_data_t *src)
             break;
         }
     }
-}
-
-// Hardcoded in obs-studio/UI/window-basic-main-outputs.cpp
-inline const char *getSimpleAudioEncoder(const char *encoder)
-{
-    if (strcmp(encoder, "opus")) {
-        return "ffmpeg_opus";
-    } else {
-        return "ffmpeg_aac";
-    }
-}
-
-// Hardcoded in obs-studio/UI/window-basic-main.hpp
-#define SIMPLE_ENCODER_X264 "x264"
-#define SIMPLE_ENCODER_X264_LOWCPU "x264_lowcpu"
-#define SIMPLE_ENCODER_QSV "qsv"
-#define SIMPLE_ENCODER_QSV_AV1 "qsv_av1"
-#define SIMPLE_ENCODER_NVENC "nvenc"
-#define SIMPLE_ENCODER_NVENC_AV1 "nvenc_av1"
-#define SIMPLE_ENCODER_NVENC_HEVC "nvenc_hevc"
-#define SIMPLE_ENCODER_AMD "amd"
-#define SIMPLE_ENCODER_AMD_HEVC "amd_hevc"
-#define SIMPLE_ENCODER_AMD_AV1 "amd_av1"
-#define SIMPLE_ENCODER_APPLE_H264 "apple_h264"
-#define SIMPLE_ENCODER_APPLE_HEVC "apple_hevc"
-
-// Hardcoded in obs-studio/UI/window-basic-main-outputs.cpp
-inline const char *getSimpleVideoEncoder(const char *encoder)
-{
-    if (!strcmp(encoder, SIMPLE_ENCODER_X264)) {
-        return "obs_x264";
-    } else if (!strcmp(encoder, SIMPLE_ENCODER_X264_LOWCPU)) {
-        return "obs_x264";
-    } else if (!strcmp(encoder, SIMPLE_ENCODER_QSV)) {
-        return "obs_qsv11_v2";
-    } else if (!strcmp(encoder, SIMPLE_ENCODER_QSV_AV1)) {
-        return "obs_qsv11_av1";
-    } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD)) {
-        return "h264_texture_amf";
-    } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD_HEVC)) {
-        return "h265_texture_amf";
-    } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD_AV1)) {
-        return "av1_texture_amf";
-    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC)) {
-        return encoderAvailable("obs_nvenc_h264_tex") ? "obs_nvenc_h264_tex" // Since OBS 31
-               : encoderAvailable("jim_nvenc")        ? "jim_nvenc"          // Until OBS 30
-                                                      : "ffmpeg_nvenc";
-    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC_HEVC)) {
-        return encoderAvailable("obs_nvenc_hevc_tex") ? "obs_nvenc_hevc_tex" // Since OBS 31
-               : encoderAvailable("jim_hevc_nvenc")   ? "jim_hevc_nvenc"     // Until OBS 30
-                                                      : "ffmpeg_hevc_nvenc";
-    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC_AV1)) {
-        return encoderAvailable("obs_nvenc_av1_tex") ? "obs_nvenc_av1_tex" // Since OBS 31
-                                                     : "jim_av1_nvenc";    // Until OBS 30
-    } else if (!strcmp(encoder, SIMPLE_ENCODER_APPLE_H264)) {
-        return "com.apple.videotoolbox.videoencoder.ave.avc";
-    } else if (!strcmp(encoder, SIMPLE_ENCODER_APPLE_HEVC)) {
-        return "com.apple.videotoolbox.videoencoder.ave.hevc";
-    }
-
-    return "obs_x264";
 }
 
 // Imitate obs-studio/UI/window-basic-settings.cpp
@@ -183,8 +108,6 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_log(LOG_DEBUG, "Default settings applying.");
 
     auto config = obs_frontend_get_profile_config();
-    auto mode = config_get_string(config, "Output", "Mode");
-    bool advancedOut = !strcmp(mode, "Advanced") || !strcmp(mode, "advanced");
 
     const char *videoEncoderId;
     const char *audioEncoderId;
@@ -194,10 +117,10 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     const char *recSplitFileType = "Time";
     uint64_t recSplitFileTimeMins = 15;
     uint64_t recSplitFileSizeMb = 2048;
-    const char *path;
+    bool fileNameWithoutSpace = true;
 
     // Capture values from OBS settings
-    if (advancedOut) {
+    if (isAdvancedMode(config)) {
         videoEncoderId = config_get_string(config, "AdvOut", "Encoder");
         audioEncoderId = config_get_string(config, "AdvOut", "AudioEncoder");
         audioBitrate = config_get_uint(config, "AdvOut", "FFABitrate");
@@ -205,24 +128,14 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
         recSplitFile = config_get_bool(config, "AdvOut", "RecSplitFile");
         recSplitFileTimeMins = config_get_uint(config, "AdvOut", "RecSplitFileTime");
         recSplitFileSizeMb = config_get_uint(config, "AdvOut", "RecSplitFileSize");
-
-        const char *recType = config_get_string(config, "AdvOut", "RecType");
-        bool ffmpegRecording = !astrcmpi(recType, "ffmpeg") && config_get_bool(config, "AdvOut", "FFOutputToFile");
-        path = config_get_string(config, "AdvOut", ffmpegRecording ? "FFFilePath" : "RecFilePath");
+        fileNameWithoutSpace = config_get_bool(config, "AdvOut", "RecFileNameWithoutSpace");
     } else {
         videoEncoderId = getSimpleVideoEncoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
         audioEncoderId = getSimpleAudioEncoder(config_get_string(config, "SimpleOutput", "StreamAudioEncoder"));
         audioBitrate = config_get_uint(config, "SimpleOutput", "ABitrate");
         recFormat = config_get_string(config, "SimpleOutput", "RecFormat2");
-        path = config_get_string(config, "SimpleOutput", "FilePath");
+        fileNameWithoutSpace = config_get_bool(config, "SimpleOutput", "FileNameWithoutSpace");
     }
-
-    obs_data_set_default_string(defaults, "audio_encoder", audioEncoderId);
-    obs_data_set_default_string(defaults, "video_encoder", videoEncoderId);
-    obs_data_set_default_int(defaults, "audio_bitrate", audioBitrate);
-    obs_data_set_default_bool(defaults, "stream_recording", false);
-    obs_data_set_default_string(defaults, "path", path);
-    obs_data_set_default_string(defaults, "rec_format", recFormat);
 
     const char *splitFileValue = "";
     if (recSplitFile && strcmp(recSplitFileType, "Manual")) {
@@ -234,11 +147,11 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     }
     obs_data_set_default_string(defaults, "split_file", splitFileValue);
 
-    QString filenameFormatting = QString("%1_%2_") + QString(config_get_string(config, "Output", "FilenameFormatting"));
-    obs_data_set_default_string(defaults, "filename_formatting", qUtf8Printable(filenameFormatting));
-
-    obs_data_set_default_int(defaults, "split_file_time_mins", recSplitFileTimeMins);
-    obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
+    obs_data_set_default_string(defaults, "audio_encoder", audioEncoderId);
+    obs_data_set_default_string(defaults, "video_encoder", videoEncoderId);
+    obs_data_set_default_int(defaults, "audio_bitrate", audioBitrate);
+    obs_data_set_default_bool(defaults, "stream_recording", false);
+    obs_data_set_default_bool(defaults, "use_profile_recording_path", false);
     obs_data_set_default_string(defaults, "audio_source", "master_track");
     obs_data_set_default_int(defaults, "audio_track", 1);
     obs_data_set_default_string(defaults, "audio_dest", "both");
@@ -259,6 +172,17 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_string(defaults, "audio_dest_6", "both");
     obs_data_set_default_int(defaults, "custom_width", config_get_int(config, "Video", "OutputCX"));
     obs_data_set_default_int(defaults, "custom_height", config_get_int(config, "Video", "OutputCY"));
+    obs_data_set_default_bool(defaults, "no_space_filename", fileNameWithoutSpace);
+    obs_data_set_default_string(defaults, "rec_format", recFormat);
+    obs_data_set_default_int(defaults, "split_file_time_mins", recSplitFileTimeMins);
+    obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
+
+    auto path = getProfileRecordingPath(config);
+    obs_data_set_default_string(defaults, "path", path);
+
+    // Override filename_formatting
+    auto filenameFormatting = QString("%1 %2 ") + QString(config_get_string(config, "Output", "FilenameFormatting"));
+    obs_data_set_default_string(defaults, "filename_formatting", qUtf8Printable(filenameFormatting));
 
     obs_log(LOG_INFO, "Default settings applied.");
 }
@@ -419,7 +343,9 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
 
     auto streamRecordingChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
         auto _streamRecording = obs_data_get_bool(settings, "stream_recording");
+        obs_property_set_visible(obs_properties_get(_props, "use_profile_recording_path"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "path"), _streamRecording);
+        obs_property_set_visible(obs_properties_get(_props, "no_space_filename"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "filename_formatting"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "rec_format"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "split_file"), _streamRecording);
@@ -433,15 +359,25 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
         );
         return true;
     };
-
     obs_property_set_modified_callback2(streamRecording, streamRecordingChangeHandler, nullptr);
 
     //--- Recording options (initially hidden) ---//
+    auto useProfilePath =
+        obs_properties_add_bool(streamGroup, "use_profile_recording_path", obs_module_text("UseProfileRecordingPath"));
+
+    auto useProfilePathChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+        auto _useProfilePath = obs_data_get_bool(settings, "use_profile_recording_path");
+        obs_property_set_enabled(obs_properties_get(_props, "path"), !_useProfilePath);
+        return true;
+    };
+    obs_property_set_modified_callback2(useProfilePath, useProfilePathChangeHandler, nullptr);
+
     obs_properties_add_path(streamGroup, "path", obs_module_text("Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
     auto filenameFormatting = obs_properties_add_text(
         streamGroup, "filename_formatting", obs_module_text("FilenameFormatting"), OBS_TEXT_DEFAULT
     );
     obs_property_set_long_description(filenameFormatting, qUtf8Printable(makeFormatToolTip()));
+    obs_properties_add_bool(streamGroup, "no_space_filename", obs_module_text("NoSpaceFileName"));
 
     // Only support limited formats
     auto fileFormatList = obs_properties_add_list(

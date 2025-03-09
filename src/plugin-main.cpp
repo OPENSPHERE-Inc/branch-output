@@ -79,7 +79,11 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
 
     if (!strcmp(obs_data_get_last_json(settings), "{}")) {
         // Maybe initial creation
+        loadProfile(settings);
         loadRecently(settings);
+
+        // Assit initial settings
+        obs_data_set_bool(settings, "use_profile_recording_path", true);
     }
 
     // Migrate audio_source schema
@@ -276,13 +280,14 @@ void BranchOutputFilter::stopOutput()
     }
 }
 
-obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings)
+obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bool createFolder)
 {
     auto recordingSettings = obs_data_create();
     auto config = obs_frontend_get_profile_config();
     QString filenameFormat = obs_data_get_string(settings, "filename_formatting");
     if (filenameFormat.isEmpty()) {
-        filenameFormat = QString("%1_%2_") + QString(config_get_string(config, "Output", "FilenameFormatting"));
+        // Fallback to profile if empty
+        filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
     }
 
     // Sanitize filename
@@ -294,15 +299,21 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings)
     // TODO: Add filtering for other platforms
 #endif
 
-    auto path = obs_data_get_string(settings, "path");
+    auto useProfileRecordingPath = obs_data_get_bool(settings, "use_profile_recording_path");
+    auto path = useProfileRecordingPath ? getProfileRecordingPath(config) : obs_data_get_string(settings, "path");
     auto recFormat = obs_data_get_string(settings, "rec_format");
+
+    if (createFolder) {
+        os_mkdirs(path);
+    }
 
     // Add filter name to filename format
     QString sourceName = obs_source_get_name(obs_filter_get_parent(filterSource));
     QString filterName = qUtf8Printable(name);
-    filenameFormat = filenameFormat.arg(sourceName.replace(QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]"), "-"))
-                         .arg(filterName.replace(QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]"), "-"));
-    auto compositePath = getOutputFilename(path, recFormat, true, false, qUtf8Printable(filenameFormat));
+    bool noSpace = obs_data_get_bool(settings, "no_space_filename");
+    auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
+    filenameFormat = filenameFormat.arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
+    auto compositePath = getOutputFilename(path, recFormat, noSpace, false, qUtf8Printable(filenameFormat));
 
     obs_data_set_string(recordingSettings, "path", qUtf8Printable(compositePath));
 
@@ -767,10 +778,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             const char *outputId = !strcmp(recFormat, "hybrid_mp4") ? "mp4_output" : "ffmpeg_muxer";
 
             // Ensure base path exists
-            auto path = obs_data_get_string(settings, "path");
-            os_mkdirs(path);
-
-            OBSDataAutoRelease recordingSettings = createRecordingSettings(settings);
+            OBSDataAutoRelease recordingSettings = createRecordingSettings(settings, true);
             recordingOutput = obs_output_create(outputId, qUtf8Printable(name), recordingSettings, nullptr);
             if (!recordingOutput) {
                 obs_log(LOG_ERROR, "%s: Recording output creation failed", qUtf8Printable(name));
@@ -857,6 +865,52 @@ void BranchOutputFilter::restartRecordingOutput()
             }
         }
     }
+}
+
+void BranchOutputFilter::loadProfile(obs_data_t *settings)
+{
+    obs_log(LOG_DEBUG, "Profile settings loading");
+
+    auto config = obs_frontend_get_profile_config();
+
+    const char *videoEncoderId;
+    const char *audioEncoderId;
+    uint64_t audioBitrate;
+
+    if (isAdvancedMode(config)) {
+        videoEncoderId = config_get_string(config, "AdvOut", "Encoder");
+        audioEncoderId = config_get_string(config, "AdvOut", "AudioEncoder");
+        audioBitrate = config_get_uint(config, "AdvOut", "FFABitrate");
+
+        OBSString profilePath = obs_frontend_get_current_profile_path();
+        auto encoderJsonPath = QString("%1/%2").arg(QString(profilePath)).arg("streamEncoder.json");
+        OBSDataAutoRelease encoderSettings = obs_data_create_from_json_file(qUtf8Printable(encoderJsonPath));
+
+        if (encoderSettings) {
+            // Include video bitrate
+            obs_data_apply(settings, encoderSettings);
+        }
+
+    } else {
+        videoEncoderId = getSimpleVideoEncoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
+        audioEncoderId = getSimpleAudioEncoder(config_get_string(config, "SimpleOutput", "StreamAudioEncoder"));
+        audioBitrate = config_get_uint(config, "SimpleOutput", "ABitrate");
+
+        auto videoBitrate = config_get_uint(config, "SimpleOutput", "VBitrate");
+        obs_data_set_int(settings, "bitrate", videoBitrate);
+
+        auto preset = config_get_string(config, "SimpleOutput", "Preset");
+        obs_data_set_string(settings, "preset", preset);
+
+        auto preset2 = config_get_string(config, "SimpleOutput", "NVENCPreset2");
+        obs_data_set_string(settings, "preset2", preset2);
+    }
+
+    obs_data_set_string(settings, "audio_encoder", audioEncoderId);
+    obs_data_set_string(settings, "video_encoder", videoEncoderId);
+    obs_data_set_int(settings, "audio_bitrate", audioBitrate);
+
+    obs_log(LOG_INFO, "Profile settings loaded");
 }
 
 void BranchOutputFilter::loadRecently(obs_data_t *settings)

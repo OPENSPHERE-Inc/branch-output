@@ -23,6 +23,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-frontend-api.h>
 #include <util/threading.h>
 #include <util/config-file.h>
+#include <util/dstr.h>
 
 #include <QString>
 #include <QWidget>
@@ -146,4 +147,96 @@ inline void loadHotkey(obs_hotkey_id id, const char *name)
 inline QString getIndexedPropNameFormat(size_t index, size_t base = 0)
 {
     return index == base ? QString("%1") : QString("%%1_%1").arg(index);
+}
+
+inline bool encoderAvailable(const char *encoder)
+{
+    const char *val;
+    int i = 0;
+
+    while (obs_enum_encoder_types(i++, &val)) {
+        if (strcmp(val, encoder) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Hardcoded in obs-studio/UI/window-basic-main.hpp
+#define SIMPLE_ENCODER_X264 "x264"
+#define SIMPLE_ENCODER_X264_LOWCPU "x264_lowcpu"
+#define SIMPLE_ENCODER_QSV "qsv"
+#define SIMPLE_ENCODER_QSV_AV1 "qsv_av1"
+#define SIMPLE_ENCODER_NVENC "nvenc"
+#define SIMPLE_ENCODER_NVENC_AV1 "nvenc_av1"
+#define SIMPLE_ENCODER_NVENC_HEVC "nvenc_hevc"
+#define SIMPLE_ENCODER_AMD "amd"
+#define SIMPLE_ENCODER_AMD_HEVC "amd_hevc"
+#define SIMPLE_ENCODER_AMD_AV1 "amd_av1"
+#define SIMPLE_ENCODER_APPLE_H264 "apple_h264"
+#define SIMPLE_ENCODER_APPLE_HEVC "apple_hevc"
+
+// Hardcoded in obs-studio/UI/window-basic-main-outputs.cpp
+inline const char *getSimpleVideoEncoder(const char *encoder)
+{
+    if (!strcmp(encoder, SIMPLE_ENCODER_X264)) {
+        return "obs_x264";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_X264_LOWCPU)) {
+        return "obs_x264";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_QSV)) {
+        return "obs_qsv11_v2";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_QSV_AV1)) {
+        return "obs_qsv11_av1";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD)) {
+        return "h264_texture_amf";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD_HEVC)) {
+        return "h265_texture_amf";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD_AV1)) {
+        return "av1_texture_amf";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC)) {
+        return encoderAvailable("obs_nvenc_h264_tex") ? "obs_nvenc_h264_tex" // Since OBS 31
+               : encoderAvailable("jim_nvenc")        ? "jim_nvenc"          // Until OBS 30
+                                                      : "ffmpeg_nvenc";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC_HEVC)) {
+        return encoderAvailable("obs_nvenc_hevc_tex") ? "obs_nvenc_hevc_tex" // Since OBS 31
+               : encoderAvailable("jim_hevc_nvenc")   ? "jim_hevc_nvenc"     // Until OBS 30
+                                                      : "ffmpeg_hevc_nvenc";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC_AV1)) {
+        return encoderAvailable("obs_nvenc_av1_tex") ? "obs_nvenc_av1_tex" // Since OBS 31
+                                                     : "jim_av1_nvenc";    // Until OBS 30
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_APPLE_H264)) {
+        return "com.apple.videotoolbox.videoencoder.ave.avc";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_APPLE_HEVC)) {
+        return "com.apple.videotoolbox.videoencoder.ave.hevc";
+    }
+
+    return "obs_x264";
+}
+
+// Hardcoded in obs-studio/UI/window-basic-main-outputs.cpp
+inline const char *getSimpleAudioEncoder(const char *encoder)
+{
+    if (strcmp(encoder, "opus")) {
+        return "ffmpeg_opus";
+    } else {
+        return "ffmpeg_aac";
+    }
+}
+
+inline bool isAdvancedMode(config_t *config = obs_frontend_get_profile_config())
+{
+    auto mode = config_get_string(config, "Output", "Mode");
+    return !strcmp(mode, "Advanced") || !strcmp(mode, "advanced");
+}
+
+inline const char *getProfileRecordingPath(config_t *config = obs_frontend_get_profile_config())
+{
+    if (isAdvancedMode(config)) {
+        const char *recType = config_get_string(config, "AdvOut", "RecType");
+        bool ffmpegRecording = !astrcmpi(recType, "ffmpeg") && config_get_bool(config, "AdvOut", "FFOutputToFile");
+        return config_get_string(config, "AdvOut", ffmpegRecording ? "FFFilePath" : "RecFilePath");
+    } else {
+        return config_get_string(config, "SimpleOutput", "FilePath");
+    }
 }
