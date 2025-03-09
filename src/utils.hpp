@@ -23,6 +23,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-frontend-api.h>
 #include <util/threading.h>
 #include <util/config-file.h>
+#include <util/dstr.h>
 
 #include <QString>
 #include <QWidget>
@@ -221,4 +222,63 @@ inline const char *getSimpleAudioEncoder(const char *encoder)
     } else {
         return "ffmpeg_aac";
     }
+}
+
+inline bool isAdvancedMode(config_t *config = obs_frontend_get_profile_config())
+{
+    auto mode = config_get_string(config, "Output", "Mode");
+    return !strcmp(mode, "Advanced") || !strcmp(mode, "advanced");
+}
+
+// Return value must be obs_data_release() after use
+inline obs_data_t *getProfileRecordingSettings(config_t *config = obs_frontend_get_profile_config())
+{
+    bool advancedOut = isAdvancedMode(config);
+
+    obs_data_t *settings = obs_data_create();
+
+    const char *recFormat;
+    bool recSplitFile = false;
+    const char *recSplitFileType = "Time";
+    uint64_t recSplitFileTimeMins = 15;
+    uint64_t recSplitFileSizeMb = 2048;
+    const char *path;
+    bool fileNameWithoutSpace = true;
+
+    if (isAdvancedMode(config)) {
+        recFormat = config_get_string(config, "AdvOut", "RecFormat2");
+        recSplitFile = config_get_bool(config, "AdvOut", "RecSplitFile");
+        recSplitFileTimeMins = config_get_uint(config, "AdvOut", "RecSplitFileTime");
+        recSplitFileSizeMb = config_get_uint(config, "AdvOut", "RecSplitFileSize");
+        fileNameWithoutSpace = config_get_bool(config, "AdvOut", "RecFileNameWithoutSpace");
+
+        const char *recType = config_get_string(config, "AdvOut", "RecType");
+        bool ffmpegRecording = !astrcmpi(recType, "ffmpeg") && config_get_bool(config, "AdvOut", "FFOutputToFile");
+        path = config_get_string(config, "AdvOut", ffmpegRecording ? "FFFilePath" : "RecFilePath");
+    } else {
+        recFormat = config_get_string(config, "SimpleOutput", "RecFormat2");
+        path = config_get_string(config, "SimpleOutput", "FilePath");
+        fileNameWithoutSpace = config_get_bool(config, "SimpleOutput", "FileNameWithoutSpace");
+    }
+
+    const char *splitFileValue = "";
+    if (recSplitFile && strcmp(recSplitFileType, "Manual")) {
+        if (!strcmp(recSplitFileType, "Size")) {
+            splitFileValue = "by_size";
+        } else {
+            splitFileValue = "by_time";
+        }
+    }
+    obs_data_set_string(settings, "split_file", splitFileValue);
+
+    QString filenameFormatting = QString("%1 %2 ") + QString(config_get_string(config, "Output", "FilenameFormatting"));
+    obs_data_set_string(settings, "filename_formatting", qUtf8Printable(filenameFormatting));
+
+    obs_data_set_string(settings, "path", path);
+    obs_data_set_bool(settings, "no_space_filename", fileNameWithoutSpace);
+    obs_data_set_string(settings, "rec_format", recFormat);
+    obs_data_set_int(settings, "split_file_time_mins", recSplitFileTimeMins);
+    obs_data_set_int(settings, "split_file_size_mb", recSplitFileSizeMb);
+
+    return settings;
 }
