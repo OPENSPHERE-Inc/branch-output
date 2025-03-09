@@ -83,7 +83,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
         loadRecently(settings);
 
         // Assit initial settings
-        obs_data_set_bool(settings, "use_profile_recording_settings", true);
+        obs_data_set_bool(settings, "use_profile_recording_path", true);
     }
 
     // Migrate audio_source schema
@@ -280,14 +280,14 @@ void BranchOutputFilter::stopOutput()
     }
 }
 
-obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings)
+obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bool createFolder)
 {
     auto recordingSettings = obs_data_create();
     auto config = obs_frontend_get_profile_config();
     QString filenameFormat = obs_data_get_string(settings, "filename_formatting");
     if (filenameFormat.isEmpty()) {
         // Fallback to profile if empty
-        filenameFormat = QString("%1_%2_") + QString(config_get_string(config, "Output", "FilenameFormatting"));
+        filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
     }
 
     // Sanitize filename
@@ -299,8 +299,13 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings)
     // TODO: Add filtering for other platforms
 #endif
 
-    auto path = obs_data_get_string(settings, "path");
+    auto useProfileRecordingPath = obs_data_get_bool(settings, "use_profile_recording_path");
+    auto path = useProfileRecordingPath ? getProfileRecordingPath(config) : obs_data_get_string(settings, "path");
     auto recFormat = obs_data_get_string(settings, "rec_format");
+
+    if (createFolder) {
+        os_mkdirs(path);
+    }
 
     // Add filter name to filename format
     QString sourceName = obs_source_get_name(obs_filter_get_parent(filterSource));
@@ -773,18 +778,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             const char *outputId = !strcmp(recFormat, "hybrid_mp4") ? "mp4_output" : "ffmpeg_muxer";
 
             // Ensure base path exists
-            auto path = obs_data_get_string(settings, "path");
-            os_mkdirs(path);
-
-            OBSDataAutoRelease recordingSettings;
-
-            if (obs_data_get_bool(settings, "use_profile_recording_settings")) {
-                OBSDataAutoRelease profileSettings = getProfileRecordingSettings();
-                recordingSettings = createRecordingSettings(profileSettings);
-            } else {
-                recordingSettings = createRecordingSettings(settings);
-            }
-
+            OBSDataAutoRelease recordingSettings = createRecordingSettings(settings, true);
             recordingOutput = obs_output_create(outputId, qUtf8Printable(name), recordingSettings, nullptr);
             if (!recordingOutput) {
                 obs_log(LOG_ERROR, "%s: Recording output creation failed", qUtf8Printable(name));

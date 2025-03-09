@@ -112,24 +112,46 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     const char *videoEncoderId;
     const char *audioEncoderId;
     uint64_t audioBitrate;
+    const char *recFormat;
+    bool recSplitFile = false;
+    const char *recSplitFileType = "Time";
+    uint64_t recSplitFileTimeMins = 15;
+    uint64_t recSplitFileSizeMb = 2048;
+    bool fileNameWithoutSpace = true;
 
     // Capture values from OBS settings
     if (isAdvancedMode(config)) {
         videoEncoderId = config_get_string(config, "AdvOut", "Encoder");
         audioEncoderId = config_get_string(config, "AdvOut", "AudioEncoder");
         audioBitrate = config_get_uint(config, "AdvOut", "FFABitrate");
+        recFormat = config_get_string(config, "AdvOut", "RecFormat2");
+        recSplitFile = config_get_bool(config, "AdvOut", "RecSplitFile");
+        recSplitFileTimeMins = config_get_uint(config, "AdvOut", "RecSplitFileTime");
+        recSplitFileSizeMb = config_get_uint(config, "AdvOut", "RecSplitFileSize");
+        fileNameWithoutSpace = config_get_bool(config, "AdvOut", "RecFileNameWithoutSpace");
     } else {
         videoEncoderId = getSimpleVideoEncoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
         audioEncoderId = getSimpleAudioEncoder(config_get_string(config, "SimpleOutput", "StreamAudioEncoder"));
         audioBitrate = config_get_uint(config, "SimpleOutput", "ABitrate");
+        recFormat = config_get_string(config, "SimpleOutput", "RecFormat2");
+        fileNameWithoutSpace = config_get_bool(config, "SimpleOutput", "FileNameWithoutSpace");
     }
+
+    const char *splitFileValue = "";
+    if (recSplitFile && strcmp(recSplitFileType, "Manual")) {
+        if (!strcmp(recSplitFileType, "Size")) {
+            splitFileValue = "by_size";
+        } else {
+            splitFileValue = "by_time";
+        }
+    }
+    obs_data_set_default_string(defaults, "split_file", splitFileValue);
 
     obs_data_set_default_string(defaults, "audio_encoder", audioEncoderId);
     obs_data_set_default_string(defaults, "video_encoder", videoEncoderId);
     obs_data_set_default_int(defaults, "audio_bitrate", audioBitrate);
     obs_data_set_default_bool(defaults, "stream_recording", false);
-    obs_data_set_default_bool(defaults, "use_profile_recording_settings", false);
-
+    obs_data_set_default_bool(defaults, "use_profile_recording_path", false);
     obs_data_set_default_string(defaults, "audio_source", "master_track");
     obs_data_set_default_int(defaults, "audio_track", 1);
     obs_data_set_default_string(defaults, "audio_dest", "both");
@@ -150,9 +172,17 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_string(defaults, "audio_dest_6", "both");
     obs_data_set_default_int(defaults, "custom_width", config_get_int(config, "Video", "OutputCX"));
     obs_data_set_default_int(defaults, "custom_height", config_get_int(config, "Video", "OutputCY"));
+    obs_data_set_default_bool(defaults, "no_space_filename", fileNameWithoutSpace);
+    obs_data_set_default_string(defaults, "rec_format", recFormat);
+    obs_data_set_default_int(defaults, "split_file_time_mins", recSplitFileTimeMins);
+    obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
 
-    OBSDataAutoRelease recordingSettings = getProfileRecordingSettings(config);
-    applyDefaults(defaults, recordingSettings);
+    auto path = getProfileRecordingPath(config);
+    obs_data_set_default_string(defaults, "path", path);
+
+    // Override filename_formatting
+    auto filenameFormatting = QString("%1 %2 ") + QString(config_get_string(config, "Output", "FilenameFormatting"));
+    obs_data_set_default_string(defaults, "filename_formatting", qUtf8Printable(filenameFormatting));
 
     obs_log(LOG_INFO, "Default settings applied.");
 }
@@ -313,7 +343,7 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
 
     auto streamRecordingChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
         auto _streamRecording = obs_data_get_bool(settings, "stream_recording");
-        obs_property_set_visible(obs_properties_get(_props, "use_profile_recording_settings"), _streamRecording);
+        obs_property_set_visible(obs_properties_get(_props, "use_profile_recording_path"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "path"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "no_space_filename"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "filename_formatting"), _streamRecording);
@@ -332,23 +362,15 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     obs_property_set_modified_callback2(streamRecording, streamRecordingChangeHandler, nullptr);
 
     //--- Recording options (initially hidden) ---//
-    auto useProfileSettings = obs_properties_add_bool(
-        streamGroup, "use_profile_recording_settings", obs_module_text("UseProfileRecordingSettings")
-    );
+    auto useProfilePath =
+        obs_properties_add_bool(streamGroup, "use_profile_recording_path", obs_module_text("UseProfileRecordingPath"));
 
-    auto useProfileSettingsChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *,
-                                              obs_data_t *settings) {
-        auto _useProfileSettings = obs_data_get_bool(settings, "use_profile_recording_settings");
-        obs_property_set_enabled(obs_properties_get(_props, "path"), !_useProfileSettings);
-        obs_property_set_enabled(obs_properties_get(_props, "no_space_filename"), !_useProfileSettings);
-        obs_property_set_enabled(obs_properties_get(_props, "filename_formatting"), !_useProfileSettings);
-        obs_property_set_enabled(obs_properties_get(_props, "rec_format"), !_useProfileSettings);
-        obs_property_set_enabled(obs_properties_get(_props, "split_file"), !_useProfileSettings);
-        obs_property_set_enabled(obs_properties_get(_props, "split_file_time_mins"), !_useProfileSettings);
-        obs_property_set_enabled(obs_properties_get(_props, "split_file_size_mb"), !_useProfileSettings);
+    auto useProfilePathChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+        auto _useProfilePath = obs_data_get_bool(settings, "use_profile_recording_path");
+        obs_property_set_enabled(obs_properties_get(_props, "path"), !_useProfilePath);
         return true;
     };
-    obs_property_set_modified_callback2(useProfileSettings, useProfileSettingsChangeHandler, nullptr);
+    obs_property_set_modified_callback2(useProfilePath, useProfilePathChangeHandler, nullptr);
 
     obs_properties_add_path(streamGroup, "path", obs_module_text("Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
     auto filenameFormatting = obs_properties_add_text(

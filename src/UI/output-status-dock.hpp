@@ -91,6 +91,12 @@ public:
     inline void setTheme(const QString &id, const QString &classes) { setThemeID(statusText, id, classes); };
 };
 
+enum RowOutputType {
+    ROW_OUTPUT_NONE = 0,
+    ROW_OUTPUT_STREAMING = 1,
+    ROW_OUTPUT_RECORDING = 2,
+};
+
 class BranchOutputStatusDock : public QFrame {
     Q_OBJECT
 
@@ -121,7 +127,7 @@ public:
     ~BranchOutputStatusDock();
 
 public slots:
-    void addRow(BranchOutputFilter *filter, size_t streamingIndex, bool recording = false, size_t groupIndex = 0);
+    void addRow(BranchOutputFilter *filter, size_t streamingIndex, RowOutputType outputType, size_t groupIndex = 0);
     void addFilter(BranchOutputFilter *filter);
     void removeFilter(BranchOutputFilter *filter);
     void setEabnleAll(bool enabled);
@@ -138,7 +144,7 @@ class OutputTableRow : public QObject {
     FilterCell *filterCell;
     ParentCell *parentCell;
     StatusCell *status;
-    bool recording;
+    RowOutputType outputType;
     size_t streamingIndex;
     size_t groupIndex;
     QLabel *droppedFrames;
