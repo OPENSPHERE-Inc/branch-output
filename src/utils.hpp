@@ -217,7 +217,7 @@ inline const char *getSimpleVideoEncoder(const char *encoder)
 // Hardcoded in obs-studio/UI/window-basic-main-outputs.cpp
 inline const char *getSimpleAudioEncoder(const char *encoder)
 {
-    if (strcmp(encoder, "opus")) {
+    if (!strcmp(encoder, "opus")) {
         return "ffmpeg_opus";
     } else {
         return "ffmpeg_aac";
