@@ -570,7 +570,9 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         ovi.output_width = encvi.base_width = width;
         ovi.output_height = encvi.base_height = height;
 
-        if (width == 0 || height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
+        determineOutputResolution(settings, &encvi);
+
+        if (encvi.output_width == 0 || encvi.output_height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
             // Abort when invalid video parameters situation
             obs_log(LOG_ERROR, "%s: Invalid video spec", qUtf8Printable(name));
             return;
@@ -733,8 +735,6 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));
             return;
         }
-
-        determineOutputResolution(settings, &encvi);
 
         if (encvi.base_width == encvi.output_width && encvi.base_height == encvi.output_height) {
             // No scaling
@@ -1125,13 +1125,14 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 uint32_t sourceHeight = obs_source_get_height(parent);
                 sourceHeight += (sourceHeight & 1);
 
-                if (!sourceWidth || !sourceHeight || !sourceInFrontend(parent)) {
+                if (!sourceInFrontend(parent)) {
                     // Stop output when source resolution is zero or source had been removed
                     stopOutput();
                     return;
                 }
 
-                if (width != sourceWidth || height != sourceHeight) {
+                if (sourceWidth != 0 && sourceHeight != 0 && (width != sourceWidth || height != sourceHeight)) {
+                    // Ignore zero resolution (It's temporary unavailable source)
                     // Restart output when source resolution was changed.
                     obs_log(LOG_INFO, "%s: Attempting restart the stream output", qUtf8Printable(name));
                     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
