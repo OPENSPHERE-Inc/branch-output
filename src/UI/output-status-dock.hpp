@@ -75,6 +75,21 @@ public:
     void setSourceName(const QString &text);
 };
 
+class RecordingOutputCell : public QLabel {
+    Q_OBJECT
+    
+    obs_source_t *source;
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override;
+
+public:
+    explicit RecordingOutputCell(const QString &text, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
+    ~RecordingOutputCell();
+
+    void setOutputName(const QString &text);
+};
+
 class StatusCell : public QWidget {
     Q_OBJECT
 

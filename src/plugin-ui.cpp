@@ -176,6 +176,7 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_string(defaults, "rec_format", recFormat);
     obs_data_set_default_int(defaults, "split_file_time_mins", recSplitFileTimeMins);
     obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
+    obs_data_set_default_bool(defaults, "keep_encoder_base_resolution", false);
 
     auto path = getProfileRecordingPath(config);
     obs_data_set_default_string(defaults, "path", path);
@@ -683,6 +684,11 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Area"), "area");
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Bicubic"), "bicubic");
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Lanczos"), "lanczos");
+
+    auto keepOutputBaseResolution = obs_properties_add_bool(
+        videoEncoderGroup, "keep_output_base_resolution", obs_module_text("KeepOutputBaseResolution")
+    );
+    obs_property_set_long_description(keepOutputBaseResolution, obs_module_text("KeepOutputBaseResolutionNote"));
 
     // "Video Encoder" prop
     auto videoEncoderList = obs_properties_add_list(

@@ -407,6 +407,10 @@ void BranchOutputFilter::determineOutputResolution(obs_data_t *settings, obs_vid
     ovi->output_width += (ovi->output_width & 1);
     ovi->output_height += (ovi->output_height & 1);
 
+    // Copy base resolution
+    ovi->base_width = width;
+    ovi->base_height = height;
+
     auto downscaleFilter = obs_data_get_string(settings, "downscale_filter");
     if (!strcmp(downscaleFilter, "bilinear")) {
         ovi->scale_type = OBS_SCALE_BILINEAR;
@@ -556,8 +560,6 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             return;
         }
 
-        obs_video_info encvi = ovi;
-
         // Round up to a multiple of 2
         width = obs_source_get_width(parent);
         width += (width & 1);
@@ -565,14 +567,15 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         height = obs_source_get_height(parent);
         height += (height & 1);
 
-        ovi.base_width = width;
-        ovi.base_height = height;
-        ovi.output_width = encvi.base_width = width;
-        ovi.output_height = encvi.base_height = height;
+        if (width == 0 || height == 0) {
+            // Default to canvas size
+            width = ovi.base_width;
+            height = ovi.base_height;
+        }
 
-        determineOutputResolution(settings, &encvi);
+        determineOutputResolution(settings, &ovi);
 
-        if (encvi.output_width == 0 || encvi.output_height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
+        if (ovi.output_width == 0 || ovi.output_height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
             // Abort when invalid video parameters situation
             obs_log(LOG_ERROR, "%s: Invalid video spec", qUtf8Printable(name));
             return;
@@ -736,17 +739,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             return;
         }
 
-        if (encvi.base_width == encvi.output_width && encvi.base_height == encvi.output_height) {
-            // No scaling
-            obs_encoder_set_scaled_size(videoEncoder, 0, 0);
-        } else {
-            obs_log(
-                LOG_DEBUG, "%s: Output resolution is %dx%d (scaling=%d)", qUtf8Printable(name), encvi.output_width,
-                encvi.output_height, encvi.scale_type
-            );
-            obs_encoder_set_scaled_size(videoEncoder, encvi.output_width, encvi.output_height);
-            obs_encoder_set_gpu_scale_type(videoEncoder, encvi.scale_type);
-        }
+        obs_encoder_set_scaled_size(videoEncoder, 0, 0); // No scaling
         obs_encoder_set_video(videoEncoder, videoOutput);
 
         //--- Setup audio encoder ---//
@@ -1134,10 +1127,12 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 if (sourceWidth != 0 && sourceHeight != 0 && (width != sourceWidth || height != sourceHeight)) {
                     // Ignore zero resolution (It's temporary unavailable source)
                     // Restart output when source resolution was changed.
-                    obs_log(LOG_INFO, "%s: Attempting restart the stream output", qUtf8Printable(name));
                     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-                    startOutput(settings);
-                    return;
+                    if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
+                        obs_log(LOG_INFO, "%s: Attempting restart the stream output", qUtf8Printable(name));
+                        startOutput(settings);
+                        return;    
+                    }
                 }
             }
 
