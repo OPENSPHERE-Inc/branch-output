@@ -31,6 +31,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHBoxLayout>
 #include <QCheckBox>
 #include <QMouseEvent>
+#include <QDesktopServices>
 
 #include "../plugin-main.hpp"
 #include "output-status-dock.hpp"
@@ -204,7 +205,7 @@ void BranchOutputStatusDock::addRow(
         otr->status->setIcon(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
         break;
     case ROW_OUTPUT_RECORDING:
-        otr->outputName = new QLabel(QTStr("Recording"), this);
+        otr->outputName = new RecordingOutputCell(QTStr("Recording"), filter->filterSource, this);
         otr->status->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
         break;
     default:
@@ -558,8 +559,11 @@ void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
 ParentCell::ParentCell(const QString &text, obs_source_t *_source, QWidget *parent) : QLabel(parent), source(_source)
 {
     parentRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", ParentCell::onParentRenamed, this);
+
+    // Markup as link
     setTextFormat(Qt::RichText);
     setCursor(Qt::PointingHandCursor);
+
     setSourceName(text);
 }
 
@@ -577,14 +581,51 @@ void ParentCell::onParentRenamed(void *data, calldata_t *cd)
 
 void ParentCell::setSourceName(const QString &text)
 {
+    // Markup as link
     setText(QString("<u>%1</u>").arg(text));
 }
 
 void ParentCell::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
+        // Open filter properties dialog
         obs_log(LOG_DEBUG, "uuid=%s", obs_source_get_uuid(source));
         obs_frontend_open_source_filters(source);
+    }
+}
+
+//--- RecordingOutputCell class ---//
+
+RecordingOutputCell::RecordingOutputCell(const QString &text, obs_source_t *_source, QWidget *parent)
+    : QLabel(parent),
+      source(_source)
+{
+    // Markup as link
+    setTextFormat(Qt::RichText);
+    setCursor(Qt::PointingHandCursor);
+
+    setOutputName(text);
+}
+
+RecordingOutputCell::~RecordingOutputCell() {}
+
+void RecordingOutputCell::setOutputName(const QString &text)
+{
+
+    // Markup as link
+    setText(QString("<u>%1</u>").arg(text));
+}
+
+void RecordingOutputCell::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        // Open OS file browser
+        OBSDataAutoRelease settings = obs_source_get_settings(source);
+        auto path = obs_data_get_bool(settings, "use_profile_recording_path")
+                        ? getProfileRecordingPath(obs_frontend_get_profile_config())
+                        : obs_data_get_string(settings, "path");
+        obs_log(LOG_DEBUG, "path=%s", path);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
     }
 }
 
