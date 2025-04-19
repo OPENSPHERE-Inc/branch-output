@@ -176,7 +176,7 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_string(defaults, "rec_format", recFormat);
     obs_data_set_default_int(defaults, "split_file_time_mins", recSplitFileTimeMins);
     obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
-    obs_data_set_default_bool(defaults, "keep_encoder_base_resolution", false);
+    obs_data_set_default_bool(defaults, "keep_output_base_resolution", false);
 
     auto path = getProfileRecordingPath(config);
     obs_data_set_default_string(defaults, "path", path);
