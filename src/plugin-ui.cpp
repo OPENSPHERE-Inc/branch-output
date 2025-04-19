@@ -421,6 +421,7 @@ void BranchOutputFilter::createAudioTrackProperties(obs_properties_t *audioGroup
         qUtf8Printable(QTStr("TrackSource%1").arg(track)), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
     );
     obs_property_set_visible(audioSourceList, visible);
+    obs_property_set_long_description(audioSourceList, obs_module_text("AudioSourceNote"));
 
     if (track > 1) {
         // Upper tracks can be disabled individually
