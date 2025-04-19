@@ -31,7 +31,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHBoxLayout>
 #include <QCheckBox>
 #include <QMouseEvent>
-#include <QDesktopServices.h>
+#include <QDesktopServices>
 
 #include "../plugin-main.hpp"
 #include "output-status-dock.hpp"

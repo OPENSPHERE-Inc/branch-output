@@ -77,7 +77,7 @@ public:
 
 class RecordingOutputCell : public QLabel {
     Q_OBJECT
-    
+
     obs_source_t *source;
 
 protected:

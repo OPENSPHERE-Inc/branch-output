@@ -1131,7 +1131,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
                         obs_log(LOG_INFO, "%s: Attempting restart the stream output", qUtf8Printable(name));
                         startOutput(settings);
-                        return;    
+                        return;
                     }
                 }
             }
