@@ -333,6 +333,25 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
         obs_data_set_int(recordingSettings, "max_size_mb", maxSizeMb);
     }
 
+    // Apply fragmented MP4/MOV settings
+    // Immitate https://github.com/obsproject/obs-studio/blob/d3c5d2ce0b15bac7a502f5aef4b3b5ec72ee8e09/frontend/utility/SimpleOutput.cpp#L820
+    QString mux = obs_data_get_string(settings, "rec_muxer_custom");
+    bool isFragmented = strncmp(recFormat, "fragmented", 10) == 0;
+
+    if (isFragmented && (mux.isEmpty() || mux.indexOf("movflags") == -1)) {
+        QString muxFrag = "movflags=frag_keyframe+empty_moov+delay_moov";
+        if (!mux.isEmpty()) {
+            muxFrag += " " + mux;
+        }
+        obs_data_set_string(settings, "muxer_settings", qUtf8Printable(muxFrag));
+    } else {
+        if (isFragmented) {
+            obs_log(LOG_WARNING, "User enabled fragmented recording, but custom muxer settings contained movflags.");
+        } else {
+            obs_data_set_string(settings, "muxer_settings", qUtf8Printable(mux));
+        }
+    }
+
     return recordingSettings;
 }
 
