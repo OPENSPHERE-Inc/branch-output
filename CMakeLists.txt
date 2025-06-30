@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.28...3.30)
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCOPE)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake"
+        NO_POLICY_SCOPE)
 
 project(${_name} VERSION ${_version})
 
@@ -26,19 +27,24 @@ if(ENABLE_QT)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
   target_compile_options(
     ${CMAKE_PROJECT_NAME}
-    PRIVATE $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header -Wno-comma>
-  )
+    PRIVATE
+      $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header
+      -Wno-comma>)
   set_target_properties(
     ${CMAKE_PROJECT_NAME}
-    PROPERTIES AUTOMOC ON AUTOUIC ON AUTORCC ON
-  )
+    PROPERTIES AUTOMOC ON
+               AUTOUIC ON
+               AUTORCC ON)
 endif()
 
 target_sources(
-  ${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.cpp src/plugin-ui.cpp src/utils.cpp src/audio/audio-capture.cpp
-                                src/UI/output-status-dock.cpp src/UI/resources.qrc)
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE src/plugin-main.cpp src/plugin-ui.cpp src/utils.cpp
+          src/audio/audio-capture.cpp src/UI/output-status-dock.cpp
+          src/UI/resources.qrc)
 
-set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME
+                             ${_name})
 
 if(OS_WINDOWS)
   string(JSON _windowsAppUUID GET ${buildspec} uuids windowsApp)
@@ -46,7 +52,10 @@ if(OS_WINDOWS)
   set(valid_uuid FALSE)
   check_uuid(${_windowsAppUUID} valid_uuid)
   if(NOT valid_uuid)
-    message(FATAL_ERROR "Specified Windows package UUID is not a valid UUID value: ${_windowsAppUUID}")
+    message(
+      FATAL_ERROR
+        "Specified Windows package UUID is not a valid UUID value: ${_windowsAppUUID}"
+    )
   else()
     set(UUID_APP ${_windowsAppUUID})
   endif()
