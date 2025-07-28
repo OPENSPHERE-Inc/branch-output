@@ -1,1 +1,5 @@
-print -PR "::warning::%F{3}   =>  ${@}%f"
+if (( _loglevel > 0 )) {
+  local icon=' =>'
+
+  print -PR "${CI:+::warning::}%F{3}  ${(r:5:)icon} ${@}%f"
+}

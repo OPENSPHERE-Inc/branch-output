@@ -8,7 +8,7 @@
 !/data
 !/src
 !.clang-format
-!.gersemirc
+!.cmake-format.json
 !.gitignore
 !buildspec.json
 !CMakeLists.txt

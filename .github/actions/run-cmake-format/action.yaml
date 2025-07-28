@@ -1,5 +1,5 @@
-name: Run clang-format
-description: Runs clang-format and checks for any changes introduced by it
+name: Run cmake-format
+description: Runs cmake-format and checks for any changes introduced by it
 inputs:
   failCondition:
     description: Controls whether failed checks also fail the workflow run
@@ -17,7 +17,7 @@ runs:
       shell: bash
       run: |
         : Check Runner Operating System 🏃‍♂️
-        echo "::notice::run-clang-format action requires a macOS-based or Linux-based runner."
+        echo "::notice::run-cmake-format action requires a macOS-based or Linux-based runner."
         exit 2
 
     - name: Install Dependencies 🛍️
@@ -28,19 +28,18 @@ runs:
         echo ::group::Install Dependencies
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
         echo "/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin" >> $GITHUB_PATH
-        echo "/home/linuxbrew/.linuxbrew/opt/clang-format@17/bin" >> $GITHUB_PATH
         brew install --quiet zsh
         echo ::endgroup::
 
-    - name: Run clang-format 🐉
+    - name: Run cmake-format 🎛️
       id: result
       shell: zsh --no-rcs --errexit --pipefail {0}
-      working-directory: ${{ inputs.workingDirectory }}
+      working-directory: ${{ github.workspace }}
       env:
         GITHUB_EVENT_FORCED: ${{ github.event.forced }}
         GITHUB_REF_BEFORE: ${{ github.event.before }}
       run: |
-        : Run clang-format 🐉
+        : Run cmake-format 🎛️
         if (( ${+RUNNER_DEBUG} )) setopt XTRACE
 
         local -a changes=($(git diff --name-only HEAD~1 HEAD))
@@ -50,12 +49,11 @@ runs:
           *) ;;
         }
 
-        if (( ${changes[(I)(*.c|*.h|*.cpp|*.hpp|*.m|*.mm)]} )) {
-          echo ::group::Install clang-format-17
-          brew install --quiet obsproject/tools/clang-format@17
+        if (( ${changes[(I)*.cmake|*CMakeLists.txt]} )) {
+          echo ::group::Install cmakelang
+          pip3 install cmakelang
           echo ::endgroup::
-
-          echo ::group::Run clang-format-17
-          ./build-aux/run-clang-format --fail-${{ inputs.failCondition }} --check
+          echo ::group::Run cmake-format
+          ./build-aux/run-cmake-format --fail-${{ inputs.failCondition }} --check
           echo ::endgroup::
         }

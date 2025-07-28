@@ -1,1 +1,3 @@
-print -u2 -PR "::error::%F{1}    ✖︎%f  ${@}"
+local icon='  ✖︎ '
+
+print -u2 -PR "${CI:+::error::}%F{1} ${icon} %f ${@}"
