@@ -1239,13 +1239,14 @@ void BranchOutputFilter::registerHotkey()
     auto toggleDescription1 = QString(obs_module_text("DisableHotkey")).arg(name);
 
     toggleHotkeyPairId = obs_hotkey_pair_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(toggleName0), qUtf8Printable(toggleDescription0), qUtf8Printable(toggleName1),
-        qUtf8Printable(toggleDescription1), onEnableFilterHotkeyPressed, onDisableFilterHotkeyPressed, this, this
+        obs_filter_get_parent(filterSource), qUtf8Printable(toggleName0), qUtf8Printable(toggleDescription0),
+        qUtf8Printable(toggleName1), qUtf8Printable(toggleDescription1), onEnableFilterHotkeyPressed,
+        onDisableFilterHotkeyPressed, this, this
     );
 
     // Register split recording hotkey
     auto splitName = QString("SplitRecordingFile.%1").arg(obs_source_get_uuid(filterSource));
-    auto splitDescription = QString(obs_module_text("SplitRecordingFileHotkey")).arg(name);    
+    auto splitDescription = QString(obs_module_text("SplitRecordingFileHotkey")).arg(name);
 
     splitRecordingHotkeyId = obs_hotkey_register_source(
         obs_filter_get_parent(filterSource), qUtf8Printable(splitName), qUtf8Printable(splitDescription),
