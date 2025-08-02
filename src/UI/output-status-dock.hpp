@@ -28,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QTableWidgetItem>
 #include <QLabel>
 #include <QComboBox>
+#include <QToolButton>
 
 #include "../utils.hpp"
 
@@ -95,6 +96,10 @@ class StatusCell : public QWidget {
 
     QLabel *icon;
     QLabel *statusText;
+    QToolButton *splitRecordingButton;
+
+signals:
+    void splitRecordingButtonClicked();
 
 public:
     explicit StatusCell(const QString &text, QWidget *parent = (QWidget *)nullptr);
@@ -104,6 +109,8 @@ public:
     inline void setIcon(const QPixmap &pixmap) { icon->setPixmap(pixmap); };
     inline void setIconShow(bool show) { icon->setVisible(show); };
     inline void setTheme(const QString &id, const QString &classes) { setThemeID(statusText, id, classes); };
+    inline void setSplitRecordingButtonShow(bool show) { splitRecordingButton->setVisible(show); };
+    inline bool isSPlitRecordingButtonShow() const { return splitRecordingButton->isVisible(); };
 };
 
 enum RowOutputType {
@@ -115,23 +122,32 @@ enum RowOutputType {
 class BranchOutputStatusDock : public QFrame {
     Q_OBJECT
 
+    friend class OutputTableRow;
+
     QTimer timer;
     QTableWidget *outputTable = nullptr;
     QList<OutputTableRow *> outputTableRows;
     QPushButton *enableAllButton = nullptr;
     QPushButton *disableAllButton = nullptr;
+    QPushButton *splitRecordingAllButton = nullptr;
     QLabel *interlockLabel = nullptr;
     QComboBox *interlockComboBox = nullptr;
     OBSSignal sourceAddedSignal;
     obs_hotkey_id enableAllHotkey;
     obs_hotkey_id disableAllHotkey;
+    obs_hotkey_id splitRecordingAllHotkey;
 
     void update();
+    void applySplitRecordingAllButtonVisible();
     void saveSettings();
     void loadSettings();
 
     static void onEanbleAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onDisableAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onSplitRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+
+private slots:
+    void onSplitRecordingAllButtonClicked();
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
@@ -146,6 +162,7 @@ public slots:
     void addFilter(BranchOutputFilter *filter);
     void removeFilter(BranchOutputFilter *filter);
     void setEabnleAll(bool enabled);
+    void splitRecordingAll();
 
     inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
 };
@@ -160,6 +177,7 @@ class OutputTableRow : public QObject {
     ParentCell *parentCell;
     StatusCell *status;
     RowOutputType outputType;
+    bool isSplitRecordingEnabled = false;
     size_t streamingIndex;
     size_t groupIndex;
     QLabel *droppedFrames;
@@ -175,10 +193,14 @@ class OutputTableRow : public QObject {
 
     void update();
     void reset();
+    void splitRecording();
 
     long double kbps = 0.0l;
 
 public:
-    explicit OutputTableRow(QObject *parent = (QObject *)nullptr);
+    explicit OutputTableRow(
+        int row, BranchOutputFilter *filter, size_t streamingIndex, RowOutputType outputType, size_t groupIndex,
+        BranchOutputStatusDock *parent = nullptr
+    );
     ~OutputTableRow();
 };

@@ -206,9 +206,12 @@ void BranchOutputFilter::removeCallback()
         QMetaObject::invokeMethod(statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
     }
 
+    // Unregsiter hotkeys
     if (toggleHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        // Unregsiter hotkeys
         obs_hotkey_pair_unregister(toggleHotkeyPairId);
+    }
+    if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        obs_hotkey_unregister(splitRecordingHotkeyId);
     }
 
     obs_log(LOG_INFO, "%s: Filter removed", qUtf8Printable(name));
@@ -1017,6 +1020,11 @@ bool BranchOutputFilter::isRecordingEnabled(obs_data_t *settings)
     return obs_data_get_bool(settings, "stream_recording");
 }
 
+bool BranchOutputFilter::isRecordingSplitEnabled(obs_data_t *settings)
+{
+    return !!strlen(obs_data_get_string(settings, "split_file"));
+}
+
 // Controlling output status here.
 // Start / Stop should only heppen in this function as possible because rapid manipulation caused crash easily.
 // NOTE: Becareful this function is called so offen.
@@ -1163,15 +1171,13 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
 bool BranchOutputFilter::splitRecording()
 {
-    if (!recordingActive || !recordingOutput) {
-        return false;
-    }
-
-    bool result = false;
-
     pthread_mutex_lock(&outputMutex);
     {
         OBSMutexAutoUnlock locked(&outputMutex);
+
+        if (!recordingActive || !recordingOutput) {
+            return false;
+        }
 
         // Immitate obs_frontend_recording_split_file()
         proc_handler_t *ph = obs_output_get_proc_handler(recordingOutput);
@@ -1179,9 +1185,7 @@ bool BranchOutputFilter::splitRecording()
         calldata cd;
         calldata_init_fixed(&cd, stack, sizeof(stack));
         proc_handler_call(ph, "split_file", &cd);
-        result = calldata_bool(&cd, "split_file_enabled");
-
-        return result;
+        return calldata_bool(&cd, "split_file_enabled");
     }
 }
 

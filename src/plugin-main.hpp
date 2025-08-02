@@ -116,6 +116,7 @@ class BranchOutputFilter : public QObject {
     int countActiveStreamings();
     bool isStreamingEnabled(obs_data_t *settings, size_t index = 0);
     bool isRecordingEnabled(obs_data_t *settings);
+    bool isRecordingSplitEnabled(obs_data_t *settings);
     void registerHotkey();
     bool splitRecording();
 
