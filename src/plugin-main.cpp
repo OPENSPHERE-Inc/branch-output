@@ -59,7 +59,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       view(nullptr),
       width(0),
       height(0),
-      toggleHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
+      toggleEnableHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
       splitRecordingHotkeyId(OBS_INVALID_HOTKEY_ID)
 {
     // DO NOT use obs_filter_get_parent() in this function (It'll return nullptr)
@@ -207,8 +207,8 @@ void BranchOutputFilter::removeCallback()
     }
 
     // Unregsiter hotkeys
-    if (toggleHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(toggleHotkeyPairId);
+    if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
     }
     if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
         obs_hotkey_unregister(splitRecordingHotkeyId);
@@ -1041,7 +1041,18 @@ bool BranchOutputFilter::isRecordingEnabled(obs_data_t *settings)
 
 bool BranchOutputFilter::isRecordingSplitEnabled(obs_data_t *settings)
 {
-    return !!strlen(obs_data_get_string(settings, "split_file"));
+    // Split mode will be disabled when some streamings are enabled.
+    bool isSomeStreamgEnabled = false;
+    for (int i = 0; i < MAX_SERVICES; i++) {
+        if (isStreamingEnabled(settings, i)) {
+            isSomeStreamgEnabled = true;
+            break;
+        }
+    }
+
+    return isRecordingEnabled(settings) &&
+        !!strlen(obs_data_get_string(settings, "split_file")) &&
+        !isSomeStreamgEnabled;
 }
 
 // Controlling output status here.
@@ -1208,6 +1219,34 @@ bool BranchOutputFilter::splitRecording()
     }
 }
 
+bool BranchOutputFilter::pauseRecording()
+{
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        if (!recordingActive || !recordingOutput) {
+            return false;
+        }
+
+        return obs_output_pause(recordingOutput, true);
+    }
+}
+
+bool BranchOutputFilter::unpauseRecording()
+{
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        if (!recordingActive || !recordingOutput) {
+            return false;
+        }
+
+        return obs_output_pause(recordingOutput, false);
+    }
+}
+
 bool BranchOutputFilter::onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
@@ -1248,22 +1287,42 @@ void BranchOutputFilter::onSplitRecordingFileHotkeyPressed(void *data, obs_hotke
     filter->splitRecording();
 }
 
+bool BranchOutputFilter::onPauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    return filter->pauseRecording();
+}
+
+bool BranchOutputFilter::onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    return filter->unpauseRecording();
+}
+
 void BranchOutputFilter::registerHotkey()
 {
-    if (toggleHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+    if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
         // Unregsiter previous
-        obs_hotkey_pair_unregister(toggleHotkeyPairId);
+        obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
     }
 
     // Register enable/disable hotkeys
-    auto toggleName0 = QString("EnableFilter.%1").arg(obs_source_get_uuid(filterSource));
-    auto toggleDescription0 = QString(obs_module_text("EnableHotkey")).arg(name);
-    auto toggleName1 = QString("DisableFilter.%1").arg(obs_source_get_uuid(filterSource));
-    auto toggleDescription1 = QString(obs_module_text("DisableHotkey")).arg(name);
+    auto enableFilterName = QString("EnableFilter.%1").arg(obs_source_get_uuid(filterSource));
+    auto enableFilterDescription = QString(obs_module_text("EnableHotkey")).arg(name);
+    auto disableFilterName = QString("DisableFilter.%1").arg(obs_source_get_uuid(filterSource));
+    auto disableFilterDescription = QString(obs_module_text("DisableHotkey")).arg(name);
 
-    toggleHotkeyPairId = obs_hotkey_pair_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(toggleName0), qUtf8Printable(toggleDescription0),
-        qUtf8Printable(toggleName1), qUtf8Printable(toggleDescription1), onEnableFilterHotkeyPressed,
+    toggleEnableHotkeyPairId = obs_hotkey_pair_register_source(
+        obs_filter_get_parent(filterSource), qUtf8Printable(enableFilterName), qUtf8Printable(enableFilterDescription),
+        qUtf8Printable(disableFilterName), qUtf8Printable(disableFilterDescription), onEnableFilterHotkeyPressed,
         onDisableFilterHotkeyPressed, this, this
     );
 
@@ -1274,6 +1333,18 @@ void BranchOutputFilter::registerHotkey()
     splitRecordingHotkeyId = obs_hotkey_register_source(
         obs_filter_get_parent(filterSource), qUtf8Printable(splitName), qUtf8Printable(splitDescription),
         onSplitRecordingFileHotkeyPressed, this
+    );
+
+    // Register pause/unpause recording hotkey
+    auto pauseRecordingName = QString("PauseRecording.%1").arg(obs_source_get_uuid(filterSource));
+    auto pauseRecordingDescription = QString(obs_module_text("PauseRecordingHotkey")).arg(name);
+    auto unpauseRecordingName = QString("UnpauseRecording.%1").arg(obs_source_get_uuid(filterSource));
+    auto unpauseRecordingDescription = QString(obs_module_text("UnpauseRecordingHotkey")).arg(name);
+
+    togglePauseRecordingHotkeyPairId = obs_hotkey_pair_register_source(
+        obs_filter_get_parent(filterSource), qUtf8Printable(pauseRecordingName), qUtf8Printable(pauseRecordingDescription),
+        qUtf8Printable(unpauseRecordingName), qUtf8Printable(unpauseRecordingDescription), onPauseRecordingHotkeyPressed,
+        onUnpauseRecordingHotkeyPressed, this, this
     );
 }
 
