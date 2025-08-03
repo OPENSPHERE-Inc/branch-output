@@ -81,10 +81,16 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
 
     // Tool buttons
     enableAllButton = new QPushButton(QTStr("EnableAll"), this);
-    connect(enableAllButton, &QPushButton::clicked, [this]() { setEabnleAll(true); });
+    connect(enableAllButton, &QPushButton::clicked, this, [this]() { setEabnleAll(true); });
 
     disableAllButton = new QPushButton(QTStr("DisableAll"), this);
-    connect(disableAllButton, &QPushButton::clicked, [this]() { setEabnleAll(false); });
+    connect(disableAllButton, &QPushButton::clicked, this, [this]() { setEabnleAll(false); });
+
+    splitRecordingAllButton = new QPushButton(QTStr("SplitAllRecordings"), this);
+    connect(
+        splitRecordingAllButton, &QPushButton::clicked, this, &BranchOutputStatusDock::onSplitRecordingAllButtonClicked
+    );
+    splitRecordingAllButton->setVisible(false);
 
     interlockLabel = new QLabel(QTStr("Interlock"), this);
     interlockComboBox = new QComboBox(this);
@@ -97,6 +103,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     auto buttonsContainerLayout = new QHBoxLayout();
     buttonsContainerLayout->addWidget(enableAllButton);
     buttonsContainerLayout->addWidget(disableAllButton);
+    buttonsContainerLayout->addWidget(splitRecordingAllButton);
     buttonsContainerLayout->addStretch();
     buttonsContainerLayout->addWidget(interlockLabel);
     buttonsContainerLayout->addWidget(interlockComboBox);
@@ -113,10 +120,15 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     disableAllHotkey = obs_hotkey_register_frontend(
         "DisableAllBranchOutputsHotkey", obs_module_text("DisableAllHotkey"), onDisableAllHotkeyPressed, this
     );
+    splitRecordingAllHotkey = obs_hotkey_register_frontend(
+        "SplitRecordingAllBranchOutputsHotkey", obs_module_text("SplitRecordingAllHotkey"),
+        onSplitRecordingAllHotkeyPressed, this
+    );
 
     loadSettings();
     loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
     loadHotkey(disableAllHotkey, "DisableAllBranchOutputsHotkey");
+    loadHotkey(splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
 
     obs_log(LOG_DEBUG, "BranchOutputStatusDock created");
 }
@@ -128,6 +140,7 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
     // Unregister hotkeys
     obs_hotkey_unregister(enableAllHotkey);
     obs_hotkey_unregister(disableAllHotkey);
+    obs_hotkey_unregister(splitRecordingAllHotkey);
 
     obs_log(LOG_DEBUG, "BranchOutputStatusDock destroyed");
 }
@@ -189,64 +202,8 @@ void BranchOutputStatusDock::addRow(
     BranchOutputFilter *filter, size_t streamingIndex, RowOutputType outputType, size_t groupIndex
 )
 {
-    auto parent = obs_filter_get_parent(filter->filterSource);
     auto row = (int)outputTableRows.size();
-
-    auto otr = new OutputTableRow(this);
-
-    otr->filter = filter;
-    otr->filterCell = new FilterCell(filter->name, filter->filterSource, this);
-    otr->parentCell = new ParentCell(obs_source_get_name(parent), parent, this);
-    otr->status = new StatusCell(QTStr("Status.Inactive"), this);
-
-    switch (outputType) {
-    case ROW_OUTPUT_STREAMING:
-        otr->outputName = new QLabel(QTStr("Streaming%1").arg(streamingIndex + 1), this);
-        otr->status->setIcon(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
-        break;
-    case ROW_OUTPUT_RECORDING:
-        otr->outputName = new RecordingOutputCell(QTStr("Recording"), filter->filterSource, this);
-        otr->status->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
-        break;
-    default:
-        otr->outputName = new QLabel(QTStr("None"), this);
-        otr->status->setIcon(QPixmap());
-    }
-
-    otr->streamingIndex = streamingIndex;
-    otr->outputType = outputType;
-    otr->groupIndex = groupIndex;
-    otr->droppedFrames = new QLabel("", this);
-    otr->megabytesSent = new QLabel("", this);
-    otr->bitrate = new QLabel("", this);
-
-    auto col = 0;
-    outputTable->setRowCount(row + 1);
-    outputTable->setCellWidget(row, col++, otr->filterCell);
-    outputTable->setCellWidget(row, col++, otr->parentCell);
-    outputTable->setCellWidget(row, col++, otr->outputName);
-    outputTable->setCellWidget(row, col++, otr->status);
-    outputTable->setCellWidget(row, col++, otr->droppedFrames);
-    outputTable->setCellWidget(row, col++, otr->megabytesSent);
-    outputTable->setCellWidget(row, col++, otr->bitrate);
-
-    outputTable->setRowHeight(row, 32);
-
-    // Setup reset button
-    auto resetButtonContainer = new QWidget(this);
-    auto resetButtonContainerLayout = new QHBoxLayout();
-    resetButtonContainerLayout->setContentsMargins(0, 0, 0, 0);
-    resetButtonContainer->setLayout(resetButtonContainerLayout);
-
-    auto resetButton = new QPushButton(QTStr("Reset"), this);
-    connect(resetButton, &QPushButton::clicked, [this, row]() { outputTableRows[row]->reset(); });
-    resetButton->setProperty("toolButton", true);  // Until OBS 30
-    resetButton->setProperty("class", "btn-tool"); // Since OBS 31
-    resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
-
-    resetButtonContainerLayout->addWidget(resetButton);
-    outputTable->setCellWidget(row, col, resetButtonContainer);
-
+    auto otr = new OutputTableRow(row, filter, streamingIndex, outputType, groupIndex, this);
     outputTableRows.push_back(otr);
 }
 
@@ -300,6 +257,19 @@ void BranchOutputStatusDock::update()
         }
         row->update();
     }
+
+    applySplitRecordingAllButtonVisible();
+}
+
+void BranchOutputStatusDock::applySplitRecordingAllButtonVisible()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->status->isSPlitRecordingButtonShow()) {
+            splitRecordingAllButton->setVisible(true);
+            return;
+        }
+    }
+    splitRecordingAllButton->setVisible(false);
 }
 
 void BranchOutputStatusDock::showEvent(QShowEvent *)
@@ -322,6 +292,15 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
     }
 }
 
+void BranchOutputStatusDock::splitRecordingAll()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->outputType == ROW_OUTPUT_RECORDING) {
+            row->filter->splitRecording();
+        }
+    }
+}
+
 void BranchOutputStatusDock::onEanbleAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     auto dock = static_cast<BranchOutputStatusDock *>(data);
@@ -338,11 +317,99 @@ void BranchOutputStatusDock::onDisableAllHotkeyPressed(void *data, obs_hotkey_id
     }
 }
 
+void BranchOutputStatusDock::onSplitRecordingAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    auto dock = static_cast<BranchOutputStatusDock *>(data);
+    if (pressed) {
+        dock->splitRecordingAll();
+    }
+}
+
+void BranchOutputStatusDock::onSplitRecordingAllButtonClicked()
+{
+    splitRecordingAll();
+
+    auto interlockType = interlockComboBox->currentData().toInt();
+    if (interlockType == BranchOutputFilter::INTERLOCK_TYPE_RECORDING ||
+        interlockType == BranchOutputFilter::INTERLOCK_TYPE_STREAMING_RECORDING) {
+        // Split OBS's recording too when interlock is set to recording or streaming+recording
+        obs_frontend_recording_split_file();
+    }
+}
+
 //--- OutputTableRow class ---//
 
-OutputTableRow::OutputTableRow(QObject *parent) : QObject(parent) {}
+OutputTableRow::OutputTableRow(
+    int row, BranchOutputFilter *_filter, size_t _streamingIndex, RowOutputType _outputType, size_t _groupIndex,
+    BranchOutputStatusDock *parent
+)
+    : QObject(parent),
+      filter(_filter),
+      streamingIndex(_streamingIndex),
+      outputType(_outputType),
+      groupIndex(_groupIndex)
+{
+    auto source = obs_filter_get_parent(filter->filterSource);
 
-OutputTableRow::~OutputTableRow() {}
+    filterCell = new FilterCell(filter->name, filter->filterSource, parent);
+    parentCell = new ParentCell(obs_source_get_name(source), source, parent);
+    status = new StatusCell(QTStr("Status.Inactive"), parent);
+
+    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+
+    switch (outputType) {
+    case ROW_OUTPUT_STREAMING:
+        outputName = new QLabel(QTStr("Streaming%1").arg(streamingIndex + 1), parent);
+        status->setIcon(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
+        break;
+    case ROW_OUTPUT_RECORDING:
+        outputName = new RecordingOutputCell(QTStr("Recording"), filter->filterSource, parent);
+        status->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
+        isSplitRecordingEnabled = filter->isRecordingSplitEnabled(settings);
+        break;
+    default:
+        outputName = new QLabel(QTStr("None"), parent);
+        status->setIcon(QPixmap());
+    }
+
+    droppedFrames = new QLabel("", parent);
+    megabytesSent = new QLabel("", parent);
+    bitrate = new QLabel("", parent);
+
+    auto col = 0;
+    parent->outputTable->setRowCount(row + 1);
+    parent->outputTable->setCellWidget(row, col++, filterCell);
+    parent->outputTable->setCellWidget(row, col++, parentCell);
+    parent->outputTable->setCellWidget(row, col++, outputName);
+    parent->outputTable->setCellWidget(row, col++, status);
+    parent->outputTable->setCellWidget(row, col++, droppedFrames);
+    parent->outputTable->setCellWidget(row, col++, megabytesSent);
+    parent->outputTable->setCellWidget(row, col++, bitrate);
+
+    parent->outputTable->setRowHeight(row, 32);
+
+    // Setup reset button
+    auto buttonsContainer = new QWidget(parent);
+    auto buttonsContainerLayout = new QHBoxLayout();
+    buttonsContainerLayout->setContentsMargins(0, 0, 0, 0);
+    buttonsContainer->setLayout(buttonsContainerLayout);
+
+    auto resetButton = new QPushButton(QTStr("Reset"), parent);
+    connect(resetButton, &QPushButton::clicked, this, [parent, row]() { parent->outputTableRows[row]->reset(); });
+    resetButton->setProperty("toolButton", true);  // Until OBS 30
+    resetButton->setProperty("class", "btn-tool"); // Since OBS 31
+    resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
+
+    buttonsContainerLayout->addWidget(resetButton);
+    parent->outputTable->setCellWidget(row, col, buttonsContainer);
+
+    connect(status, &StatusCell::splitRecordingButtonClicked, this, [this]() { splitRecording(); });
+}
+
+OutputTableRow::~OutputTableRow()
+{
+    disconnect(this);
+}
 
 // Imitate UI/window-basic-stats.cpp
 void OutputTableRow::update()
@@ -378,16 +445,20 @@ void OutputTableRow::update()
             status->setText(QTStr("Status.Reconnecting"));
             status->setTheme("error", "text-danger");
             status->setIconShow(false);
+            status->setSplitRecordingButtonShow(false);
         } else {
             switch (outputType) {
             case ROW_OUTPUT_STREAMING:
                 status->setText(QTStr("Status.Streaming"));
+                status->setSplitRecordingButtonShow(false);
                 break;
             case ROW_OUTPUT_RECORDING:
                 status->setText(QTStr("Status.Recording"));
+                status->setSplitRecordingButtonShow(isSplitRecordingEnabled);
                 break;
             default:
                 status->setText(QTStr("Status.Inactive"));
+                status->setSplitRecordingButtonShow(false);
             }
 
             status->setTheme("good", "text-success");
@@ -397,6 +468,7 @@ void OutputTableRow::update()
         status->setText(QTStr("Status.Inactive"));
         status->setTheme("", "");
         status->setIconShow(false);
+        status->setSplitRecordingButtonShow(false);
         droppedFrames->setText("");
         megabytesSent->setText("");
         bitrate->setText("");
@@ -498,6 +570,15 @@ void OutputTableRow::reset()
     bitrate->setText(QString("0 kb/s"));
 }
 
+void OutputTableRow::splitRecording()
+{
+    if (outputType != ROW_OUTPUT_RECORDING) {
+        return;
+    }
+
+    filter->splitRecording();
+}
+
 //--- FilterCell class ---//
 
 FilterCell::FilterCell(const QString &text, obs_source_t *source, QWidget *parent) : QWidget(parent)
@@ -511,7 +592,7 @@ FilterCell::FilterCell(const QString &text, obs_source_t *source, QWidget *paren
     visibilityCheckbox->setChecked(obs_source_enabled(source));
     visibilityCheckbox->setCursor(Qt::PointingHandCursor);
 
-    connect(visibilityCheckbox, &QCheckBox::clicked, [source](bool visible) {
+    connect(visibilityCheckbox, &QCheckBox::clicked, this, [source](bool visible) {
         obs_source_set_enabled(source, visible);
     });
 
@@ -635,15 +716,26 @@ StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent)
 {
     icon = new QLabel(this);
     statusText = new QLabel(text, this);
+    splitRecordingButton = new QToolButton(this);
 
     icon->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
     icon->setVisible(false);
+
+    splitRecordingButton->setIcon(QIcon(":/branch-output/images/scissors.svg"));
+    splitRecordingButton->setVisible(false);
+
+    connect(splitRecordingButton, &QToolButton::clicked, this, [this]() { emit splitRecordingButtonClicked(); });
 
     auto layout = new QHBoxLayout();
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(icon);
     layout->addWidget(statusText);
+    layout->addWidget(splitRecordingButton);
+    layout->addSpacing(5);
     setLayout(layout);
 }
 
-StatusCell::~StatusCell() {}
+StatusCell::~StatusCell()
+{
+    disconnect(this);
+}

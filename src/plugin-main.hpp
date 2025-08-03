@@ -93,7 +93,8 @@ class BranchOutputFilter : public QObject {
     BranchOutputStreamingContext streamings[MAX_SERVICES];
 
     // Hotkey context
-    obs_hotkey_pair_id hotkeyPairId;
+    obs_hotkey_pair_id toggleHotkeyPairId;
+    obs_hotkey_id splitRecordingHotkeyId;
     OBSSignal filterRenamedSignal;
 
     void startOutput(obs_data_t *settings);
@@ -115,7 +116,9 @@ class BranchOutputFilter : public QObject {
     int countActiveStreamings();
     bool isStreamingEnabled(obs_data_t *settings, size_t index = 0);
     bool isRecordingEnabled(obs_data_t *settings);
+    bool isRecordingSplitEnabled(obs_data_t *settings);
     void registerHotkey();
+    bool splitRecording();
 
     // Implemented in plugin-ui.cpp
     void addApplyButton(obs_properties_t *props, const char *propName = "apply");
@@ -131,6 +134,7 @@ class BranchOutputFilter : public QObject {
     // Callbacks from obs core
     static bool onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
     static bool onDisableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
+    static void onSplitRecordingFileHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
 
     void addCallback(obs_source_t *source);
     void updateCallback(obs_data_t *settings);

@@ -144,8 +144,10 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     if (recSplitFile && strcmp(recSplitFileType, "Manual")) {
         if (!strcmp(recSplitFileType, "Size")) {
             splitFileValue = "by_size";
-        } else {
+        } else if (!strcmp(recSplitFileType, "Time")) {
             splitFileValue = "by_time";
+        } else {
+            splitFileValue = "manual";
         }
     }
     obs_data_set_default_string(defaults, "split_file", splitFileValue);
@@ -403,6 +405,7 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.NoSplit"), "");
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.ByTime"), "by_time");
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.BySize"), "by_size");
+    obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.Manual"), "manual");
 
     obs_property_set_modified_callback2(splitFileList, streamRecordingChangeHandler, nullptr);
 
