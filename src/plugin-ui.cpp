@@ -408,6 +408,7 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.ByTime"), "by_time");
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.BySize"), "by_size");
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.Manual"), "manual");
+    obs_property_set_long_description(splitFileList, obs_module_text("SplitFileNote"));
 
     obs_property_set_modified_callback2(splitFileList, streamRecordingChangeHandler, nullptr);
 
@@ -418,8 +419,11 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     obs_properties_add_text(streamGroup, "rec_muxer_custom", obs_module_text("CustomMuxerSettings"), OBS_TEXT_DEFAULT);
 
     // Pausing settings
-    obs_properties_add_bool(
+    auto pauseRecordingWHenSourceCollapsed = obs_properties_add_bool(
         streamGroup, "pause_recording_when_source_collapsed", obs_module_text("PauseRecordingWhenSourceCollapsed")
+    );
+    obs_property_set_long_description(
+        pauseRecordingWHenSourceCollapsed, obs_module_text("PauseRecordingWhenSourceCollapsedNote")
     );
 
     // Source resolution trackability
