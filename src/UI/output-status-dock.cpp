@@ -381,7 +381,7 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
 void BranchOutputStatusDock::splitRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING) {
+        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isSplitRecordingButtonShow()) {
             row->filter->splitRecording();
         }
     }
@@ -390,7 +390,7 @@ void BranchOutputStatusDock::splitRecordingAll()
 void BranchOutputStatusDock::pauseRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING) {
+        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isPauseRecordingButtonShow()) {
             row->filter->pauseRecording();
         }
     }
@@ -399,7 +399,7 @@ void BranchOutputStatusDock::pauseRecordingAll()
 void BranchOutputStatusDock::unpauseRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING) {
+        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isUnpauseRecordingButtonShow()) {
             row->filter->unpauseRecording();
         }
     }
@@ -586,7 +586,7 @@ void OutputTableRow::update()
                     status->setSplitRecordingButtonShow(isSplitRecordingEnabled);
                 }
                 status->setPauseRecordingButtonShow(!paused);
-                status->setUnpauseRecordingButtonShow(paused);
+                status->setUnpauseRecordingButtonShow(paused && !filter->recordingPending);
                 break;
             default:
                 status->setText(QTStr("Status.Inactive"));
