@@ -86,6 +86,7 @@ class BranchOutputFilter : public QObject {
 
     // Recording context
     bool recordingActive;
+    bool recordingPending; // Pending due to collapsed source resolution
     OBSOutputAutoRelease recordingOutput;
 
     // Streaming context
@@ -103,8 +104,9 @@ class BranchOutputFilter : public QObject {
     obs_data_t *createRecordingSettings(obs_data_t *settings, bool createFolder = false);
     obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi);
-    BranchOutputStreamingContext createSreaming(obs_data_t *settings, size_t index = 0);
+    BranchOutputStreamingContext createSreamingOutput(obs_data_t *settings, size_t index = 0);
     void startStreamingOutput(size_t index = 0);
+    void createAndStartRecordingOutput(obs_data_t *settings);
     void reconnectStreamingOutput(size_t index = 0);
     void restartRecordingOutput();
     void loadProfile(obs_data_t *settings);

@@ -539,7 +539,8 @@ void OutputTableRow::update()
     // Status display
     if (output) {
         bool reconnecting;
-        bool paused = obs_output_paused(output);
+        // Only recording can be paused (When recording is paused, streaming is also paused)
+        bool paused = filter->recordingOutput.Get() && obs_output_paused(filter->recordingOutput.Get());
 
         switch (outputType) {
         case ROW_OUTPUT_STREAMING:
@@ -560,8 +561,13 @@ void OutputTableRow::update()
         } else {
             switch (outputType) {
             case ROW_OUTPUT_STREAMING:
-                status->setText(QTStr("Status.Streaming"));
-                status->setTheme("good", "text-success");
+                if (paused) {
+                    status->setText(QTStr("Status.Paused"));
+                    status->setTheme("", "");
+                } else {
+                    status->setText(QTStr("Status.Streaming"));
+                    status->setTheme("good", "text-success");
+                }
                 status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_STREAMING);
                 status->setSplitRecordingButtonShow(false);
                 status->setPauseRecordingButtonShow(false);
@@ -592,7 +598,11 @@ void OutputTableRow::update()
             }
         }
     } else {
-        status->setText(QTStr("Status.Inactive"));
+        if (outputType == ROW_OUTPUT_RECORDING && filter->recordingPending) {
+            status->setText(QTStr("Status.Pending"));
+        } else {
+            status->setText(QTStr("Status.Inactive"));
+        }
         status->setTheme("", "");
         status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
         status->setSplitRecordingButtonShow(false);

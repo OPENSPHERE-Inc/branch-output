@@ -182,6 +182,7 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_int(defaults, "split_file_time_mins", recSplitFileTimeMins);
     obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
     obs_data_set_default_bool(defaults, "keep_output_base_resolution", false);
+    obs_data_set_default_bool(defaults, "pause_recording_when_source_collapsed", false);
     obs_data_set_default_string(defaults, "rec_muxer_custom", mux);
 
     auto path = getProfileRecordingPath(config);
@@ -357,6 +358,7 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
         obs_property_set_visible(obs_properties_get(_props, "rec_format"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "split_file"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "rec_muxer_custom"), _streamRecording);
+        obs_property_set_visible(obs_properties_get(_props, "pause_recording_when_source_collapsed"), _streamRecording);
 
         auto splitFile = obs_data_get_string(settings, "split_file");
         obs_property_set_visible(
@@ -414,6 +416,17 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
 
     // Mux custom setting
     obs_properties_add_text(streamGroup, "rec_muxer_custom", obs_module_text("CustomMuxerSettings"), OBS_TEXT_DEFAULT);
+
+    // Pausing settings
+    obs_properties_add_bool(
+        streamGroup, "pause_recording_when_source_collapsed", obs_module_text("PauseRecordingWhenSourceCollapsed")
+    );
+
+    // Source resolution trackability
+    auto keepOutputBaseResolution = obs_properties_add_bool(
+        streamGroup, "keep_output_base_resolution", obs_module_text("KeepOutputBaseResolution")
+    );
+    obs_property_set_long_description(keepOutputBaseResolution, obs_module_text("KeepOutputBaseResolutionNote"));
 
     obs_properties_add_group(props, "stream", obs_module_text("Stream"), OBS_GROUP_NORMAL, streamGroup);
 }
@@ -698,11 +711,6 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Area"), "area");
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Bicubic"), "bicubic");
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Lanczos"), "lanczos");
-
-    auto keepOutputBaseResolution = obs_properties_add_bool(
-        videoEncoderGroup, "keep_output_base_resolution", obs_module_text("KeepOutputBaseResolution")
-    );
-    obs_property_set_long_description(keepOutputBaseResolution, obs_module_text("KeepOutputBaseResolutionNote"));
 
     // "Video Encoder" prop
     auto videoEncoderList = obs_properties_add_list(
