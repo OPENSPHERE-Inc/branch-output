@@ -1282,7 +1282,13 @@ bool BranchOutputFilter::pauseRecording()
             return false;
         }
 
-        return obs_output_pause(recordingOutput, true);
+        if (obs_output_paused(recordingOutput)) {
+            // Already paused
+            return false;
+        }
+
+        obs_output_pause(recordingOutput, true);
+        return true;
     }
 }
 
@@ -1296,9 +1302,14 @@ bool BranchOutputFilter::unpauseRecording()
             return false;
         }
 
-        auto result = obs_output_pause(recordingOutput, false);
+        if (!obs_output_paused(recordingOutput)) {
+            // Already unpaused
+            return false;
+        }
+
+        obs_output_pause(recordingOutput, false);
         recordingPending = false; // Force clear pending flag
-        return result;
+        return true;
     }
 }
 
