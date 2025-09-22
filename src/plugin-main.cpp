@@ -1370,6 +1370,12 @@ bool BranchOutputFilter::onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_
     }
 
     BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+
+    if (filter->recordingPending) {
+        // Block unpausing when recording is pending
+        return false;
+    }
+
     return filter->unpauseRecording();
 }
 
