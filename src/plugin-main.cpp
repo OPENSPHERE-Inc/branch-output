@@ -851,12 +851,6 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         }
 
         //--- Start recording output (if requested) ---//
-        bool startRecording = obs_data_get_bool(settings, "stream_recording") &&
-                              (
-                                  // Don't start recording when source is collapsed and user requested so.
-                                  (sourceWidth > 0 && sourceHeight > 0) ||
-                                  !obs_data_get_bool(settings, "pause_recording_when_source_collapsed")
-                              );
         if (isRecordingEnabled(settings)) {
             recordingPending = (sourceWidth == 0 || sourceHeight == 0) &&
                                obs_data_get_bool(settings, "pause_recording_when_source_collapsed");
