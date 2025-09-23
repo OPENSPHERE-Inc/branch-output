@@ -20,11 +20,13 @@ if (( ! ${+commands[brew]} )) {
 brew bundle --file ${SCRIPT_HOME}/.Brewfile
 
 # Install specific cmake version
-brew unlink cmake
-brew tap-new local/tap
-brew extract cmake local/tap --version 3.31.6
-brew install local/tap/cmake@3.31.6
-brew link --overwrite cmake@3.31.6
+local cmake_version=$(cmake --version 2>/dev/null | grep -o '3.31.6')
+if [[ ! "${cmake_version}" ]]; then
+  brew unlink cmake
+  brew tap-new local/tap
+  brew extract cmake local/tap --version 3.31.6
+  brew install local/tap/cmake@3.31.6
+fi
 
 rehash
 log_group
