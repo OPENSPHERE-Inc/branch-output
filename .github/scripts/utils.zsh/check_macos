@@ -20,8 +20,11 @@ if (( ! ${+commands[brew]} )) {
 brew bundle --file ${SCRIPT_HOME}/.Brewfile
 
 # Install specific cmake version
-curl -O https://github.com/Homebrew/homebrew-core/raw/b4e46db74e74a8c1650b38b1da222284ce1ec5ce/Formula/c/cmake.rb
-brew install ./cmake.rb
+brew tap-new local/tap
+brew extract cmake local/tap --version 3.31.6
+brew install local/tap/cmake@3.31.6
+brew unlink cmake
+brew link cmake@3.31.6
 
 rehash
 log_group
