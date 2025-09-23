@@ -68,6 +68,7 @@ class BranchOutputFilter : public QObject {
     uint32_t storedSettingsRev;
     uint32_t activeSettingsRev;
     QTimer *intervalTimer;
+    bool outputPending; // Pending due to collapsed source resolution
 
     // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
@@ -93,8 +94,9 @@ class BranchOutputFilter : public QObject {
     BranchOutputStreamingContext streamings[MAX_SERVICES];
 
     // Hotkey context
-    obs_hotkey_pair_id toggleHotkeyPairId;
+    obs_hotkey_pair_id toggleEnableHotkeyPairId;
     obs_hotkey_id splitRecordingHotkeyId;
+    obs_hotkey_pair_id togglePauseRecordingHotkeyPairId;
     OBSSignal filterRenamedSignal;
 
     void startOutput(obs_data_t *settings);
@@ -102,8 +104,9 @@ class BranchOutputFilter : public QObject {
     obs_data_t *createRecordingSettings(obs_data_t *settings, bool createFolder = false);
     obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi);
-    BranchOutputStreamingContext createSreaming(obs_data_t *settings, size_t index = 0);
+    BranchOutputStreamingContext createSreamingOutput(obs_data_t *settings, size_t index = 0);
     void startStreamingOutput(size_t index = 0);
+    void createAndStartRecordingOutput(obs_data_t *settings);
     void reconnectStreamingOutput(size_t index = 0);
     void restartRecordingOutput();
     void loadProfile(obs_data_t *settings);
@@ -114,11 +117,15 @@ class BranchOutputFilter : public QObject {
     int countEnabledStreamings(obs_data_t *settings);
     int countAliveStreamings();
     int countActiveStreamings();
+    bool hasEnabledStreamings(obs_data_t *settings);
     bool isStreamingEnabled(obs_data_t *settings, size_t index = 0);
     bool isRecordingEnabled(obs_data_t *settings);
     bool isRecordingSplitEnabled(obs_data_t *settings);
+    bool canPauseRecording();
     void registerHotkey();
     bool splitRecording();
+    bool pauseRecording();
+    bool unpauseRecording();
 
     // Implemented in plugin-ui.cpp
     void addApplyButton(obs_properties_t *props, const char *propName = "apply");
@@ -135,6 +142,8 @@ class BranchOutputFilter : public QObject {
     static bool onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
     static bool onDisableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
     static void onSplitRecordingFileHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static bool onPauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
+    static bool onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
 
     void addCallback(obs_source_t *source);
     void updateCallback(obs_data_t *settings);

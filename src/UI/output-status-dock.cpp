@@ -29,7 +29,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHeaderView>
 #include <QPushButton>
 #include <QHBoxLayout>
-#include <QCheckBox>
 #include <QMouseEvent>
 #include <QDesktopServices>
 
@@ -80,17 +79,37 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     }
 
     // Tool buttons
-    enableAllButton = new QPushButton(QTStr("EnableAll"), this);
-    connect(enableAllButton, &QPushButton::clicked, this, [this]() { setEabnleAll(true); });
+    applyToAllLabel = new QLabel(QTStr("ApplyToAll"), this);
 
-    disableAllButton = new QPushButton(QTStr("DisableAll"), this);
-    connect(disableAllButton, &QPushButton::clicked, this, [this]() { setEabnleAll(false); });
+    enableAllButton = new QToolButton(this);
+    enableAllButton->setToolTip(QTStr("EnableAll"));
+    enableAllButton->setIcon(QIcon(":/branch-output/images/visible.svg"));
+    enableAllButton->setEnabled(false);
+    connect(enableAllButton, &QToolButton::clicked, this, [this]() { setEabnleAll(true); });
 
-    splitRecordingAllButton = new QPushButton(QTStr("SplitAllRecordings"), this);
-    connect(
-        splitRecordingAllButton, &QPushButton::clicked, this, &BranchOutputStatusDock::onSplitRecordingAllButtonClicked
-    );
-    splitRecordingAllButton->setVisible(false);
+    disableAllButton = new QToolButton(this);
+    disableAllButton->setToolTip(QTStr("DisableAll"));
+    disableAllButton->setIcon(QIcon(":/branch-output/images/invisible.svg"));
+    disableAllButton->setEnabled(false);
+    connect(disableAllButton, &QToolButton::clicked, this, [this]() { setEabnleAll(false); });
+
+    splitRecordingAllButton = new QToolButton(this);
+    splitRecordingAllButton->setToolTip(QTStr("SplitAllRecordings"));
+    splitRecordingAllButton->setIcon(QIcon(":/branch-output/images/scissors.svg"));
+    splitRecordingAllButton->setEnabled(false);
+    connect(splitRecordingAllButton, &QToolButton::clicked, this, [this]() { splitRecordingAll(); });
+
+    pauseRecordingAllButton = new QToolButton(this);
+    pauseRecordingAllButton->setToolTip(QTStr("PauseAllRecordings"));
+    pauseRecordingAllButton->setIcon(QIcon(":/branch-output/images/pause.svg"));
+    pauseRecordingAllButton->setEnabled(false);
+    connect(pauseRecordingAllButton, &QToolButton::clicked, this, [this]() { pauseRecordingAll(); });
+
+    unpauseRecordingAllButton = new QToolButton(this);
+    unpauseRecordingAllButton->setToolTip(QTStr("UnpauseAllRecordings"));
+    unpauseRecordingAllButton->setIcon(QIcon(":/branch-output/images/unpause.svg"));
+    unpauseRecordingAllButton->setEnabled(false);
+    connect(unpauseRecordingAllButton, &QToolButton::clicked, this, [this]() { unpauseRecordingAll(); });
 
     interlockLabel = new QLabel(QTStr("Interlock"), this);
     interlockComboBox = new QComboBox(this);
@@ -101,9 +120,13 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     interlockComboBox->addItem(QTStr("VirtualCam"), BranchOutputFilter::INTERLOCK_TYPE_VIRTUAL_CAM);
 
     auto buttonsContainerLayout = new QHBoxLayout();
+    buttonsContainerLayout->addWidget(applyToAllLabel);
+    buttonsContainerLayout->addSpacing(5);
     buttonsContainerLayout->addWidget(enableAllButton);
     buttonsContainerLayout->addWidget(disableAllButton);
     buttonsContainerLayout->addWidget(splitRecordingAllButton);
+    buttonsContainerLayout->addWidget(pauseRecordingAllButton);
+    buttonsContainerLayout->addWidget(unpauseRecordingAllButton);
     buttonsContainerLayout->addStretch();
     buttonsContainerLayout->addWidget(interlockLabel);
     buttonsContainerLayout->addWidget(interlockComboBox);
@@ -124,11 +147,21 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
         "SplitRecordingAllBranchOutputsHotkey", obs_module_text("SplitRecordingAllHotkey"),
         onSplitRecordingAllHotkeyPressed, this
     );
+    pauseRecordingAllHotkey = obs_hotkey_register_frontend(
+        "PauseRecordingAllBranchOutputsHotkey", obs_module_text("PauseRecordingAllHotkey"),
+        onPauseRecordingAllHotkeyPressed, this
+    );
+    unpauseRecordingAllHotkey = obs_hotkey_register_frontend(
+        "UnpauseRecordingAllBranchOutputsHotkey", obs_module_text("UnpauseRecordingAllHotkey"),
+        onUnpauseRecordingAllHotkeyPressed, this
+    );
 
     loadSettings();
     loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
     loadHotkey(disableAllHotkey, "DisableAllBranchOutputsHotkey");
     loadHotkey(splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
+    loadHotkey(pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
+    loadHotkey(unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
 
     obs_log(LOG_DEBUG, "BranchOutputStatusDock created");
 }
@@ -203,8 +236,10 @@ void BranchOutputStatusDock::addRow(
 )
 {
     auto row = (int)outputTableRows.size();
-    auto otr = new OutputTableRow(row, filter, streamingIndex, outputType, groupIndex, this);
-    outputTableRows.push_back(otr);
+    outputTableRows.push_back(new OutputTableRow(row, filter, streamingIndex, outputType, groupIndex, this));
+
+    applyEnableAllButtonEnabled();
+    applyDisableAllButtonEnabled();
 }
 
 void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
@@ -258,18 +293,66 @@ void BranchOutputStatusDock::update()
         row->update();
     }
 
-    applySplitRecordingAllButtonVisible();
+    applyEnableAllButtonEnabled();
+    applyDisableAllButtonEnabled();
+    applySplitRecordingAllButtonEnabled();
+    applyPauseRecordingAllButtonEnabled();
+    applyUnpauseRecordingAllButtonEnabled();
 }
 
-void BranchOutputStatusDock::applySplitRecordingAllButtonVisible()
+void BranchOutputStatusDock::applyEnableAllButtonEnabled()
 {
     foreach (auto row, outputTableRows) {
-        if (row->status->isSPlitRecordingButtonShow()) {
-            splitRecordingAllButton->setVisible(true);
+        if (!row->filterCell->isVisibilityChecked()) {
+            enableAllButton->setEnabled(true);
             return;
         }
     }
-    splitRecordingAllButton->setVisible(false);
+    enableAllButton->setEnabled(false);
+}
+
+void BranchOutputStatusDock::applyDisableAllButtonEnabled()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->filterCell->isVisibilityChecked()) {
+            disableAllButton->setEnabled(true);
+            return;
+        }
+    }
+    disableAllButton->setEnabled(false);
+}
+
+void BranchOutputStatusDock::applySplitRecordingAllButtonEnabled()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->status->isSplitRecordingButtonShow()) {
+            splitRecordingAllButton->setEnabled(true);
+            return;
+        }
+    }
+    splitRecordingAllButton->setEnabled(false);
+}
+
+void BranchOutputStatusDock::applyPauseRecordingAllButtonEnabled()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->status->isPauseRecordingButtonShow()) {
+            pauseRecordingAllButton->setEnabled(true);
+            return;
+        }
+    }
+    pauseRecordingAllButton->setEnabled(false);
+}
+
+void BranchOutputStatusDock::applyUnpauseRecordingAllButtonEnabled()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->status->isUnpauseRecordingButtonShow()) {
+            unpauseRecordingAllButton->setEnabled(true);
+            return;
+        }
+    }
+    unpauseRecordingAllButton->setEnabled(false);
 }
 
 void BranchOutputStatusDock::showEvent(QShowEvent *)
@@ -290,13 +373,34 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
             obs_source_set_enabled(row->filter->filterSource, enabled);
         }
     }
+
+    applyEnableAllButtonEnabled();
+    applyDisableAllButtonEnabled();
 }
 
 void BranchOutputStatusDock::splitRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING) {
+        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isSplitRecordingButtonShow()) {
             row->filter->splitRecording();
+        }
+    }
+}
+
+void BranchOutputStatusDock::pauseRecordingAll()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isPauseRecordingButtonShow()) {
+            row->filter->pauseRecording();
+        }
+    }
+}
+
+void BranchOutputStatusDock::unpauseRecordingAll()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isUnpauseRecordingButtonShow()) {
+            row->filter->unpauseRecording();
         }
     }
 }
@@ -325,15 +429,19 @@ void BranchOutputStatusDock::onSplitRecordingAllHotkeyPressed(void *data, obs_ho
     }
 }
 
-void BranchOutputStatusDock::onSplitRecordingAllButtonClicked()
+void BranchOutputStatusDock::onPauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
-    splitRecordingAll();
+    auto dock = static_cast<BranchOutputStatusDock *>(data);
+    if (pressed) {
+        dock->pauseRecordingAll();
+    }
+}
 
-    auto interlockType = interlockComboBox->currentData().toInt();
-    if (interlockType == BranchOutputFilter::INTERLOCK_TYPE_RECORDING ||
-        interlockType == BranchOutputFilter::INTERLOCK_TYPE_STREAMING_RECORDING) {
-        // Split OBS's recording too when interlock is set to recording or streaming+recording
-        obs_frontend_recording_split_file();
+void BranchOutputStatusDock::onUnpauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    auto dock = static_cast<BranchOutputStatusDock *>(data);
+    if (pressed) {
+        dock->unpauseRecordingAll();
     }
 }
 
@@ -360,16 +468,13 @@ OutputTableRow::OutputTableRow(
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
         outputName = new QLabel(QTStr("Streaming%1").arg(streamingIndex + 1), parent);
-        status->setIcon(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
         break;
     case ROW_OUTPUT_RECORDING:
         outputName = new RecordingOutputCell(QTStr("Recording"), filter->filterSource, parent);
-        status->setIcon(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
         isSplitRecordingEnabled = filter->isRecordingSplitEnabled(settings);
         break;
     default:
         outputName = new QLabel(QTStr("None"), parent);
-        status->setIcon(QPixmap());
     }
 
     droppedFrames = new QLabel("", parent);
@@ -403,7 +508,10 @@ OutputTableRow::OutputTableRow(
     buttonsContainerLayout->addWidget(resetButton);
     parent->outputTable->setCellWidget(row, col, buttonsContainer);
 
+    // Setup status buttons
     connect(status, &StatusCell::splitRecordingButtonClicked, this, [this]() { splitRecording(); });
+    connect(status, &StatusCell::pauseRecordingButtonClicked, this, [this]() { pauseRecording(); });
+    connect(status, &StatusCell::unpauseRecordingButtonClicked, this, [this]() { unpauseRecording(); });
 }
 
 OutputTableRow::~OutputTableRow()
@@ -431,6 +539,8 @@ void OutputTableRow::update()
     // Status display
     if (output) {
         bool reconnecting;
+        // Only recording can be paused (When recording is paused, streaming is also paused)
+        bool paused = filter->recordingOutput.Get() && obs_output_paused(filter->recordingOutput.Get());
 
         switch (outputType) {
         case ROW_OUTPUT_STREAMING:
@@ -444,31 +554,60 @@ void OutputTableRow::update()
         if (reconnecting) {
             status->setText(QTStr("Status.Reconnecting"));
             status->setTheme("error", "text-danger");
-            status->setIconShow(false);
+            status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
             status->setSplitRecordingButtonShow(false);
+            status->setPauseRecordingButtonShow(false);
+            status->setUnpauseRecordingButtonShow(false);
         } else {
             switch (outputType) {
             case ROW_OUTPUT_STREAMING:
-                status->setText(QTStr("Status.Streaming"));
+                if (paused) {
+                    status->setText(QTStr("Status.Paused"));
+                    status->setTheme("", "");
+                } else {
+                    status->setText(QTStr("Status.Streaming"));
+                    status->setTheme("good", "text-success");
+                }
+                status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_STREAMING);
                 status->setSplitRecordingButtonShow(false);
+                status->setPauseRecordingButtonShow(false);
+                status->setUnpauseRecordingButtonShow(false);
                 break;
             case ROW_OUTPUT_RECORDING:
-                status->setText(QTStr("Status.Recording"));
-                status->setSplitRecordingButtonShow(isSplitRecordingEnabled);
+                if (paused) {
+                    status->setText(QTStr("Status.Paused"));
+                    status->setTheme("", "");
+                    status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_RECORDING_PAUSED);
+                    status->setSplitRecordingButtonShow(false);
+                } else {
+                    status->setText(QTStr("Status.Recording"));
+                    status->setTheme("good", "text-success");
+                    status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_RECORDING);
+                    status->setSplitRecordingButtonShow(isSplitRecordingEnabled);
+                }
+                status->setPauseRecordingButtonShow(!paused && filter->canPauseRecording());
+                status->setUnpauseRecordingButtonShow(paused && !filter->outputPending);
                 break;
             default:
                 status->setText(QTStr("Status.Inactive"));
+                status->setTheme("good", "text-success");
+                status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
                 status->setSplitRecordingButtonShow(false);
+                status->setPauseRecordingButtonShow(false);
+                status->setUnpauseRecordingButtonShow(false);
             }
-
-            status->setTheme("good", "text-success");
-            status->setIconShow(true);
         }
     } else {
-        status->setText(QTStr("Status.Inactive"));
+        if (filter->outputPending) {
+            status->setText(QTStr("Status.Pending"));
+        } else {
+            status->setText(QTStr("Status.Inactive"));
+        }
         status->setTheme("", "");
-        status->setIconShow(false);
+        status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
         status->setSplitRecordingButtonShow(false);
+        status->setPauseRecordingButtonShow(false);
+        status->setUnpauseRecordingButtonShow(false);
         droppedFrames->setText("");
         megabytesSent->setText("");
         bitrate->setText("");
@@ -577,6 +716,24 @@ void OutputTableRow::splitRecording()
     }
 
     filter->splitRecording();
+}
+
+void OutputTableRow::pauseRecording()
+{
+    if (outputType != ROW_OUTPUT_RECORDING) {
+        return;
+    }
+
+    filter->pauseRecording();
+}
+
+void OutputTableRow::unpauseRecording()
+{
+    if (outputType != ROW_OUTPUT_RECORDING) {
+        return;
+    }
+
+    filter->unpauseRecording();
 }
 
 //--- FilterCell class ---//
@@ -714,22 +871,47 @@ void RecordingOutputCell::mousePressEvent(QMouseEvent *event)
 
 StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent)
 {
-    icon = new QLabel(this);
+    streamingIcon = new QLabel(this);
+    recordingIcon = new QLabel(this);
+    recordingPausedIcon = new QLabel(this);
     statusText = new QLabel(text, this);
     splitRecordingButton = new QToolButton(this);
+    pauseRecordingButton = new QToolButton(this);
+    unpauseRecordingButton = new QToolButton(this);
 
-    icon->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
-    icon->setVisible(false);
+    streamingIcon->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+    streamingIcon->setPixmap(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
+    streamingIcon->setVisible(false);
+
+    recordingIcon->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+    recordingIcon->setPixmap(QPixmap(":/branch-output/images/recording.svg").scaled(16, 16));
+    recordingIcon->setVisible(false);
+
+    recordingPausedIcon->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+    recordingPausedIcon->setPixmap(QPixmap(":/branch-output/images/recording-paused.svg").scaled(16, 16));
+    recordingPausedIcon->setVisible(false);
 
     splitRecordingButton->setIcon(QIcon(":/branch-output/images/scissors.svg"));
     splitRecordingButton->setVisible(false);
 
+    pauseRecordingButton->setIcon(QIcon(":/branch-output/images/pause.svg"));
+    pauseRecordingButton->setVisible(false);
+
+    unpauseRecordingButton->setIcon(QIcon(":/branch-output/images/unpause.svg"));
+    unpauseRecordingButton->setVisible(false);
+
     connect(splitRecordingButton, &QToolButton::clicked, this, [this]() { emit splitRecordingButtonClicked(); });
+    connect(pauseRecordingButton, &QToolButton::clicked, this, [this]() { emit pauseRecordingButtonClicked(); });
+    connect(unpauseRecordingButton, &QToolButton::clicked, this, [this]() { emit unpauseRecordingButtonClicked(); });
 
     auto layout = new QHBoxLayout();
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(icon);
+    layout->addWidget(streamingIcon);
+    layout->addWidget(recordingIcon);
+    layout->addWidget(recordingPausedIcon);
     layout->addWidget(statusText);
+    layout->addWidget(pauseRecordingButton);
+    layout->addWidget(unpauseRecordingButton);
     layout->addWidget(splitRecordingButton);
     layout->addSpacing(5);
     setLayout(layout);
@@ -738,4 +920,30 @@ StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent)
 StatusCell::~StatusCell()
 {
     disconnect(this);
+}
+
+void StatusCell::setIconShow(StatusIcon show)
+{
+    switch (show) {
+    case STATUS_ICON_NONE:
+        streamingIcon->setVisible(false);
+        recordingIcon->setVisible(false);
+        recordingPausedIcon->setVisible(false);
+        break;
+    case STATUS_ICON_STREAMING:
+        streamingIcon->setVisible(true);
+        recordingIcon->setVisible(false);
+        recordingPausedIcon->setVisible(false);
+        break;
+    case STATUS_ICON_RECORDING:
+        streamingIcon->setVisible(false);
+        recordingIcon->setVisible(true);
+        recordingPausedIcon->setVisible(false);
+        break;
+    case STATUS_ICON_RECORDING_PAUSED:
+        streamingIcon->setVisible(false);
+        recordingIcon->setVisible(false);
+        recordingPausedIcon->setVisible(true);
+        break;
+    }
 }

@@ -50,6 +50,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       filterSource(source),
       initialized(false),
       recordingActive(false),
+      outputPending(false),
       storedSettingsRev(0),
       activeSettingsRev(0),
       intervalTimer(nullptr),
@@ -59,7 +60,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       view(nullptr),
       width(0),
       height(0),
-      toggleHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
+      toggleEnableHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
       splitRecordingHotkeyId(OBS_INVALID_HOTKEY_ID)
 {
     // DO NOT use obs_filter_get_parent() in this function (It'll return nullptr)
@@ -207,8 +208,8 @@ void BranchOutputFilter::removeCallback()
     }
 
     // Unregsiter hotkeys
-    if (toggleHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(toggleHotkeyPairId);
+    if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
     }
     if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
         obs_hotkey_unregister(splitRecordingHotkeyId);
@@ -281,6 +282,7 @@ void BranchOutputFilter::stopOutput()
             recordingActive = false;
             obs_log(LOG_INFO, "%s: Stopping recording output succeeded", qUtf8Printable(name));
         }
+        outputPending = false;
     }
 }
 
@@ -449,7 +451,8 @@ void BranchOutputFilter::determineOutputResolution(obs_data_t *settings, obs_vid
 #define FTL_PROTOCOL "ftl"
 #define RTMP_PROTOCOL "rtmp"
 
-BranchOutputFilter::BranchOutputStreamingContext BranchOutputFilter::createSreaming(obs_data_t *settings, size_t index)
+BranchOutputFilter::BranchOutputStreamingContext
+BranchOutputFilter::createSreamingOutput(obs_data_t *settings, size_t index)
 {
     auto count = (size_t)obs_data_get_int(settings, "service_count");
     if (index >= count || index >= MAX_SERVICES) {
@@ -542,6 +545,65 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
     }
 }
 
+void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
+{
+    if (!videoEncoder) {
+        return;
+    }
+
+    auto recFormat = obs_data_get_string(settings, "rec_format");
+    const char *outputId = !strcmp(recFormat, "hybrid_mp4") ? "mp4_output" : "ffmpeg_muxer";
+
+    // Ensure base path exists
+    OBSDataAutoRelease recordingSettings = createRecordingSettings(settings, true);
+    recordingOutput = obs_output_create(outputId, qUtf8Printable(name), recordingSettings, nullptr);
+    if (!recordingOutput) {
+        obs_log(LOG_ERROR, "%s: Recording output creation failed", qUtf8Printable(name));
+        return;
+    }
+
+    size_t encIndex = 0;
+    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
+        auto audioContext = &audios[i];
+        if (!audioContext->encoder || !audioContext->recording) {
+            continue;
+        }
+
+        obs_output_set_audio_encoder(recordingOutput, audioContext->encoder, encIndex++);
+    }
+
+    if (!encIndex) {
+        // No audio encoder -> fallback first available encoder
+        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
+            auto audioContext = &audios[i];
+            if (audioContext->encoder) {
+                obs_log(
+                    LOG_WARNING, "%s: No audio encoder selected for recording, using track %d", qUtf8Printable(name),
+                    i + 1
+                );
+                obs_output_set_audio_encoder(recordingOutput, audioContext->encoder, encIndex++);
+                break;
+            }
+        }
+        if (!encIndex) {
+            obs_log(LOG_ERROR, "%s: No audio encoder for recording", qUtf8Printable(name));
+            return;
+        }
+    }
+
+    obs_output_set_video_encoder(recordingOutput, videoEncoder);
+
+    // Start recording output
+    if (obs_output_start(recordingOutput)) {
+        recordingActive = true;
+        outputPending = false;
+        obs_source_inc_showing(obs_filter_get_parent(filterSource));
+        obs_log(LOG_INFO, "%s: Starting recording output succeeded", qUtf8Printable(name));
+    } else {
+        obs_log(LOG_ERROR, "%s: Starting recording output failed", qUtf8Printable(name));
+    }
+}
+
 void BranchOutputFilter::startOutput(obs_data_t *settings)
 {
     // Force release references
@@ -584,11 +646,11 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         }
 
         // Round up to a multiple of 2
-        width = obs_source_get_width(parent);
-        width += (width & 1);
+        uint32_t sourceWidth = obs_source_get_width(parent);
+        width = sourceWidth += (sourceWidth & 1);
         // Round up to a multiple of 2
-        height = obs_source_get_height(parent);
-        height += (height & 1);
+        uint32_t sourceHeight = obs_source_get_height(parent);
+        height = sourceHeight += (sourceHeight & 1);
 
         if (width == 0 || height == 0) {
             // Default to canvas size
@@ -607,10 +669,17 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         // Update active revision with stored settings.
         activeSettingsRev = storedSettingsRev;
 
+        outputPending = (sourceWidth == 0 || sourceHeight == 0) &&
+                        obs_data_get_bool(settings, "suspend_output_when_source_collapsed");
+        if (outputPending) {
+            obs_log(LOG_INFO, "%s: The output pending until source is uncollapsed", qUtf8Printable(name));
+            return;
+        }
+
         //--- Create service and open stream output ---//
         auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
         for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
-            streamings[i] = createSreaming(settings, i);
+            streamings[i] = createSreamingOutput(settings, i);
             if (streamings[i].output) {
                 streamings[i].connectAttemptingAt = os_gettime_ns();
             }
@@ -789,57 +858,8 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         }
 
         //--- Start recording output (if requested) ---//
-        if (obs_data_get_bool(settings, "stream_recording")) {
-            auto recFormat = obs_data_get_string(settings, "rec_format");
-            const char *outputId = !strcmp(recFormat, "hybrid_mp4") ? "mp4_output" : "ffmpeg_muxer";
-
-            // Ensure base path exists
-            OBSDataAutoRelease recordingSettings = createRecordingSettings(settings, true);
-            recordingOutput = obs_output_create(outputId, qUtf8Printable(name), recordingSettings, nullptr);
-            if (!recordingOutput) {
-                obs_log(LOG_ERROR, "%s: Recording output creation failed", qUtf8Printable(name));
-                return;
-            }
-
-            size_t encIndex = 0;
-            for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-                auto audioContext = &audios[i];
-                if (!audioContext->encoder || !audioContext->recording) {
-                    continue;
-                }
-
-                obs_output_set_audio_encoder(recordingOutput, audioContext->encoder, encIndex++);
-            }
-
-            if (!encIndex) {
-                // No audio encoder -> fallback first available encoder
-                for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-                    auto audioContext = &audios[i];
-                    if (audioContext->encoder) {
-                        obs_log(
-                            LOG_WARNING, "%s: No audio encoder selected for recording, using track %d",
-                            qUtf8Printable(name), i + 1
-                        );
-                        obs_output_set_audio_encoder(recordingOutput, audioContext->encoder, encIndex++);
-                        break;
-                    }
-                }
-                if (!encIndex) {
-                    obs_log(LOG_ERROR, "%s: No audio encoder for recording", qUtf8Printable(name));
-                    return;
-                }
-            }
-
-            obs_output_set_video_encoder(recordingOutput, videoEncoder);
-
-            // Start recording output
-            if (obs_output_start(recordingOutput)) {
-                recordingActive = true;
-                obs_source_inc_showing(obs_filter_get_parent(filterSource));
-                obs_log(LOG_INFO, "%s: Starting recording output succeeded", qUtf8Printable(name));
-            } else {
-                obs_log(LOG_ERROR, "%s: Starting recording output failed", qUtf8Printable(name));
-            }
+        if (isRecordingEnabled(settings)) {
+            createAndStartRecordingOutput(settings);
         }
 
         //--- Start streaming output (if requested) ---//
@@ -1028,6 +1048,16 @@ int BranchOutputFilter::countActiveStreamings()
     return count;
 }
 
+bool BranchOutputFilter::hasEnabledStreamings(obs_data_t *settings)
+{
+    for (int i = 0; i < MAX_SERVICES; i++) {
+        if (isStreamingEnabled(settings, i)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool BranchOutputFilter::isStreamingEnabled(obs_data_t *settings, size_t index)
 {
     auto propNameFormat = getIndexedPropNameFormat(index);
@@ -1041,7 +1071,15 @@ bool BranchOutputFilter::isRecordingEnabled(obs_data_t *settings)
 
 bool BranchOutputFilter::isRecordingSplitEnabled(obs_data_t *settings)
 {
-    return !!strlen(obs_data_get_string(settings, "split_file"));
+    // Split mode will be disabled when some streamings are enabled.
+    return isRecordingEnabled(settings) && !!strlen(obs_data_get_string(settings, "split_file")) &&
+           !hasEnabledStreamings(settings);
+}
+
+bool BranchOutputFilter::canPauseRecording()
+{
+    // Pausing recording will be disabled when some streamings are active.
+    return countActiveStreamings() == 0;
 }
 
 // Controlling output status here.
@@ -1056,8 +1094,9 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
     auto interlockType = statusDock ? statusDock->getInterlockType() : INTERLOCK_TYPE_ALWAYS_ON;
     auto sourceEnabled = obs_source_enabled(filterSource);
+    auto streamingActive = countActiveStreamings() > 0;
 
-    if (countActiveStreamings() == 0 && !recordingActive) {
+    if (!streamingActive && !recordingActive && !outputPending) {
         // Evaluate start condition
         auto parent = obs_filter_get_parent(filterSource);
         if (!parent || !sourceInFrontend(parent)) {
@@ -1138,7 +1177,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 return;
             }
 
-            if (streamingAlive || recordingAlive) {
+            if (streamingAlive || recordingAlive || outputPending) {
                 // Monitoring source
                 auto parent = obs_filter_get_parent(filterSource);
                 auto sourceWidth = obs_source_get_width(parent);
@@ -1152,12 +1191,63 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     return;
                 }
 
-                if (sourceWidth != 0 && sourceHeight != 0 && (width != sourceWidth || height != sourceHeight)) {
-                    // Ignore zero resolution (It's temporary unavailable source)
-                    // Restart output when source resolution was changed.
+                if (width != sourceWidth || height != sourceHeight) {
+                    // Source resolution was changed
                     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-                    if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
-                        obs_log(LOG_INFO, "%s: Attempting restart the stream output", qUtf8Printable(name));
+                    if (sourceWidth > 0 && sourceHeight > 0) {
+                        if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
+                            // Restart output when source resolution was changed.
+                            obs_log(LOG_INFO, "%s: Attempting restart the stream output", qUtf8Printable(name));
+                            startOutput(settings);
+                            return;
+                        }
+                    } else if (sourceWidth == 0 || sourceHeight == 0) {
+                        // The source is collapsed
+                        if (!outputPending && recordingActive &&
+                            obs_data_get_bool(settings, "suspend_output_when_source_collapsed")) {
+                            if (!streamingActive) {
+                                // Recording only -> Pause the recording
+                                if (!obs_output_paused(recordingOutput)) {
+                                    // Don't pause when already paused manually
+                                    obs_log(
+                                        LOG_INFO,
+                                        "%s: The source resolution is corrupted, Attempting pause the recording output",
+                                        qUtf8Printable(name)
+                                    );
+                                    pauseRecording();
+                                    outputPending = true;
+                                    return;
+                                }
+                            } else {
+                                // There are some streamings -> Suspend whole output
+                                obs_log(
+                                    LOG_INFO, "%s: The source resolution is corrupted, Attempting suspend the output",
+                                    qUtf8Printable(name)
+                                );
+                                stopOutput();
+                                outputPending = true;
+                                return;
+                            }
+                        } else {
+                            // Ignore source collapse
+                        }
+                    }
+                }
+
+                if (outputPending && sourceWidth > 0 && sourceHeight > 0) {
+                    // Source is uncollapsed
+                    // When recording was pending
+                    if (recordingActive) {
+                        // If the recording output has already been created
+                        // Unpause recording
+                        obs_log(LOG_INFO, "%s: Attempting unpause the recording output", qUtf8Printable(name));
+                        unpauseRecording();
+                        return;
+                    } else {
+                        // If the output has not yet been created.
+                        // Create and start recording when recording output was pended.
+                        obs_log(LOG_INFO, "%s: Attempting resume the output", qUtf8Printable(name));
+                        OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
                         startOutput(settings);
                         return;
                     }
@@ -1179,7 +1269,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             }
 
         } else {
-            if (streamingAlive || recordingAlive) {
+            if (streamingAlive || recordingAlive || outputPending) {
                 // Clicked filter's "Eye" icon (Hide)
                 stopOutput();
                 return;
@@ -1205,6 +1295,48 @@ bool BranchOutputFilter::splitRecording()
         calldata_init_fixed(&cd, stack, sizeof(stack));
         proc_handler_call(ph, "split_file", &cd);
         return calldata_bool(&cd, "split_file_enabled");
+    }
+}
+
+bool BranchOutputFilter::pauseRecording()
+{
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        if (!recordingActive || !recordingOutput || countActiveStreamings() > 0) {
+            // Can't pause when some streamings are active
+            return false;
+        }
+
+        if (obs_output_paused(recordingOutput)) {
+            // Already paused
+            return false;
+        }
+
+        obs_output_pause(recordingOutput, true);
+        return true;
+    }
+}
+
+bool BranchOutputFilter::unpauseRecording()
+{
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        if (!recordingActive || !recordingOutput) {
+            return false;
+        }
+
+        if (!obs_output_paused(recordingOutput)) {
+            // Already unpaused
+            return false;
+        }
+
+        obs_output_pause(recordingOutput, false);
+        outputPending = false; // Force clear pending flag
+        return true;
     }
 }
 
@@ -1248,22 +1380,48 @@ void BranchOutputFilter::onSplitRecordingFileHotkeyPressed(void *data, obs_hotke
     filter->splitRecording();
 }
 
+bool BranchOutputFilter::onPauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    return filter->pauseRecording();
+}
+
+bool BranchOutputFilter::onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+
+    if (filter->outputPending) {
+        // Block unpausing when recording is pending
+        return false;
+    }
+
+    return filter->unpauseRecording();
+}
+
 void BranchOutputFilter::registerHotkey()
 {
-    if (toggleHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+    if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
         // Unregsiter previous
-        obs_hotkey_pair_unregister(toggleHotkeyPairId);
+        obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
     }
 
     // Register enable/disable hotkeys
-    auto toggleName0 = QString("EnableFilter.%1").arg(obs_source_get_uuid(filterSource));
-    auto toggleDescription0 = QString(obs_module_text("EnableHotkey")).arg(name);
-    auto toggleName1 = QString("DisableFilter.%1").arg(obs_source_get_uuid(filterSource));
-    auto toggleDescription1 = QString(obs_module_text("DisableHotkey")).arg(name);
+    auto enableFilterName = QString("EnableFilter.%1").arg(obs_source_get_uuid(filterSource));
+    auto enableFilterDescription = QString(obs_module_text("EnableHotkey")).arg(name);
+    auto disableFilterName = QString("DisableFilter.%1").arg(obs_source_get_uuid(filterSource));
+    auto disableFilterDescription = QString(obs_module_text("DisableHotkey")).arg(name);
 
-    toggleHotkeyPairId = obs_hotkey_pair_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(toggleName0), qUtf8Printable(toggleDescription0),
-        qUtf8Printable(toggleName1), qUtf8Printable(toggleDescription1), onEnableFilterHotkeyPressed,
+    toggleEnableHotkeyPairId = obs_hotkey_pair_register_source(
+        obs_filter_get_parent(filterSource), qUtf8Printable(enableFilterName), qUtf8Printable(enableFilterDescription),
+        qUtf8Printable(disableFilterName), qUtf8Printable(disableFilterDescription), onEnableFilterHotkeyPressed,
         onDisableFilterHotkeyPressed, this, this
     );
 
@@ -1274,6 +1432,19 @@ void BranchOutputFilter::registerHotkey()
     splitRecordingHotkeyId = obs_hotkey_register_source(
         obs_filter_get_parent(filterSource), qUtf8Printable(splitName), qUtf8Printable(splitDescription),
         onSplitRecordingFileHotkeyPressed, this
+    );
+
+    // Register pause/unpause recording hotkey
+    auto pauseRecordingName = QString("PauseRecording.%1").arg(obs_source_get_uuid(filterSource));
+    auto pauseRecordingDescription = QString(obs_module_text("PauseRecordingHotkey")).arg(name);
+    auto unpauseRecordingName = QString("UnpauseRecording.%1").arg(obs_source_get_uuid(filterSource));
+    auto unpauseRecordingDescription = QString(obs_module_text("UnpauseRecordingHotkey")).arg(name);
+
+    togglePauseRecordingHotkeyPairId = obs_hotkey_pair_register_source(
+        obs_filter_get_parent(filterSource), qUtf8Printable(pauseRecordingName),
+        qUtf8Printable(pauseRecordingDescription), qUtf8Printable(unpauseRecordingName),
+        qUtf8Printable(unpauseRecordingDescription), onPauseRecordingHotkeyPressed, onUnpauseRecordingHotkeyPressed,
+        this, this
     );
 }
 
