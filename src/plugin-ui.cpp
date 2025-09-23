@@ -358,7 +358,9 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
         obs_property_set_visible(obs_properties_get(_props, "rec_format"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "split_file"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "rec_muxer_custom"), _streamRecording);
-        obs_property_set_visible(obs_properties_get(_props, "suspend_recording_when_source_collapsed"), _streamRecording);
+        obs_property_set_visible(
+            obs_properties_get(_props, "suspend_recording_when_source_collapsed"), _streamRecording
+        );
 
         auto splitFile = obs_data_get_string(settings, "split_file");
         obs_property_set_visible(

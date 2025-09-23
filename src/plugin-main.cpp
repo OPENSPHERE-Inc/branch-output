@@ -237,7 +237,7 @@ void BranchOutputFilter::stopRecordingOutput()
     {
         OBSMutexAutoUnlock locked(&outputMutex);
 
-         obs_source_t *parent = obs_filter_get_parent(filterSource);
+        obs_source_t *parent = obs_filter_get_parent(filterSource);
 
         if (recordingOutput) {
             if (recordingActive) {
@@ -253,7 +253,7 @@ void BranchOutputFilter::stopRecordingOutput()
         }
 
         recordingPending = false;
-    }    
+    }
 }
 
 void BranchOutputFilter::stopOutput()
@@ -866,7 +866,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         //--- Start recording output (if requested) ---//
         if (isRecordingEnabled(settings)) {
             recordingPending = (sourceWidth == 0 || sourceHeight == 0) &&
-                obs_data_get_bool(settings, "suspend_recording_when_source_collapsed");
+                               obs_data_get_bool(settings, "suspend_recording_when_source_collapsed");
             if (!recordingPending) {
                 createAndStartRecordingOutput(settings);
             } else {
@@ -1240,7 +1240,8 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                             } else {
                                 // There are some streamings -> Suspend recording output
                                 obs_log(
-                                    LOG_INFO, "%s: The source resolution is corrupted, Attempting suspend the recording output",
+                                    LOG_INFO,
+                                    "%s: The source resolution is corrupted, Attempting suspend the recording output",
                                     qUtf8Printable(name)
                                 );
                                 stopRecordingOutput();
