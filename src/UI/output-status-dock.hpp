@@ -109,12 +109,7 @@ signals:
     void unpauseRecordingButtonClicked();
 
 public:
-    enum StatusIcon {
-        STATUS_ICON_NONE,
-        STATUS_ICON_STREAMING,
-        STATUS_ICON_RECORDING,
-        STATUS_ICON_RECORDING_PAUSED
-    };
+    enum StatusIcon { STATUS_ICON_NONE, STATUS_ICON_STREAMING, STATUS_ICON_RECORDING, STATUS_ICON_RECORDING_PAUSED };
 
     explicit StatusCell(const QString &text, QWidget *parent = (QWidget *)nullptr);
     ~StatusCell();
