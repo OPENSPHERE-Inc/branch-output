@@ -68,6 +68,7 @@ class BranchOutputFilter : public QObject {
     uint32_t storedSettingsRev;
     uint32_t activeSettingsRev;
     QTimer *intervalTimer;
+    bool outputPending; // Pending due to collapsed source resolution
 
     // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
@@ -86,7 +87,6 @@ class BranchOutputFilter : public QObject {
 
     // Recording context
     bool recordingActive;
-    bool recordingPending; // Pending due to collapsed source resolution
     OBSOutputAutoRelease recordingOutput;
 
     // Streaming context
@@ -117,9 +117,11 @@ class BranchOutputFilter : public QObject {
     int countEnabledStreamings(obs_data_t *settings);
     int countAliveStreamings();
     int countActiveStreamings();
+    bool hasEnabledStreamings(obs_data_t *settings);
     bool isStreamingEnabled(obs_data_t *settings, size_t index = 0);
     bool isRecordingEnabled(obs_data_t *settings);
     bool isRecordingSplitEnabled(obs_data_t *settings);
+    bool canPauseRecording();
     void registerHotkey();
     bool splitRecording();
     bool pauseRecording();

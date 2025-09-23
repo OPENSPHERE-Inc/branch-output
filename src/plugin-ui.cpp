@@ -182,7 +182,7 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_int(defaults, "split_file_time_mins", recSplitFileTimeMins);
     obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
     obs_data_set_default_bool(defaults, "keep_output_base_resolution", false);
-    obs_data_set_default_bool(defaults, "pause_recording_when_source_collapsed", false);
+    obs_data_set_default_bool(defaults, "suspend_output_when_source_collapsed", false);
     obs_data_set_default_string(defaults, "rec_muxer_custom", mux);
 
     auto path = getProfileRecordingPath(config);
@@ -358,7 +358,6 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
         obs_property_set_visible(obs_properties_get(_props, "rec_format"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "split_file"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "rec_muxer_custom"), _streamRecording);
-        obs_property_set_visible(obs_properties_get(_props, "pause_recording_when_source_collapsed"), _streamRecording);
 
         auto splitFile = obs_data_get_string(settings, "split_file");
         obs_property_set_visible(
@@ -419,11 +418,11 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     obs_properties_add_text(streamGroup, "rec_muxer_custom", obs_module_text("CustomMuxerSettings"), OBS_TEXT_DEFAULT);
 
     // Pausing settings
-    auto pauseRecordingWHenSourceCollapsed = obs_properties_add_bool(
-        streamGroup, "pause_recording_when_source_collapsed", obs_module_text("PauseRecordingWhenSourceCollapsed")
+    auto suspendOutputWhenSourceCollapsed = obs_properties_add_bool(
+        streamGroup, "suspend_output_when_source_collapsed", obs_module_text("SuspendOutputWhenSourceCollapsed")
     );
     obs_property_set_long_description(
-        pauseRecordingWHenSourceCollapsed, obs_module_text("PauseRecordingWhenSourceCollapsedNote")
+        suspendOutputWhenSourceCollapsed, obs_module_text("SuspendOutputWhenSourceCollapsedNote")
     );
 
     // Source resolution trackability
