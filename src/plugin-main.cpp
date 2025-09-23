@@ -658,13 +658,6 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             height = ovi.base_height;
         }
 
-        outputPending = (sourceWidth == 0 || sourceHeight == 0) &&
-                        obs_data_get_bool(settings, "suspend_output_when_source_collapsed");
-        if (outputPending) {
-            obs_log(LOG_INFO, "%s: The output pending until source is uncollapsed", qUtf8Printable(name));
-            return;
-        }
-
         determineOutputResolution(settings, &ovi);
 
         if (ovi.output_width == 0 || ovi.output_height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
@@ -675,6 +668,13 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
 
         // Update active revision with stored settings.
         activeSettingsRev = storedSettingsRev;
+
+        outputPending = (sourceWidth == 0 || sourceHeight == 0) &&
+                        obs_data_get_bool(settings, "suspend_output_when_source_collapsed");
+        if (outputPending) {
+            obs_log(LOG_INFO, "%s: The output pending until source is uncollapsed", qUtf8Printable(name));
+            return;
+        }
 
         //--- Create service and open stream output ---//
         auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
