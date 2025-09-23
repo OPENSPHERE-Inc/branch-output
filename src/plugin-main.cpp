@@ -24,6 +24,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include <obs.hpp>
 
+#include <QDateTime>
+
 #include "audio/audio-capture.hpp"
 #include "plugin-support.h"
 #include "plugin-main.hpp"
@@ -1094,6 +1096,13 @@ bool BranchOutputFilter::canPauseRecording()
     return countActiveStreamings() == 0;
 }
 
+bool BranchOutputFilter::canAddChapterToRecording()
+{
+    // Chapter maker is only available for hybrid MP4
+    return recordingActive && recordingOutput && !obs_output_paused(recordingOutput) &&
+           !strcmp(obs_output_get_id(recordingOutput), "mp4_output");
+}
+
 // Controlling output status here.
 // Start / Stop should only heppen in this function as possible because rapid manipulation caused crash easily.
 // NOTE: Becareful this function is called so offen.
@@ -1353,6 +1362,37 @@ bool BranchOutputFilter::unpauseRecording()
     }
 }
 
+bool BranchOutputFilter::addChapterToRecording(QString name)
+{
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        if (!recordingActive || !recordingOutput) {
+            return false;
+        }
+
+        if (obs_output_paused(recordingOutput)) {
+            // Can't add chapter when paused
+            return false;
+        }
+
+        // Immitate obs_frontend_recording_add_chapter()
+        proc_handler_t *ph = obs_output_get_proc_handler(recordingOutput);
+        calldata cd;
+        calldata_init(&cd);
+        // Use current date-time when name is empty
+        calldata_set_string(
+            &cd, "chapter_name",
+            name.isEmpty() ? qUtf8Printable(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+                           : qUtf8Printable(name)
+        );
+        bool result = proc_handler_call(ph, "add_chapter", &cd);
+        calldata_free(&cd);
+        return result;
+    }
+}
+
 bool BranchOutputFilter::onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
@@ -1419,6 +1459,16 @@ bool BranchOutputFilter::onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_
     return filter->unpauseRecording();
 }
 
+void BranchOutputFilter::onAddChapterToRecordingFileHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return;
+    }
+
+    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    filter->addChapterToRecording();
+}
+
 void BranchOutputFilter::registerHotkey()
 {
     if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
@@ -1458,6 +1508,14 @@ void BranchOutputFilter::registerHotkey()
         qUtf8Printable(pauseRecordingDescription), qUtf8Printable(unpauseRecordingName),
         qUtf8Printable(unpauseRecordingDescription), onPauseRecordingHotkeyPressed, onUnpauseRecordingHotkeyPressed,
         this, this
+    );
+
+    // Register add chapter to recording hotkey
+    auto addChapterName = QString("AddChapterToRecordingFile.%1").arg(obs_source_get_uuid(filterSource));
+    auto addChapterDescription = QString(obs_module_text("AddChapterToRecordingFileHotkey")).arg(name);
+    addChapterToRecordingHotkeyId = obs_hotkey_register_source(
+        obs_filter_get_parent(filterSource), qUtf8Printable(addChapterName), qUtf8Printable(addChapterDescription),
+        onAddChapterToRecordingFileHotkeyPressed, this
     );
 }
 

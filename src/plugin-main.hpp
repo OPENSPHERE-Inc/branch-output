@@ -97,6 +97,8 @@ class BranchOutputFilter : public QObject {
     obs_hotkey_pair_id toggleEnableHotkeyPairId;
     obs_hotkey_id splitRecordingHotkeyId;
     obs_hotkey_pair_id togglePauseRecordingHotkeyPairId;
+    obs_hotkey_id addChapterToRecordingHotkeyId;
+
     OBSSignal filterRenamedSignal;
 
     void startOutput(obs_data_t *settings);
@@ -123,10 +125,12 @@ class BranchOutputFilter : public QObject {
     bool isRecordingEnabled(obs_data_t *settings);
     bool isRecordingSplitEnabled(obs_data_t *settings);
     bool canPauseRecording();
+    bool canAddChapterToRecording();
     void registerHotkey();
     bool splitRecording();
     bool pauseRecording();
     bool unpauseRecording();
+    bool addChapterToRecording(QString name = QString());
 
     // Implemented in plugin-ui.cpp
     void addApplyButton(obs_properties_t *props, const char *propName = "apply");
@@ -145,6 +149,8 @@ class BranchOutputFilter : public QObject {
     static void onSplitRecordingFileHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static bool onPauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
     static bool onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
+    static void
+    onAddChapterToRecordingFileHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
 
     void addCallback(obs_source_t *source);
     void updateCallback(obs_data_t *settings);

@@ -8,5 +8,6 @@
     <file>images/recording-paused.svg</file>
     <file>images/visible.svg</file>
     <file>images/invisible.svg</file>
+    <file>images/chapter.svg</file>
   </qresource>
 </RCC>

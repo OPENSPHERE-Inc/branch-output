@@ -111,6 +111,12 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     unpauseRecordingAllButton->setEnabled(false);
     connect(unpauseRecordingAllButton, &QToolButton::clicked, this, [this]() { unpauseRecordingAll(); });
 
+    addChapterToRecordingAllButton = new QToolButton(this);
+    addChapterToRecordingAllButton->setToolTip(QTStr("AddChapterToAllRecordings"));
+    addChapterToRecordingAllButton->setIcon(QIcon(":/branch-output/images/chapter.svg"));
+    addChapterToRecordingAllButton->setEnabled(false);
+    connect(addChapterToRecordingAllButton, &QToolButton::clicked, this, [this]() { addChapterToRecordingAll(); });
+
     interlockLabel = new QLabel(QTStr("Interlock"), this);
     interlockComboBox = new QComboBox(this);
     interlockComboBox->addItem(QTStr("AlwaysOn"), BranchOutputFilter::INTERLOCK_TYPE_ALWAYS_ON);
@@ -127,6 +133,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     buttonsContainerLayout->addWidget(splitRecordingAllButton);
     buttonsContainerLayout->addWidget(pauseRecordingAllButton);
     buttonsContainerLayout->addWidget(unpauseRecordingAllButton);
+    buttonsContainerLayout->addWidget(addChapterToRecordingAllButton);
     buttonsContainerLayout->addStretch();
     buttonsContainerLayout->addWidget(interlockLabel);
     buttonsContainerLayout->addWidget(interlockComboBox);
@@ -155,6 +162,10 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
         "UnpauseRecordingAllBranchOutputsHotkey", obs_module_text("UnpauseRecordingAllHotkey"),
         onUnpauseRecordingAllHotkeyPressed, this
     );
+    addChapterToRecordingAllHotkey = obs_hotkey_register_frontend(
+        "AddChapterToRecordingAllBranchOutputsHotkey", obs_module_text("AddChapterToRecordingAllHotkey"),
+        onAddChapterToRecordingAllHotkeyPressed, this
+    );
 
     loadSettings();
     loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
@@ -162,6 +173,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     loadHotkey(splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
     loadHotkey(pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
     loadHotkey(unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
+    loadHotkey(addChapterToRecordingAllHotkey, "AddChapterToRecordingAllBranchOutputsHotkey");
 
     obs_log(LOG_DEBUG, "BranchOutputStatusDock created");
 }
@@ -174,6 +186,9 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
     obs_hotkey_unregister(enableAllHotkey);
     obs_hotkey_unregister(disableAllHotkey);
     obs_hotkey_unregister(splitRecordingAllHotkey);
+    obs_hotkey_unregister(pauseRecordingAllHotkey);
+    obs_hotkey_unregister(unpauseRecordingAllHotkey);
+    obs_hotkey_unregister(addChapterToRecordingAllHotkey);
 
     obs_log(LOG_DEBUG, "BranchOutputStatusDock destroyed");
 }
@@ -298,6 +313,7 @@ void BranchOutputStatusDock::update()
     applySplitRecordingAllButtonEnabled();
     applyPauseRecordingAllButtonEnabled();
     applyUnpauseRecordingAllButtonEnabled();
+    applyAddChapterToRecordingAllButtonEnabled();
 }
 
 void BranchOutputStatusDock::applyEnableAllButtonEnabled()
@@ -355,6 +371,17 @@ void BranchOutputStatusDock::applyUnpauseRecordingAllButtonEnabled()
     unpauseRecordingAllButton->setEnabled(false);
 }
 
+void BranchOutputStatusDock::applyAddChapterToRecordingAllButtonEnabled()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->status->isAddChapterToRecordingButtonShow()) {
+            addChapterToRecordingAllButton->setEnabled(true);
+            return;
+        }
+    }
+    addChapterToRecordingAllButton->setEnabled(false);
+}
+
 void BranchOutputStatusDock::showEvent(QShowEvent *)
 {
     timer.start(TIMER_INTERVAL);
@@ -405,6 +432,15 @@ void BranchOutputStatusDock::unpauseRecordingAll()
     }
 }
 
+void BranchOutputStatusDock::addChapterToRecordingAll()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isAddChapterToRecordingButtonShow()) {
+            row->filter->addChapterToRecording();
+        }
+    }
+}
+
 void BranchOutputStatusDock::onEanbleAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     auto dock = static_cast<BranchOutputStatusDock *>(data);
@@ -442,6 +478,16 @@ void BranchOutputStatusDock::onUnpauseRecordingAllHotkeyPressed(void *data, obs_
     auto dock = static_cast<BranchOutputStatusDock *>(data);
     if (pressed) {
         dock->unpauseRecordingAll();
+    }
+}
+
+void BranchOutputStatusDock::onAddChapterToRecordingAllHotkeyPressed(
+    void *data, obs_hotkey_id, obs_hotkey *, bool pressed
+)
+{
+    auto dock = static_cast<BranchOutputStatusDock *>(data);
+    if (pressed) {
+        dock->addChapterToRecordingAll();
     }
 }
 
@@ -512,6 +558,7 @@ OutputTableRow::OutputTableRow(
     connect(status, &StatusCell::splitRecordingButtonClicked, this, [this]() { splitRecording(); });
     connect(status, &StatusCell::pauseRecordingButtonClicked, this, [this]() { pauseRecording(); });
     connect(status, &StatusCell::unpauseRecordingButtonClicked, this, [this]() { unpauseRecording(); });
+    connect(status, &StatusCell::addChapterToRecordingButtonClicked, this, [this]() { addChapterToRecording(); });
 }
 
 OutputTableRow::~OutputTableRow()
@@ -558,6 +605,8 @@ void OutputTableRow::update()
             status->setSplitRecordingButtonShow(false);
             status->setPauseRecordingButtonShow(false);
             status->setUnpauseRecordingButtonShow(false);
+            status->setAddChapterToRecordingButtonShow(false);
+            status->setAddChapterToRecordingButtonShow(false);
         } else {
             switch (outputType) {
             case ROW_OUTPUT_STREAMING:
@@ -572,6 +621,7 @@ void OutputTableRow::update()
                 status->setSplitRecordingButtonShow(false);
                 status->setPauseRecordingButtonShow(false);
                 status->setUnpauseRecordingButtonShow(false);
+                status->setAddChapterToRecordingButtonShow(false);
                 break;
             case ROW_OUTPUT_RECORDING:
                 if (paused) {
@@ -587,6 +637,7 @@ void OutputTableRow::update()
                 }
                 status->setPauseRecordingButtonShow(!paused && filter->canPauseRecording());
                 status->setUnpauseRecordingButtonShow(paused && !filter->recordingPending);
+                status->setAddChapterToRecordingButtonShow(!paused && filter->canAddChapterToRecording());
                 break;
             default:
                 status->setText(QTStr("Status.Inactive"));
@@ -595,6 +646,7 @@ void OutputTableRow::update()
                 status->setSplitRecordingButtonShow(false);
                 status->setPauseRecordingButtonShow(false);
                 status->setUnpauseRecordingButtonShow(false);
+                status->setAddChapterToRecordingButtonShow(false);
             }
         }
     } else {
@@ -608,6 +660,7 @@ void OutputTableRow::update()
         status->setSplitRecordingButtonShow(false);
         status->setPauseRecordingButtonShow(false);
         status->setUnpauseRecordingButtonShow(false);
+        status->setAddChapterToRecordingButtonShow(false);
         droppedFrames->setText("");
         megabytesSent->setText("");
         bitrate->setText("");
@@ -734,6 +787,15 @@ void OutputTableRow::unpauseRecording()
     }
 
     filter->unpauseRecording();
+}
+
+void OutputTableRow::addChapterToRecording()
+{
+    if (outputType != ROW_OUTPUT_RECORDING) {
+        return;
+    }
+
+    filter->addChapterToRecording();
 }
 
 //--- FilterCell class ---//
@@ -878,6 +940,7 @@ StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent)
     splitRecordingButton = new QToolButton(this);
     pauseRecordingButton = new QToolButton(this);
     unpauseRecordingButton = new QToolButton(this);
+    addChapterToRecordingButton = new QToolButton(this);
 
     streamingIcon->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
     streamingIcon->setPixmap(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
@@ -900,9 +963,15 @@ StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent)
     unpauseRecordingButton->setIcon(QIcon(":/branch-output/images/unpause.svg"));
     unpauseRecordingButton->setVisible(false);
 
+    addChapterToRecordingButton->setIcon(QIcon(":/branch-output/images/chapter.svg"));
+    addChapterToRecordingButton->setVisible(false);
+
     connect(splitRecordingButton, &QToolButton::clicked, this, [this]() { emit splitRecordingButtonClicked(); });
     connect(pauseRecordingButton, &QToolButton::clicked, this, [this]() { emit pauseRecordingButtonClicked(); });
     connect(unpauseRecordingButton, &QToolButton::clicked, this, [this]() { emit unpauseRecordingButtonClicked(); });
+    connect(addChapterToRecordingButton, &QToolButton::clicked, this, [this]() {
+        emit addChapterToRecordingButtonClicked();
+    });
 
     auto layout = new QHBoxLayout();
     layout->setContentsMargins(0, 0, 0, 0);
@@ -913,6 +982,7 @@ StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent)
     layout->addWidget(pauseRecordingButton);
     layout->addWidget(unpauseRecordingButton);
     layout->addWidget(splitRecordingButton);
+    layout->addWidget(addChapterToRecordingButton);
     layout->addSpacing(5);
     setLayout(layout);
 }
