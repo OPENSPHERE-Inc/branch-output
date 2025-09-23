@@ -634,7 +634,7 @@ void OutputTableRow::update()
                     status->setSplitRecordingButtonShow(isSplitRecordingEnabled);
                 }
                 status->setPauseRecordingButtonShow(!paused && filter->canPauseRecording());
-                status->setUnpauseRecordingButtonShow(paused && !filter->outputPending);
+                status->setUnpauseRecordingButtonShow(paused && !filter->recordingPending);
                 status->setAddChapterToRecordingButtonShow(!paused && filter->canAddChapterToRecording());
                 break;
             default:
@@ -648,7 +648,7 @@ void OutputTableRow::update()
             }
         }
     } else {
-        if (filter->outputPending) {
+        if (outputType == ROW_OUTPUT_RECORDING && filter->recordingPending) {
             status->setText(QTStr("Status.Pending"));
         } else {
             status->setText(QTStr("Status.Inactive"));
