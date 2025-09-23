@@ -102,11 +102,13 @@ class StatusCell : public QWidget {
     QToolButton *splitRecordingButton;
     QToolButton *pauseRecordingButton;
     QToolButton *unpauseRecordingButton;
+    QToolButton *addChapterToRecordingButton;
 
 signals:
     void splitRecordingButtonClicked();
     void pauseRecordingButtonClicked();
     void unpauseRecordingButtonClicked();
+    void addChapterToRecordingButtonClicked();
 
 public:
     enum StatusIcon { STATUS_ICON_NONE, STATUS_ICON_STREAMING, STATUS_ICON_RECORDING, STATUS_ICON_RECORDING_PAUSED };
@@ -124,6 +126,8 @@ public:
     inline bool isPauseRecordingButtonShow() const { return pauseRecordingButton->isVisible(); };
     inline void setUnpauseRecordingButtonShow(bool show) { unpauseRecordingButton->setVisible(show); };
     inline bool isUnpauseRecordingButtonShow() const { return unpauseRecordingButton->isVisible(); };
+    inline void setAddChapterToRecordingButtonShow(bool show) { addChapterToRecordingButton->setVisible(show); };
+    inline bool isAddChapterToRecordingButtonShow() const { return addChapterToRecordingButton->isVisible(); };
 };
 
 enum RowOutputType {
@@ -146,6 +150,7 @@ class BranchOutputStatusDock : public QFrame {
     QToolButton *splitRecordingAllButton = nullptr;
     QToolButton *pauseRecordingAllButton = nullptr;
     QToolButton *unpauseRecordingAllButton = nullptr;
+    QToolButton *addChapterToRecordingAllButton = nullptr;
     QLabel *interlockLabel = nullptr;
     QComboBox *interlockComboBox = nullptr;
     OBSSignal sourceAddedSignal;
@@ -154,6 +159,7 @@ class BranchOutputStatusDock : public QFrame {
     obs_hotkey_id splitRecordingAllHotkey;
     obs_hotkey_id pauseRecordingAllHotkey;
     obs_hotkey_id unpauseRecordingAllHotkey;
+    obs_hotkey_id addChapterToRecordingAllHotkey;
 
     void update();
     void applyEnableAllButtonEnabled();
@@ -161,6 +167,7 @@ class BranchOutputStatusDock : public QFrame {
     void applySplitRecordingAllButtonEnabled();
     void applyPauseRecordingAllButtonEnabled();
     void applyUnpauseRecordingAllButtonEnabled();
+    void applyAddChapterToRecordingAllButtonEnabled();
     void saveSettings();
     void loadSettings();
 
@@ -169,6 +176,7 @@ class BranchOutputStatusDock : public QFrame {
     static void onSplitRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onPauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onUnpauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onAddChapterToRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
@@ -186,6 +194,7 @@ public slots:
     void splitRecordingAll();
     void pauseRecordingAll();
     void unpauseRecordingAll();
+    void addChapterToRecordingAll();
 
     inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
 };
@@ -219,6 +228,7 @@ class OutputTableRow : public QObject {
     void splitRecording();
     void pauseRecording();
     void unpauseRecording();
+    void addChapterToRecording();
 
     long double kbps = 0.0l;
 

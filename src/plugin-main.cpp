@@ -1082,6 +1082,13 @@ bool BranchOutputFilter::canPauseRecording()
     return countActiveStreamings() == 0;
 }
 
+bool BranchOutputFilter::canAddChapterToRecording()
+{
+    // Chapter maker is only available for hybrid MP4
+    return recordingActive && recordingOutput && !obs_output_paused(recordingOutput) &&
+        !strcmp(obs_output_get_id(recordingOutput), "mp4_output");
+}
+
 // Controlling output status here.
 // Start / Stop should only heppen in this function as possible because rapid manipulation caused crash easily.
 // NOTE: Becareful this function is called so offen.

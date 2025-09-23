@@ -124,6 +124,7 @@ class BranchOutputFilter : public QObject {
     bool isRecordingEnabled(obs_data_t *settings);
     bool isRecordingSplitEnabled(obs_data_t *settings);
     bool canPauseRecording();
+    bool canAddChapterToRecording();
     void registerHotkey();
     bool splitRecording();
     bool pauseRecording();
