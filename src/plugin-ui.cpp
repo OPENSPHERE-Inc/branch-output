@@ -399,6 +399,7 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     obs_property_list_add_string(fileFormatList, obs_module_text("MOV"), "mov");
     obs_property_list_add_string(fileFormatList, obs_module_text("fMOV"), "fragmented_mov");
     obs_property_list_add_string(fileFormatList, obs_module_text("TS"), "mpegts");
+    obs_property_set_long_description(fileFormatList, obs_module_text("VideoFormatNote"));
 
     auto splitFileList = obs_properties_add_list(
         streamGroup, "split_file", obs_module_text("SplitFile"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
