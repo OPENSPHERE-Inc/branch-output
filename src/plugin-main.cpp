@@ -1362,7 +1362,7 @@ bool BranchOutputFilter::unpauseRecording()
     }
 }
 
-bool BranchOutputFilter::addChapterToRecording(QString name)
+bool BranchOutputFilter::addChapterToRecording(QString chapterName)
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -1384,8 +1384,8 @@ bool BranchOutputFilter::addChapterToRecording(QString name)
         // Use current date-time when name is empty
         calldata_set_string(
             &cd, "chapter_name",
-            name.isEmpty() ? qUtf8Printable(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
-                           : qUtf8Printable(name)
+            chapterName.isEmpty() ? qUtf8Printable(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+                                  : qUtf8Printable(chapterName)
         );
         bool result = proc_handler_call(ph, "add_chapter", &cd);
         calldata_free(&cd);

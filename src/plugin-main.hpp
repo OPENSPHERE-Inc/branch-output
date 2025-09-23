@@ -130,7 +130,7 @@ class BranchOutputFilter : public QObject {
     bool splitRecording();
     bool pauseRecording();
     bool unpauseRecording();
-    bool addChapterToRecording(QString name = QString());
+    bool addChapterToRecording(QString chapterName = QString());
 
     // Implemented in plugin-ui.cpp
     void addApplyButton(obs_properties_t *props, const char *propName = "apply");
