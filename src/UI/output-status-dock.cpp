@@ -481,7 +481,9 @@ void BranchOutputStatusDock::onUnpauseRecordingAllHotkeyPressed(void *data, obs_
     }
 }
 
-void BranchOutputStatusDock::onAddChapterToRecordingAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+void BranchOutputStatusDock::onAddChapterToRecordingAllHotkeyPressed(
+    void *data, obs_hotkey_id, obs_hotkey *, bool pressed
+)
 {
     auto dock = static_cast<BranchOutputStatusDock *>(data);
     if (pressed) {
@@ -967,7 +969,9 @@ StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent)
     connect(splitRecordingButton, &QToolButton::clicked, this, [this]() { emit splitRecordingButtonClicked(); });
     connect(pauseRecordingButton, &QToolButton::clicked, this, [this]() { emit pauseRecordingButtonClicked(); });
     connect(unpauseRecordingButton, &QToolButton::clicked, this, [this]() { emit unpauseRecordingButtonClicked(); });
-    connect(addChapterToRecordingButton, &QToolButton::clicked, this, [this]() { emit addChapterToRecordingButtonClicked(); });
+    connect(addChapterToRecordingButton, &QToolButton::clicked, this, [this]() {
+        emit addChapterToRecordingButtonClicked();
+    });
 
     auto layout = new QHBoxLayout();
     layout->setContentsMargins(0, 0, 0, 0);
