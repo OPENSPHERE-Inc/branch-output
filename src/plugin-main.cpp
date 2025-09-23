@@ -24,6 +24,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include <obs.hpp>
 
+#include <QDateTime>
+
 #include "audio/audio-capture.hpp"
 #include "plugin-support.h"
 #include "plugin-main.hpp"
@@ -1098,7 +1100,7 @@ bool BranchOutputFilter::canAddChapterToRecording()
 {
     // Chapter maker is only available for hybrid MP4
     return recordingActive && recordingOutput && !obs_output_paused(recordingOutput) &&
-        !strcmp(obs_output_get_id(recordingOutput), "mp4_output");
+           !strcmp(obs_output_get_id(recordingOutput), "mp4_output");
 }
 
 // Controlling output status here.
@@ -1379,7 +1381,12 @@ bool BranchOutputFilter::addChapterToRecording(QString name)
         proc_handler_t *ph = obs_output_get_proc_handler(recordingOutput);
         calldata cd;
         calldata_init(&cd);
-        calldata_set_string(&cd, "chapter_name", name.isEmpty() ? nullptr : qUtf8Printable(name));
+        // Use current date-time when name is empty
+        calldata_set_string(
+            &cd, "chapter_name",
+            name.isEmpty() ? qUtf8Printable(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+                           : qUtf8Printable(name)
+        );
         bool result = proc_handler_call(ph, "add_chapter", &cd);
         calldata_free(&cd);
         return result;
