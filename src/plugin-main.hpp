@@ -68,7 +68,6 @@ class BranchOutputFilter : public QObject {
     uint32_t storedSettingsRev;
     uint32_t activeSettingsRev;
     QTimer *intervalTimer;
-    bool outputPending; // Pending due to collapsed source resolution
 
     // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
@@ -88,6 +87,7 @@ class BranchOutputFilter : public QObject {
     // Recording context
     bool recordingActive;
     OBSOutputAutoRelease recordingOutput;
+    bool recordingPending; // Pending due to collapsed source resolution
 
     // Streaming context
     pthread_mutex_t outputMutex;
@@ -107,6 +107,7 @@ class BranchOutputFilter : public QObject {
     BranchOutputStreamingContext createSreamingOutput(obs_data_t *settings, size_t index = 0);
     void startStreamingOutput(size_t index = 0);
     void createAndStartRecordingOutput(obs_data_t *settings);
+    void stopRecordingOutput();
     void reconnectStreamingOutput(size_t index = 0);
     void restartRecordingOutput();
     void loadProfile(obs_data_t *settings);
