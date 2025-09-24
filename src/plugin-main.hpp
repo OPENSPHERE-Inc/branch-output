@@ -60,7 +60,9 @@ class BranchOutputFilter : public QObject {
         OBSOutputAutoRelease output;
         OBSServiceAutoRelease service;
         uint64_t connectAttemptingAt;
+        uint64_t disconnectAttemptingAt;
         bool active;
+        bool stopping;
     };
 
     QString name;
@@ -68,6 +70,7 @@ class BranchOutputFilter : public QObject {
     uint32_t storedSettingsRev;
     uint32_t activeSettingsRev;
     QTimer *intervalTimer;
+    bool streamingStopping;
 
     // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
@@ -108,6 +111,7 @@ class BranchOutputFilter : public QObject {
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi);
     BranchOutputStreamingContext createSreamingOutput(obs_data_t *settings, size_t index = 0);
     void startStreamingOutput(size_t index = 0);
+    void stopStreamingOutput(size_t index = 0);
     void createAndStartRecordingOutput(obs_data_t *settings);
     void stopRecordingOutput();
     void reconnectStreamingOutput(size_t index = 0);
@@ -116,6 +120,7 @@ class BranchOutputFilter : public QObject {
     void loadRecently(obs_data_t *settings);
     void restartOutput();
     bool connectAttemptingTimedOut(size_t index = 0);
+    bool disconnectAttemptingTimedOut(size_t index = 0);
     bool everyConnectAttemptingsTimedOut();
     int countEnabledStreamings(obs_data_t *settings);
     int countAliveStreamings();
@@ -164,6 +169,7 @@ class BranchOutputFilter : public QObject {
 private slots:
     void onIntervalTimerTimeout();
     void removeCallback();
+    void onStopOutputGracefully();
 
 public:
     explicit BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
