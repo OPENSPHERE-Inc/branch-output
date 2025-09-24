@@ -36,6 +36,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define OUTPUT_MAX_RETRIES 7
 #define OUTPUT_RETRY_DELAY_SECS 1
 #define CONNECT_ATTEMPTING_TIMEOUT_NS 15000000000ULL
+#define DISCONNECT_ATTEMPTING_TIMEOUT_NS 2000000000ULL
 #define AVAILAVILITY_CHECK_INTERVAL_NS 1000000000ULL
 #define TASK_INTERVAL_MS 1000
 
@@ -266,18 +267,8 @@ void BranchOutputFilter::stopOutput()
     {
         OBSMutexAutoUnlock locked(&outputMutex);
 
-        obs_source_t *parent = obs_filter_get_parent(filterSource);
-
         for (size_t i = 0; i < MAX_SERVICES; i++) {
-            if (streamings[i].output && streamings[i].active) {
-                obs_source_dec_showing(parent);
-                obs_output_stop(streamings[i].output);
-                obs_log(LOG_INFO, "%s: Stopping streaming %zu output succeeded", qUtf8Printable(name), i);
-            }
-            streamings[i].output = nullptr;
-            streamings[i].service = nullptr;
-            streamings[i].connectAttemptingAt = 0;
-            streamings[i].active = false;
+            stopStreamingOutput(i);
         }
 
         for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
@@ -550,6 +541,8 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
 
     obs_output_set_video_encoder(streamings[index].output, videoEncoder);
 
+    streamings[index].connectAttemptingAt = os_gettime_ns();
+
     // Start streaming output
     if (obs_output_start(streamings[index].output)) {
         streamings[index].active = true;
@@ -558,6 +551,22 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
     } else {
         obs_log(LOG_ERROR, "%s: Starting streaming %zu output failed", qUtf8Printable(name), index);
     }
+}
+
+void BranchOutputFilter::stopStreamingOutput(size_t index)
+{
+    if (streamings[index].output && streamings[index].active) {
+        obs_source_dec_showing(obs_filter_get_parent(filterSource));
+        obs_output_stop(streamings[index].output);
+        obs_log(LOG_INFO, "%s: Stopping streaming %zu output succeeded", qUtf8Printable(name), index);
+    }
+
+    streamings[index].output = nullptr;
+    streamings[index].service = nullptr;
+    streamings[index].connectAttemptingAt = 0;
+    streamings[index].disconnectAttemptingAt = 0;
+    streamings[index].active = false;
+    streamings[index].stopping = false;
 }
 
 void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
@@ -688,9 +697,6 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
         for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
             streamings[i] = createSreamingOutput(settings, i);
-            if (streamings[i].output) {
-                streamings[i].connectAttemptingAt = os_gettime_ns();
-            }
         }
 
         //--- Open video output ---//
@@ -1018,6 +1024,12 @@ bool BranchOutputFilter::connectAttemptingTimedOut(size_t index)
            os_gettime_ns() - streamings[index].connectAttemptingAt > CONNECT_ATTEMPTING_TIMEOUT_NS;
 }
 
+bool BranchOutputFilter::disconnectAttemptingTimedOut(size_t index)
+{
+    return streamings[index].disconnectAttemptingAt &&
+           os_gettime_ns() - streamings[index].disconnectAttemptingAt > DISCONNECT_ATTEMPTING_TIMEOUT_NS;
+}
+
 bool BranchOutputFilter::everyConnectAttemptingsTimedOut()
 {
     for (size_t i = 0; i < MAX_SERVICES; i++) {
@@ -1113,6 +1125,10 @@ void BranchOutputFilter::onIntervalTimerTimeout()
         return;
     }
 
+    if (streamingStopping) {
+        onStopOutputGracefully();
+    }
+
     auto interlockType = statusDock ? statusDock->getInterlockType() : INTERLOCK_TYPE_ALWAYS_ON;
     auto sourceEnabled = obs_source_enabled(filterSource);
     auto streamingActive = countActiveStreamings() > 0;
@@ -1168,25 +1184,25 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             if (interlockType == INTERLOCK_TYPE_STREAMING) {
                 if (!obs_frontend_streaming_active()) {
                     // Stop output when streaming is not active
-                    stopOutput();
+                    onStopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_RECORDING) {
                 if (!obs_frontend_recording_active()) {
                     // Stop output when recording is not active
-                    stopOutput();
+                    onStopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_STREAMING_RECORDING) {
                 if (!obs_frontend_streaming_active() && !obs_frontend_recording_active()) {
                     // Stop output when streaming and recording are not active
-                    stopOutput();
+                    onStopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
                 if (!obs_frontend_virtualcam_active()) {
                     // Stop output when virtual cam is not active
-                    stopOutput();
+                    onStopOutputGracefully();
                     return;
                 }
             }
@@ -1208,7 +1224,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
                 if (!sourceInFrontend(parent)) {
                     // Stop output when source resolution is zero or source had been removed
-                    stopOutput();
+                    onStopOutputGracefully();
                     return;
                 }
 
@@ -1293,11 +1309,52 @@ void BranchOutputFilter::onIntervalTimerTimeout()
         } else {
             if (streamingAlive || recordingAlive || recordingPending) {
                 // Clicked filter's "Eye" icon (Hide)
-                stopOutput();
+                onStopOutputGracefully();
                 return;
             }
         }
     }
+}
+
+void BranchOutputFilter::onStopOutputGracefully()
+{
+    // Stop recording immediately first
+    stopRecordingOutput();
+
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        streamingStopping = true;
+
+        for (size_t i = 0; i < MAX_SERVICES; i++) {
+            if (streamings[i].output && streamings[i].active) {
+                if (streamings[i].stopping) {
+                    if (disconnectAttemptingTimedOut(i)) {
+                        // stop streaming safely
+                        stopStreamingOutput(i);
+                    }
+                } else if (obs_output_reconnecting(streamings[i].output)) {
+                    // Waiting few seconds to avoid crash due to stoppoing during reconnecting
+                    streamings[i].stopping = true;
+                    streamings[i].disconnectAttemptingAt = os_gettime_ns();
+                } else {
+                    // Stop immediately
+                    stopStreamingOutput(i);
+                }
+            }
+        }
+
+        if (countActiveStreamings() > 0) {
+            return;
+        }
+
+        // All streaming has been stopped
+        streamingStopping = false;
+    }
+
+    // Finalize termination
+    stopOutput();
 }
 
 bool BranchOutputFilter::splitRecording()
