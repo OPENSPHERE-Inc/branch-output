@@ -209,7 +209,6 @@ class OutputTableRow : public QObject {
     ParentCell *parentCell;
     StatusCell *status;
     RowOutputType outputType;
-    bool isSplitRecordingEnabled = false;
     size_t streamingIndex;
     size_t groupIndex;
     QLabel *droppedFrames;

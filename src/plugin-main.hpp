@@ -61,8 +61,10 @@ class BranchOutputFilter : public QObject {
         OBSServiceAutoRelease service;
         uint64_t connectAttemptingAt;
         uint64_t disconnectAttemptingAt;
+        uint64_t reconnectAttemptingAt;
         bool active;
         bool stopping;
+        OBSSignal outputReconnectSignal;
     };
 
     QString name;
@@ -91,6 +93,8 @@ class BranchOutputFilter : public QObject {
     bool recordingActive;
     OBSOutputAutoRelease recordingOutput;
     bool recordingPending; // Pending due to collapsed source resolution
+    bool splitRecordingEnabled;
+    bool addChapterToRecordingEnabled;
 
     // Streaming context
     pthread_mutex_t outputMutex;
@@ -121,6 +125,7 @@ class BranchOutputFilter : public QObject {
     void restartOutput();
     bool connectAttemptingTimedOut(size_t index = 0);
     bool disconnectAttemptingTimedOut(size_t index = 0);
+    bool reconnectAttemptingTimedOut(size_t index = 0);
     bool everyConnectAttemptingsTimedOut();
     int countEnabledStreamings(obs_data_t *settings);
     int countAliveStreamings();
@@ -128,9 +133,10 @@ class BranchOutputFilter : public QObject {
     bool hasEnabledStreamings(obs_data_t *settings);
     bool isStreamingEnabled(obs_data_t *settings, size_t index = 0);
     bool isRecordingEnabled(obs_data_t *settings);
-    bool isRecordingSplitEnabled(obs_data_t *settings);
+    bool isSplitRecordingEnabled(obs_data_t *settings);
     bool canPauseRecording();
     bool canAddChapterToRecording();
+    bool canSplitRecording();
     void registerHotkey();
     bool splitRecording();
     bool pauseRecording();

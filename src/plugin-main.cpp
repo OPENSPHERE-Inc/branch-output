@@ -37,6 +37,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define OUTPUT_RETRY_DELAY_SECS 1
 #define CONNECT_ATTEMPTING_TIMEOUT_NS 15000000000ULL
 #define DISCONNECT_ATTEMPTING_TIMEOUT_NS 2000000000ULL
+#define RECONNECT_ATTEMPTING_TIMEOUT_NS 2000000000ULL
 #define AVAILAVILITY_CHECK_INTERVAL_NS 1000000000ULL
 #define TASK_INTERVAL_MS 1000
 
@@ -44,6 +45,7 @@ OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 BranchOutputStatusDock *statusDock = nullptr;
+pthread_mutex_t pluginMutex;
 
 //--- BranchOutputFilter class ---//
 
@@ -64,7 +66,8 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       width(0),
       height(0),
       toggleEnableHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
-      splitRecordingHotkeyId(OBS_INVALID_HOTKEY_ID)
+      splitRecordingHotkeyId(OBS_INVALID_HOTKEY_ID),
+      splitRecordingEnabled(false)
 {
     // DO NOT use obs_filter_get_parent() in this function (It'll return nullptr)
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", qUtf8Printable(name));
@@ -256,6 +259,8 @@ void BranchOutputFilter::stopRecordingOutput()
         }
 
         recordingPending = false;
+        addChapterToRecordingEnabled = false;
+        splitRecordingEnabled = false;
     }
 }
 
@@ -330,7 +335,8 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
     obs_data_set_string(recordingSettings, "path", qUtf8Printable(compositePath));
 
     auto splitFile = obs_data_get_string(settings, "split_file");
-    if (strlen(splitFile) > 0) {
+    splitRecordingEnabled = strlen(splitFile) > 0;
+    if (splitRecordingEnabled) {
         obs_data_set_string(recordingSettings, "directory", path);
         obs_data_set_string(recordingSettings, "format", qUtf8Printable(filenameFormat));
         obs_data_set_string(recordingSettings, "extension", qUtf8Printable(getFormatExt(recFormat)));
@@ -543,6 +549,16 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
 
     streamings[index].connectAttemptingAt = os_gettime_ns();
 
+    // Track reconnect signal
+    streamings[index].outputReconnectSignal.Connect(
+        obs_output_get_signal_handler(streamings[index].output), "reconnect",
+        [](void *_data, calldata_t *) {
+            auto context = static_cast<BranchOutputStreamingContext *>(_data);
+            context->reconnectAttemptingAt = os_gettime_ns();
+        },
+        &streamings[index]
+    );
+
     // Start streaming output
     if (obs_output_start(streamings[index].output)) {
         streamings[index].active = true;
@@ -565,6 +581,7 @@ void BranchOutputFilter::stopStreamingOutput(size_t index)
     streamings[index].service = nullptr;
     streamings[index].connectAttemptingAt = 0;
     streamings[index].disconnectAttemptingAt = 0;
+    streamings[index].reconnectAttemptingAt = 0;
     streamings[index].active = false;
     streamings[index].stopping = false;
 }
@@ -577,6 +594,10 @@ void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
 
     auto recFormat = obs_data_get_string(settings, "rec_format");
     const char *outputId = !strcmp(recFormat, "hybrid_mp4") ? "mp4_output" : "ffmpeg_muxer";
+
+    // Dtermine chapter marker capability
+    // Chapter maker is only available for hybrid MP4
+    addChapterToRecordingEnabled = !strcmp(recFormat, "hybrid_mp4");
 
     // Ensure base path exists
     OBSDataAutoRelease recordingSettings = createRecordingSettings(settings, true);
@@ -1030,6 +1051,12 @@ bool BranchOutputFilter::disconnectAttemptingTimedOut(size_t index)
            os_gettime_ns() - streamings[index].disconnectAttemptingAt > DISCONNECT_ATTEMPTING_TIMEOUT_NS;
 }
 
+bool BranchOutputFilter::reconnectAttemptingTimedOut(size_t index)
+{
+    return streamings[index].reconnectAttemptingAt &&
+           os_gettime_ns() - streamings[index].reconnectAttemptingAt > RECONNECT_ATTEMPTING_TIMEOUT_NS;
+}
+
 bool BranchOutputFilter::everyConnectAttemptingsTimedOut()
 {
     for (size_t i = 0; i < MAX_SERVICES; i++) {
@@ -1095,24 +1122,26 @@ bool BranchOutputFilter::isRecordingEnabled(obs_data_t *settings)
     return obs_data_get_bool(settings, "stream_recording");
 }
 
-bool BranchOutputFilter::isRecordingSplitEnabled(obs_data_t *settings)
+bool BranchOutputFilter::isSplitRecordingEnabled(obs_data_t *settings)
 {
     // Split mode will be disabled when some streamings are enabled.
-    return isRecordingEnabled(settings) && !!strlen(obs_data_get_string(settings, "split_file")) &&
-           !hasEnabledStreamings(settings);
+    return isRecordingEnabled(settings) && !!strlen(obs_data_get_string(settings, "split_file"));
 }
 
 bool BranchOutputFilter::canPauseRecording()
 {
     // Pausing recording will be disabled when some streamings are active.
-    return countActiveStreamings() == 0;
+    return countActiveStreamings() == 0 && !recordingPending;
 }
 
 bool BranchOutputFilter::canAddChapterToRecording()
 {
-    // Chapter maker is only available for hybrid MP4
-    return recordingActive && recordingOutput && !obs_output_paused(recordingOutput) &&
-           !strcmp(obs_output_get_id(recordingOutput), "mp4_output");
+    return recordingActive && recordingOutput && addChapterToRecordingEnabled && !obs_output_paused(recordingOutput);
+}
+
+bool BranchOutputFilter::canSplitRecording()
+{
+    return recordingActive && recordingOutput && splitRecordingEnabled && !obs_output_paused(recordingOutput);
 }
 
 // Controlling output status here.
@@ -1321,36 +1350,42 @@ void BranchOutputFilter::onStopOutputGracefully()
     // Stop recording immediately first
     stopRecordingOutput();
 
-    pthread_mutex_lock(&outputMutex);
+    // Lock out other output thread to prevent crash
+    pthread_mutex_lock(&pluginMutex);
     {
-        OBSMutexAutoUnlock locked(&outputMutex);
+        OBSMutexAutoUnlock locked(&pluginMutex);
 
-        streamingStopping = true;
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock locked(&outputMutex);
 
-        for (size_t i = 0; i < MAX_SERVICES; i++) {
-            if (streamings[i].output && streamings[i].active) {
-                if (streamings[i].stopping) {
-                    if (disconnectAttemptingTimedOut(i)) {
-                        // stop streaming safely
+            streamingStopping = true;
+
+            for (size_t i = 0; i < MAX_SERVICES; i++) {
+                if (streamings[i].output && streamings[i].active) {
+                    if (streamings[i].stopping) {
+                        if (disconnectAttemptingTimedOut(i) && reconnectAttemptingTimedOut(i)) {
+                            // stop streaming safely
+                            stopStreamingOutput(i);
+                        }
+                    } else if (obs_output_reconnecting(streamings[i].output)) {
+                        // Waiting few seconds to avoid crash due to stoppoing during reconnecting
+                        streamings[i].stopping = true;
+                        streamings[i].disconnectAttemptingAt = os_gettime_ns();
+                    } else {
+                        // Stop immediately
                         stopStreamingOutput(i);
                     }
-                } else if (obs_output_reconnecting(streamings[i].output)) {
-                    // Waiting few seconds to avoid crash due to stoppoing during reconnecting
-                    streamings[i].stopping = true;
-                    streamings[i].disconnectAttemptingAt = os_gettime_ns();
-                } else {
-                    // Stop immediately
-                    stopStreamingOutput(i);
                 }
             }
-        }
 
-        if (countActiveStreamings() > 0) {
-            return;
-        }
+            if (countActiveStreamings() > 0) {
+                return;
+            }
 
-        // All streaming has been stopped
-        streamingStopping = false;
+            // All streaming has been stopped
+            streamingStopping = false;
+        }
     }
 
     // Finalize termination
@@ -1363,7 +1398,12 @@ bool BranchOutputFilter::splitRecording()
     {
         OBSMutexAutoUnlock locked(&outputMutex);
 
-        if (!recordingActive || !recordingOutput) {
+        if (!splitRecordingEnabled || !recordingActive || !recordingOutput) {
+            return false;
+        }
+
+        if (obs_output_paused(recordingOutput)) {
+            // Can't split when recording was paused.
             return false;
         }
 
@@ -1425,7 +1465,7 @@ bool BranchOutputFilter::addChapterToRecording(QString chapterName)
     {
         OBSMutexAutoUnlock locked(&outputMutex);
 
-        if (!recordingActive || !recordingOutput) {
+        if (!addChapterToRecordingEnabled || !recordingActive || !recordingOutput) {
             return false;
         }
 
@@ -1458,6 +1498,7 @@ bool BranchOutputFilter::onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair
 
     BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
     if (obs_source_enabled(filter->filterSource)) {
+        // Already enabled
         return false;
     }
 
@@ -1473,6 +1514,7 @@ bool BranchOutputFilter::onDisableFilterHotkeyPressed(void *data, obs_hotkey_pai
 
     BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
     if (!obs_source_enabled(filter->filterSource)) {
+        // Already disabled
         return false;
     }
 
@@ -1647,6 +1689,8 @@ bool obs_module_load()
     filterInfo = BranchOutputFilter::createFilterInfo();
     obs_register_source(&filterInfo);
 
+    pthread_mutex_init(&pluginMutex, nullptr);
+
     obs_log(LOG_INFO, "Plugin loaded successfully (version %s)", PLUGIN_VERSION);
     return true;
 }
@@ -1660,5 +1704,7 @@ void obs_module_post_load()
 
 void obs_module_unload()
 {
+    pthread_mutex_destroy(&pluginMutex);
+
     obs_log(LOG_INFO, "Plugin unloaded");
 }
