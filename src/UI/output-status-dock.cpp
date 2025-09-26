@@ -509,15 +509,12 @@ OutputTableRow::OutputTableRow(
     parentCell = new ParentCell(obs_source_get_name(source), source, parent);
     status = new StatusCell(QTStr("Status.Inactive"), parent);
 
-    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
-
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
         outputName = new QLabel(QTStr("Streaming%1").arg(streamingIndex + 1), parent);
         break;
     case ROW_OUTPUT_RECORDING:
         outputName = new RecordingOutputCell(QTStr("Recording"), filter->filterSource, parent);
-        isSplitRecordingEnabled = filter->isRecordingSplitEnabled(settings);
         break;
     default:
         outputName = new QLabel(QTStr("None"), parent);
@@ -633,16 +630,15 @@ void OutputTableRow::update()
                     status->setText(QTStr("Status.Paused"));
                     status->setTheme("", "");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_RECORDING_PAUSED);
-                    status->setSplitRecordingButtonShow(false);
                 } else {
                     status->setText(QTStr("Status.Recording"));
                     status->setTheme("good", "text-success");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_RECORDING);
-                    status->setSplitRecordingButtonShow(isSplitRecordingEnabled);
                 }
+                status->setSplitRecordingButtonShow(filter->canSplitRecording());
                 status->setPauseRecordingButtonShow(!paused && filter->canPauseRecording());
-                status->setUnpauseRecordingButtonShow(paused && !filter->recordingPending);
-                status->setAddChapterToRecordingButtonShow(!paused && filter->canAddChapterToRecording());
+                status->setUnpauseRecordingButtonShow(paused && filter->canPauseRecording());
+                status->setAddChapterToRecordingButtonShow(filter->canAddChapterToRecording());
                 break;
             default:
                 status->setText(QTStr("Status.Inactive"));
