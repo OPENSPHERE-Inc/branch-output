@@ -28,12 +28,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QTableWidgetItem>
 #include <QLabel>
 #include <QComboBox>
+#include <QToolButton>
+#include <QCheckBox>
 
 #include "../utils.hpp"
 
 class QTableWidget;
 class QString;
-class QCheckBox;
 class QPushButton;
 class BranchOutputFilter;
 class OutputTableRow;
@@ -55,6 +56,7 @@ public:
     ~FilterCell();
 
     void setText(const QString &text);
+    inline bool isVisibilityChecked() const { return visibilityCheckbox->isChecked(); }
 };
 
 class ParentCell : public QLabel {
@@ -93,17 +95,39 @@ public:
 class StatusCell : public QWidget {
     Q_OBJECT
 
-    QLabel *icon;
+    QLabel *streamingIcon;
+    QLabel *recordingIcon;
+    QLabel *recordingPausedIcon;
     QLabel *statusText;
+    QToolButton *splitRecordingButton;
+    QToolButton *pauseRecordingButton;
+    QToolButton *unpauseRecordingButton;
+    QToolButton *addChapterToRecordingButton;
+
+signals:
+    void splitRecordingButtonClicked();
+    void pauseRecordingButtonClicked();
+    void unpauseRecordingButtonClicked();
+    void addChapterToRecordingButtonClicked();
 
 public:
+    enum StatusIcon { STATUS_ICON_NONE, STATUS_ICON_STREAMING, STATUS_ICON_RECORDING, STATUS_ICON_RECORDING_PAUSED };
+
     explicit StatusCell(const QString &text, QWidget *parent = (QWidget *)nullptr);
     ~StatusCell();
 
+    void setIconShow(StatusIcon showIcon);
+
     inline void setText(const QString &text) { statusText->setText(text); };
-    inline void setIcon(const QPixmap &pixmap) { icon->setPixmap(pixmap); };
-    inline void setIconShow(bool show) { icon->setVisible(show); };
     inline void setTheme(const QString &id, const QString &classes) { setThemeID(statusText, id, classes); };
+    inline void setSplitRecordingButtonShow(bool show) { splitRecordingButton->setVisible(show); };
+    inline bool isSplitRecordingButtonShow() const { return splitRecordingButton->isVisible(); };
+    inline void setPauseRecordingButtonShow(bool show) { pauseRecordingButton->setVisible(show); };
+    inline bool isPauseRecordingButtonShow() const { return pauseRecordingButton->isVisible(); };
+    inline void setUnpauseRecordingButtonShow(bool show) { unpauseRecordingButton->setVisible(show); };
+    inline bool isUnpauseRecordingButtonShow() const { return unpauseRecordingButton->isVisible(); };
+    inline void setAddChapterToRecordingButtonShow(bool show) { addChapterToRecordingButton->setVisible(show); };
+    inline bool isAddChapterToRecordingButtonShow() const { return addChapterToRecordingButton->isVisible(); };
 };
 
 enum RowOutputType {
@@ -115,23 +139,44 @@ enum RowOutputType {
 class BranchOutputStatusDock : public QFrame {
     Q_OBJECT
 
+    friend class OutputTableRow;
+
     QTimer timer;
     QTableWidget *outputTable = nullptr;
     QList<OutputTableRow *> outputTableRows;
-    QPushButton *enableAllButton = nullptr;
-    QPushButton *disableAllButton = nullptr;
+    QLabel *applyToAllLabel = nullptr;
+    QToolButton *enableAllButton = nullptr;
+    QToolButton *disableAllButton = nullptr;
+    QToolButton *splitRecordingAllButton = nullptr;
+    QToolButton *pauseRecordingAllButton = nullptr;
+    QToolButton *unpauseRecordingAllButton = nullptr;
+    QToolButton *addChapterToRecordingAllButton = nullptr;
     QLabel *interlockLabel = nullptr;
     QComboBox *interlockComboBox = nullptr;
     OBSSignal sourceAddedSignal;
     obs_hotkey_id enableAllHotkey;
     obs_hotkey_id disableAllHotkey;
+    obs_hotkey_id splitRecordingAllHotkey;
+    obs_hotkey_id pauseRecordingAllHotkey;
+    obs_hotkey_id unpauseRecordingAllHotkey;
+    obs_hotkey_id addChapterToRecordingAllHotkey;
 
     void update();
+    void applyEnableAllButtonEnabled();
+    void applyDisableAllButtonEnabled();
+    void applySplitRecordingAllButtonEnabled();
+    void applyPauseRecordingAllButtonEnabled();
+    void applyUnpauseRecordingAllButtonEnabled();
+    void applyAddChapterToRecordingAllButtonEnabled();
     void saveSettings();
     void loadSettings();
 
     static void onEanbleAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onDisableAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onSplitRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onPauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onUnpauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onAddChapterToRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
@@ -146,6 +191,10 @@ public slots:
     void addFilter(BranchOutputFilter *filter);
     void removeFilter(BranchOutputFilter *filter);
     void setEabnleAll(bool enabled);
+    void splitRecordingAll();
+    void pauseRecordingAll();
+    void unpauseRecordingAll();
+    void addChapterToRecordingAll();
 
     inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
 };
@@ -175,10 +224,17 @@ class OutputTableRow : public QObject {
 
     void update();
     void reset();
+    void splitRecording();
+    void pauseRecording();
+    void unpauseRecording();
+    void addChapterToRecording();
 
     long double kbps = 0.0l;
 
 public:
-    explicit OutputTableRow(QObject *parent = (QObject *)nullptr);
+    explicit OutputTableRow(
+        int row, BranchOutputFilter *filter, size_t streamingIndex, RowOutputType outputType, size_t groupIndex,
+        BranchOutputStatusDock *parent = nullptr
+    );
     ~OutputTableRow();
 };

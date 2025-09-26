@@ -29,8 +29,16 @@ More reliable and proper audio handling.
   
 - Status dock to check the status and statistics of all Branch Output filters. Support for batch or individual activation and deactivation
 - Can be interlinked with OBS Studio's streaming, recording, and virtual camera status
-
-> **For studio mode: Branch Output ignore studio mode's program out and always outputs preview's one**
+- Manual splitting of recorded files (Since 1.0.5)
+- Pause/Unpause Recording (Since 1.0.5)
+- Adding chapter markers to recordings（Only on Hybrid MP4） (Since 1.0.5)
+- Various hotkeys
+  - Enable/Disable the filter
+  - Manual recording splitting, Pause/Unpause, Adding chapters (Since 1.0.5)
+  - Enable/Disable all
+  - Split all recordings, Pause/Unpause all recordings, Add chapter to all reacordings (Since 1.0.5) 
+- Also available in Studio Mode
+  - **Branch Output ignore studio mode's program out and always outputs preview's one**
 
 ## Requirements
 

@@ -118,6 +118,7 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     uint64_t recSplitFileTimeMins = 15;
     uint64_t recSplitFileSizeMb = 2048;
     bool fileNameWithoutSpace = true;
+    const char *mux;
 
     // Capture values from OBS settings
     if (isAdvancedMode(config)) {
@@ -129,20 +130,24 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
         recSplitFileTimeMins = config_get_uint(config, "AdvOut", "RecSplitFileTime");
         recSplitFileSizeMb = config_get_uint(config, "AdvOut", "RecSplitFileSize");
         fileNameWithoutSpace = config_get_bool(config, "AdvOut", "RecFileNameWithoutSpace");
+        mux = config_get_string(config, "AdvOut", "RecMuxerCustom");
     } else {
         videoEncoderId = getSimpleVideoEncoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
         audioEncoderId = getSimpleAudioEncoder(config_get_string(config, "SimpleOutput", "StreamAudioEncoder"));
         audioBitrate = config_get_uint(config, "SimpleOutput", "ABitrate");
         recFormat = config_get_string(config, "SimpleOutput", "RecFormat2");
         fileNameWithoutSpace = config_get_bool(config, "SimpleOutput", "FileNameWithoutSpace");
+        mux = config_get_string(config, "SimpleOutput", "MuxerCustom");
     }
 
     const char *splitFileValue = "";
     if (recSplitFile && strcmp(recSplitFileType, "Manual")) {
         if (!strcmp(recSplitFileType, "Size")) {
             splitFileValue = "by_size";
-        } else {
+        } else if (!strcmp(recSplitFileType, "Time")) {
             splitFileValue = "by_time";
+        } else {
+            splitFileValue = "manual";
         }
     }
     obs_data_set_default_string(defaults, "split_file", splitFileValue);
@@ -177,6 +182,8 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_int(defaults, "split_file_time_mins", recSplitFileTimeMins);
     obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
     obs_data_set_default_bool(defaults, "keep_output_base_resolution", false);
+    obs_data_set_default_bool(defaults, "suspend_recording_when_source_collapsed", false);
+    obs_data_set_default_string(defaults, "rec_muxer_custom", mux);
 
     auto path = getProfileRecordingPath(config);
     obs_data_set_default_string(defaults, "path", path);
@@ -350,6 +357,10 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
         obs_property_set_visible(obs_properties_get(_props, "filename_formatting"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "rec_format"), _streamRecording);
         obs_property_set_visible(obs_properties_get(_props, "split_file"), _streamRecording);
+        obs_property_set_visible(obs_properties_get(_props, "rec_muxer_custom"), _streamRecording);
+        obs_property_set_visible(
+            obs_properties_get(_props, "suspend_recording_when_source_collapsed"), _streamRecording
+        );
 
         auto splitFile = obs_data_get_string(settings, "split_file");
         obs_property_set_visible(
@@ -385,10 +396,13 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
         streamGroup, "rec_format", obs_module_text("VideoFormat"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
     );
     obs_property_list_add_string(fileFormatList, obs_module_text("MKV"), "mkv");
-    obs_property_list_add_string(fileFormatList, obs_module_text("hMP4"), "hybrid_mp4"); // beta
     obs_property_list_add_string(fileFormatList, obs_module_text("MP4"), "mp4");
+    obs_property_list_add_string(fileFormatList, obs_module_text("fMP4"), "fragmented_mp4");
+    obs_property_list_add_string(fileFormatList, obs_module_text("hMP4"), "hybrid_mp4"); // beta
     obs_property_list_add_string(fileFormatList, obs_module_text("MOV"), "mov");
+    obs_property_list_add_string(fileFormatList, obs_module_text("fMOV"), "fragmented_mov");
     obs_property_list_add_string(fileFormatList, obs_module_text("TS"), "mpegts");
+    obs_property_set_long_description(fileFormatList, obs_module_text("VideoFormatNote"));
 
     auto splitFileList = obs_properties_add_list(
         streamGroup, "split_file", obs_module_text("SplitFile"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
@@ -396,11 +410,29 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.NoSplit"), "");
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.ByTime"), "by_time");
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.BySize"), "by_size");
+    obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.Manual"), "manual");
 
     obs_property_set_modified_callback2(splitFileList, streamRecordingChangeHandler, nullptr);
 
     obs_properties_add_int(streamGroup, "split_file_time_mins", obs_module_text("SplitFile.Time"), 1, 525600, 1);
     obs_properties_add_int(streamGroup, "split_file_size_mb", obs_module_text("SplitFile.Size"), 1, 1073741824, 1);
+
+    // Mux custom setting
+    obs_properties_add_text(streamGroup, "rec_muxer_custom", obs_module_text("CustomMuxerSettings"), OBS_TEXT_DEFAULT);
+
+    // Pausing settings
+    auto suspendRecordingWhenSourceCollapsed = obs_properties_add_bool(
+        streamGroup, "suspend_recording_when_source_collapsed", obs_module_text("SuspendRecordingWhenSourceCollapsed")
+    );
+    obs_property_set_long_description(
+        suspendRecordingWhenSourceCollapsed, obs_module_text("SuspendRecordingWhenSourceCollapsedNote")
+    );
+
+    // Source resolution trackability
+    auto keepOutputBaseResolution = obs_properties_add_bool(
+        streamGroup, "keep_output_base_resolution", obs_module_text("KeepOutputBaseResolution")
+    );
+    obs_property_set_long_description(keepOutputBaseResolution, obs_module_text("KeepOutputBaseResolutionNote"));
 
     obs_properties_add_group(props, "stream", obs_module_text("Stream"), OBS_GROUP_NORMAL, streamGroup);
 }
@@ -685,11 +717,6 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Area"), "area");
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Bicubic"), "bicubic");
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Lanczos"), "lanczos");
-
-    auto keepOutputBaseResolution = obs_properties_add_bool(
-        videoEncoderGroup, "keep_output_base_resolution", obs_module_text("KeepOutputBaseResolution")
-    );
-    obs_property_set_long_description(keepOutputBaseResolution, obs_module_text("KeepOutputBaseResolutionNote"));
 
     // "Video Encoder" prop
     auto videoEncoderList = obs_properties_add_list(
