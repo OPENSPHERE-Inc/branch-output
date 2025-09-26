@@ -1353,11 +1353,11 @@ void BranchOutputFilter::onStopOutputGracefully()
     // Lock out other output thread to prevent crash
     pthread_mutex_lock(&pluginMutex);
     {
-        OBSMutexAutoUnlock locked(&pluginMutex);
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
 
         pthread_mutex_lock(&outputMutex);
         {
-            OBSMutexAutoUnlock locked(&outputMutex);
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
 
             streamingStopping = true;
 
