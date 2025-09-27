@@ -1272,7 +1272,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 sourceHeight += (sourceHeight & 1);
 
                 if (!sourceInFrontend(parent)) {
-                    // Stop output when source resolution is zero or source had been removed
+                    // Stop output when source had been removed
                     onStopOutputGracefully();
                     return;
                 }
