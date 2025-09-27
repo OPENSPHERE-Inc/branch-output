@@ -238,7 +238,9 @@ SourceAudioCapture::SourceAudioCapture(
 SourceAudioCapture::~SourceAudioCapture()
 {
     OBSSourceAutoRelease source = obs_weak_source_get_source(weakSource);
-    obs_source_remove_audio_capture_callback(source, sourceAudioCallback, this);
+    if (source) {
+        obs_source_remove_audio_capture_callback(source, sourceAudioCallback, this);
+    }
 
     obs_log(LOG_DEBUG, "%s: Source audio capture destroyed.", obs_source_get_name(source));
 }

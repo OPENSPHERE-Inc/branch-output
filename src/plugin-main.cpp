@@ -216,9 +216,19 @@ void BranchOutputFilter::removeCallback()
     // Unregsiter hotkeys
     if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
         obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
+        toggleEnableHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
     }
     if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
         obs_hotkey_unregister(splitRecordingHotkeyId);
+        splitRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
+    }
+    if (togglePauseRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        obs_hotkey_pair_unregister(togglePauseRecordingHotkeyPairId);
+        togglePauseRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
+    }
+    if (addChapterToRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        obs_hotkey_unregister(addChapterToRecordingHotkeyId);
+        addChapterToRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
 
     obs_log(LOG_INFO, "%s: Filter removed", qUtf8Printable(name));
@@ -597,6 +607,11 @@ void BranchOutputFilter::stopStreamingOutput(size_t index)
         obs_output_stop(streamings[index].output);
         obs_log(LOG_INFO, "%s: Stopping streaming %zu output succeeded", qUtf8Printable(name), index);
     }
+
+    // Ensure signals are disconnected to prevent leaks across restarts
+    streamings[index].outputStartingSignal.Disconnect();
+    streamings[index].outputActivateSignal.Disconnect();
+    streamings[index].outputReconnectSignal.Disconnect();
 
     streamings[index].output = nullptr;
     streamings[index].service = nullptr;
@@ -1725,6 +1740,11 @@ void obs_module_post_load()
 
 void obs_module_unload()
 {
+    // Remove and destroy status dock to avoid leaks (hotkeys, timers, widgets)
+    if (statusDock) {
+        obs_frontend_remove_dock("BranchOutputStatusDock");
+    }
+
     pthread_mutex_destroy(&pluginMutex);
 
     obs_log(LOG_INFO, "Plugin unloaded");
