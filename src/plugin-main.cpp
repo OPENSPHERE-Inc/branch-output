@@ -1356,7 +1356,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             }
 
         } else {
-            if (streamingAlive || recordingAlive || recordingPending) {
+            if (streamingActive || recordingActive || recordingPending) {
                 // Clicked filter's "Eye" icon (Hide)
                 onStopOutputGracefully();
                 return;
