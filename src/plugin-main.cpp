@@ -1176,6 +1176,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
     if (streamingStopping) {
         onStopOutputGracefully();
+        return;
     }
 
     auto interlockType = statusDock ? statusDock->getInterlockType() : INTERLOCK_TYPE_ALWAYS_ON;
