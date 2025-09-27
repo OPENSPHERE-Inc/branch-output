@@ -554,7 +554,7 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
         obs_output_get_signal_handler(streamings[index].output), "starting",
         [](void *_data, calldata_t *) {
             auto context = static_cast<BranchOutputStreamingContext *>(_data);
-            streamings[index].connectAttemptingAt = os_gettime_ns();
+            context->connectAttemptingAt = os_gettime_ns();
             context->outputStarting = true;
         },
         &streamings[index]
