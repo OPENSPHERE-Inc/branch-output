@@ -62,8 +62,11 @@ class BranchOutputFilter : public QObject {
         uint64_t connectAttemptingAt;
         uint64_t disconnectAttemptingAt;
         uint64_t reconnectAttemptingAt;
+        bool outputStarting;
         bool active;
         bool stopping;
+        OBSSignal outputStartingSignal;
+        OBSSignal outputActivateSignal;
         OBSSignal outputReconnectSignal;
     };
 

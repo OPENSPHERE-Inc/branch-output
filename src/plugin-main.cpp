@@ -548,6 +548,27 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
     obs_output_set_video_encoder(streamings[index].output, videoEncoder);
 
     streamings[index].connectAttemptingAt = os_gettime_ns();
+    streamings[index].outputStarting = true;
+
+    streamings[index].outputStartingSignal.Connect(
+        obs_output_get_signal_handler(streamings[index].output), "starting",
+        [](void *_data, calldata_t *) {
+            auto context = static_cast<BranchOutputStreamingContext *>(_data);
+            streamings[index].connectAttemptingAt = os_gettime_ns();
+            context->outputStarting = true;
+        },
+        &streamings[index]
+    );
+
+    // Track activate signal
+    streamings[index].outputActivateSignal.Connect(
+        obs_output_get_signal_handler(streamings[index].output), "activate",
+        [](void *_data, calldata_t *) {
+            auto context = static_cast<BranchOutputStreamingContext *>(_data);
+            context->outputStarting = false;
+        },
+        &streamings[index]
+    );
 
     // Track reconnect signal
     streamings[index].outputReconnectSignal.Connect(
@@ -582,6 +603,7 @@ void BranchOutputFilter::stopStreamingOutput(size_t index)
     streamings[index].connectAttemptingAt = 0;
     streamings[index].disconnectAttemptingAt = 0;
     streamings[index].reconnectAttemptingAt = 0;
+    streamings[index].outputStarting = false;
     streamings[index].active = false;
     streamings[index].stopping = false;
 }
@@ -917,9 +939,7 @@ void BranchOutputFilter::reconnectStreamingOutput(size_t index)
         OBSMutexAutoUnlock locked(&outputMutex);
 
         if (streamings[index].active) {
-            obs_output_force_stop(streamings[index].output);
-
-            streamings[index].connectAttemptingAt = os_gettime_ns();
+            obs_output_stop(streamings[index].output);
 
             if (!obs_output_start(streamings[index].output)) {
                 obs_log(LOG_ERROR, "%s: Reconnect streaming %zu output failed", qUtf8Printable(name), index);
