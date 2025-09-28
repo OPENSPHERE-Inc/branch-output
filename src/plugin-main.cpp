@@ -970,7 +970,7 @@ void BranchOutputFilter::restartRecordingOutput()
         OBSMutexAutoUnlock locked(&outputMutex);
 
         if (recordingActive) {
-            obs_output_force_stop(recordingOutput);
+            obs_output_stop(recordingOutput);
 
             if (!obs_output_start(recordingOutput)) {
                 obs_log(LOG_ERROR, "%s: Restart recording output failed", qUtf8Printable(name));
