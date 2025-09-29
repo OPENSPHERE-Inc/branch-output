@@ -369,12 +369,12 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
         if (!mux.isEmpty()) {
             muxFrag += " " + mux;
         }
-        obs_data_set_string(settings, "muxer_settings", qUtf8Printable(muxFrag));
+        obs_data_set_string(recordingSettings, "muxer_settings", qUtf8Printable(muxFrag));
     } else {
         if (isFragmented) {
             obs_log(LOG_WARNING, "User enabled fragmented recording, but custom muxer settings contained movflags.");
         } else {
-            obs_data_set_string(settings, "muxer_settings", qUtf8Printable(mux));
+            obs_data_set_string(recordingSettings, "muxer_settings", qUtf8Printable(mux));
         }
     }
 
