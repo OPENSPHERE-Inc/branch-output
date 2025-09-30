@@ -35,8 +35,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define FILTER_ID "osi_branch_output"
 #define OUTPUT_MAX_RETRIES 7
 #define OUTPUT_RETRY_DELAY_SECS 1
-#define CONNECT_ATTEMPTING_TIMEOUT_NS 15000000000ULL
-#define DISCONNECT_ATTEMPTING_TIMEOUT_NS 2000000000ULL
 #define RECONNECT_ATTEMPTING_TIMEOUT_NS 2000000000ULL
 #define AVAILAVILITY_CHECK_INTERVAL_NS 1000000000ULL
 #define TASK_INTERVAL_MS 1000
@@ -216,9 +214,19 @@ void BranchOutputFilter::removeCallback()
     // Unregsiter hotkeys
     if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
         obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
+        toggleEnableHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
     }
     if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
         obs_hotkey_unregister(splitRecordingHotkeyId);
+        splitRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
+    }
+    if (togglePauseRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        obs_hotkey_pair_unregister(togglePauseRecordingHotkeyPairId);
+        togglePauseRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
+    }
+    if (addChapterToRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        obs_hotkey_unregister(addChapterToRecordingHotkeyId);
+        addChapterToRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
 
     obs_log(LOG_INFO, "%s: Filter removed", qUtf8Printable(name));
@@ -361,12 +369,12 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
         if (!mux.isEmpty()) {
             muxFrag += " " + mux;
         }
-        obs_data_set_string(settings, "muxer_settings", qUtf8Printable(muxFrag));
+        obs_data_set_string(recordingSettings, "muxer_settings", qUtf8Printable(muxFrag));
     } else {
         if (isFragmented) {
             obs_log(LOG_WARNING, "User enabled fragmented recording, but custom muxer settings contained movflags.");
         } else {
-            obs_data_set_string(settings, "muxer_settings", qUtf8Printable(mux));
+            obs_data_set_string(recordingSettings, "muxer_settings", qUtf8Printable(mux));
         }
     }
 
@@ -498,10 +506,11 @@ BranchOutputFilter::createSreamingOutput(obs_data_t *settings, size_t index)
         }
     }
 
-    // Create stream output
-    context.output = obs_output_create(type, qUtf8Printable(name), streamingSettings, nullptr);
+    // Create streaming output
+    context.output =
+        obs_output_create(type, qUtf8Printable(QString("%1 (%2)").arg(name).arg(index)), streamingSettings, nullptr);
     if (!context.output) {
-        obs_log(LOG_ERROR, "%s: Streaming %zu output creation failed", qUtf8Printable(name), index);
+        obs_log(LOG_ERROR, "%s (%zu): Streaming output creation failed", qUtf8Printable(name), index);
         return {0};
     }
     obs_output_set_reconnect_settings(context.output, OUTPUT_MAX_RETRIES, OUTPUT_RETRY_DELAY_SECS);
@@ -532,7 +541,7 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
             auto audioContext = &audios[i];
             if (audioContext->encoder) {
                 obs_log(
-                    LOG_WARNING, "%s: No audio encoder selected for streaming %zu, using track %d",
+                    LOG_WARNING, "%s (%zu): No audio encoder selected for streaming output, using track %d",
                     qUtf8Printable(name), index, i + 1
                 );
                 obs_output_set_audio_encoder(streamings[index].output, audioContext->encoder, encIndex++);
@@ -540,14 +549,36 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
             }
         }
         if (!encIndex) {
-            obs_log(LOG_ERROR, "%s: No audio encoder for streaming %zu", qUtf8Printable(name), index);
+            obs_log(LOG_ERROR, "%s (%zu): No audio encoder for streaming output", qUtf8Printable(name), index);
             return;
         }
     }
 
     obs_output_set_video_encoder(streamings[index].output, videoEncoder);
 
-    streamings[index].connectAttemptingAt = os_gettime_ns();
+    streamings[index].outputStarting = true;
+
+    // Track starting signal
+    streamings[index].outputStartingSignal.Connect(
+        obs_output_get_signal_handler(streamings[index].output), "starting",
+        [](void *_data, calldata_t *) {
+            auto context = static_cast<BranchOutputStreamingContext *>(_data);
+            context->outputStarting = true;
+            obs_log(LOG_DEBUG, "%s: Streaming output is starting", obs_output_get_name(context->output));
+        },
+        &streamings[index]
+    );
+
+    // Track activate signal
+    streamings[index].outputActivateSignal.Connect(
+        obs_output_get_signal_handler(streamings[index].output), "activate",
+        [](void *_data, calldata_t *) {
+            auto context = static_cast<BranchOutputStreamingContext *>(_data);
+            context->outputStarting = false;
+            obs_log(LOG_DEBUG, "%s: Streaming output has activated", obs_output_get_name(context->output));
+        },
+        &streamings[index]
+    );
 
     // Track reconnect signal
     streamings[index].outputReconnectSignal.Connect(
@@ -555,6 +586,21 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
         [](void *_data, calldata_t *) {
             auto context = static_cast<BranchOutputStreamingContext *>(_data);
             context->reconnectAttemptingAt = os_gettime_ns();
+            obs_log(LOG_DEBUG, "%s: Streaming output is reconnecting", obs_output_get_name(context->output));
+        },
+        &streamings[index]
+    );
+
+    // Track stop signal
+    streamings[index].outputStopSignal.Connect(
+        obs_output_get_signal_handler(streamings[index].output), "stop",
+        [](void *_data, calldata_t *cd) {
+            auto context = static_cast<BranchOutputStreamingContext *>(_data);
+            context->outputStarting = false;
+            auto code = calldata_int(cd, "code");
+            obs_log(
+                LOG_DEBUG, "%s: Streaming output has stopped with code=%lld", obs_output_get_name(context->output), code
+            );
         },
         &streamings[index]
     );
@@ -563,9 +609,9 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
     if (obs_output_start(streamings[index].output)) {
         streamings[index].active = true;
         obs_source_inc_showing(obs_filter_get_parent(filterSource));
-        obs_log(LOG_INFO, "%s: Starting streaming %zu output succeeded", qUtf8Printable(name), index);
+        obs_log(LOG_INFO, "%s (%zu): Starting streaming output succeeded", qUtf8Printable(name), index);
     } else {
-        obs_log(LOG_ERROR, "%s: Starting streaming %zu output failed", qUtf8Printable(name), index);
+        obs_log(LOG_ERROR, "%s (%zu): Starting streaming output failed", qUtf8Printable(name), index);
     }
 }
 
@@ -574,14 +620,19 @@ void BranchOutputFilter::stopStreamingOutput(size_t index)
     if (streamings[index].output && streamings[index].active) {
         obs_source_dec_showing(obs_filter_get_parent(filterSource));
         obs_output_stop(streamings[index].output);
-        obs_log(LOG_INFO, "%s: Stopping streaming %zu output succeeded", qUtf8Printable(name), index);
+        obs_log(LOG_INFO, "%s (%zu): Stopping streaming output succeeded", qUtf8Printable(name), index);
     }
+
+    // Ensure signals are disconnected to prevent leaks across restarts
+    streamings[index].outputStartingSignal.Disconnect();
+    streamings[index].outputActivateSignal.Disconnect();
+    streamings[index].outputReconnectSignal.Disconnect();
+    streamings[index].outputStopSignal.Disconnect();
 
     streamings[index].output = nullptr;
     streamings[index].service = nullptr;
-    streamings[index].connectAttemptingAt = 0;
-    streamings[index].disconnectAttemptingAt = 0;
     streamings[index].reconnectAttemptingAt = 0;
+    streamings[index].outputStarting = false;
     streamings[index].active = false;
     streamings[index].stopping = false;
 }
@@ -714,7 +765,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         // Update active revision with stored settings.
         activeSettingsRev = storedSettingsRev;
 
-        //--- Create service and open stream output ---//
+        //--- Create service and open streaming output ---//
         auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
         for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
             streamings[i] = createSreamingOutput(settings, i);
@@ -917,12 +968,10 @@ void BranchOutputFilter::reconnectStreamingOutput(size_t index)
         OBSMutexAutoUnlock locked(&outputMutex);
 
         if (streamings[index].active) {
-            obs_output_force_stop(streamings[index].output);
-
-            streamings[index].connectAttemptingAt = os_gettime_ns();
+            obs_output_stop(streamings[index].output);
 
             if (!obs_output_start(streamings[index].output)) {
-                obs_log(LOG_ERROR, "%s: Reconnect streaming %zu output failed", qUtf8Printable(name), index);
+                obs_log(LOG_ERROR, "%s (%zu): Reconnect streaming output failed", qUtf8Printable(name), index);
             }
         }
     }
@@ -935,7 +984,7 @@ void BranchOutputFilter::restartRecordingOutput()
         OBSMutexAutoUnlock locked(&outputMutex);
 
         if (recordingActive) {
-            obs_output_force_stop(recordingOutput);
+            obs_output_stop(recordingOutput);
 
             if (!obs_output_start(recordingOutput)) {
                 obs_log(LOG_ERROR, "%s: Restart recording output failed", qUtf8Printable(name));
@@ -1039,32 +1088,20 @@ void BranchOutputFilter::restartOutput()
     }
 }
 
-bool BranchOutputFilter::connectAttemptingTimedOut(size_t index)
-{
-    return streamings[index].connectAttemptingAt &&
-           os_gettime_ns() - streamings[index].connectAttemptingAt > CONNECT_ATTEMPTING_TIMEOUT_NS;
-}
-
-bool BranchOutputFilter::disconnectAttemptingTimedOut(size_t index)
-{
-    return streamings[index].disconnectAttemptingAt &&
-           os_gettime_ns() - streamings[index].disconnectAttemptingAt > DISCONNECT_ATTEMPTING_TIMEOUT_NS;
-}
-
 bool BranchOutputFilter::reconnectAttemptingTimedOut(size_t index)
 {
     return streamings[index].reconnectAttemptingAt &&
            os_gettime_ns() - streamings[index].reconnectAttemptingAt > RECONNECT_ATTEMPTING_TIMEOUT_NS;
 }
 
-bool BranchOutputFilter::everyConnectAttemptingsTimedOut()
+bool BranchOutputFilter::someStreamingsStarting()
 {
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (streamings[i].output && !connectAttemptingTimedOut(i)) {
-            return false;
+        if (streamings[i].outputStarting) {
+            return true;
         }
     }
-    return true;
+    return false;
 }
 
 int BranchOutputFilter::countEnabledStreamings(obs_data_t *settings)
@@ -1156,6 +1193,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
     if (streamingStopping) {
         onStopOutputGracefully();
+        return;
     }
 
     auto interlockType = statusDock ? statusDock->getInterlockType() : INTERLOCK_TYPE_ALWAYS_ON;
@@ -1205,7 +1243,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
         auto recordingAlive = recordingOutput && obs_output_active(recordingOutput);
 
         if (sourceEnabled) {
-            if (countActiveStreamings() > 0 && !everyConnectAttemptingsTimedOut()) {
+            if (someStreamingsStarting()) {
                 return;
             }
 
@@ -1252,7 +1290,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 sourceHeight += (sourceHeight & 1);
 
                 if (!sourceInFrontend(parent)) {
-                    // Stop output when source resolution is zero or source had been removed
+                    // Stop output when source had been removed
                     onStopOutputGracefully();
                     return;
                 }
@@ -1263,7 +1301,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     if (sourceWidth > 0 && sourceHeight > 0) {
                         if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
                             // Restart output when source resolution was changed.
-                            obs_log(LOG_INFO, "%s: Attempting restart the stream output", qUtf8Printable(name));
+                            obs_log(LOG_INFO, "%s: Attempting restart the streaming output", qUtf8Printable(name));
                             startOutput(settings);
                             return;
                         }
@@ -1328,15 +1366,16 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             }
 
             for (size_t i = 0; i < MAX_SERVICES; i++) {
-                if (streamings[i].active && streamings[i].output && !obs_output_active(streamings[i].output)) {
+                if (streamings[i].active && streamings[i].output && !obs_output_active(streamings[i].output) &&
+                    !obs_output_reconnecting(streamings[i].output)) {
                     // Restart streaming
-                    obs_log(LOG_INFO, "%s: Attempting reactivate the stream output %zu", qUtf8Printable(name), i);
+                    obs_log(LOG_INFO, "%s (%zu): Attempting reactivate the streaming output", qUtf8Printable(name), i);
                     reconnectStreamingOutput(i);
                 }
             }
 
         } else {
-            if (streamingAlive || recordingAlive || recordingPending) {
+            if (streamingActive || recordingActive || recordingPending) {
                 // Clicked filter's "Eye" icon (Hide)
                 onStopOutputGracefully();
                 return;
@@ -1364,14 +1403,13 @@ void BranchOutputFilter::onStopOutputGracefully()
             for (size_t i = 0; i < MAX_SERVICES; i++) {
                 if (streamings[i].output && streamings[i].active) {
                     if (streamings[i].stopping) {
-                        if (disconnectAttemptingTimedOut(i) && reconnectAttemptingTimedOut(i)) {
+                        if (reconnectAttemptingTimedOut(i)) {
                             // stop streaming safely
                             stopStreamingOutput(i);
                         }
                     } else if (obs_output_reconnecting(streamings[i].output)) {
                         // Waiting few seconds to avoid crash due to stoppoing during reconnecting
                         streamings[i].stopping = true;
-                        streamings[i].disconnectAttemptingAt = os_gettime_ns();
                     } else {
                         // Stop immediately
                         stopStreamingOutput(i);
@@ -1704,6 +1742,11 @@ void obs_module_post_load()
 
 void obs_module_unload()
 {
+    // Remove and destroy status dock to avoid leaks (hotkeys, timers, widgets)
+    if (statusDock) {
+        obs_frontend_remove_dock("BranchOutputStatusDock");
+    }
+
     pthread_mutex_destroy(&pluginMutex);
 
     obs_log(LOG_INFO, "Plugin unloaded");

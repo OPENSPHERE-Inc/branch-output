@@ -59,12 +59,14 @@ class BranchOutputFilter : public QObject {
     struct BranchOutputStreamingContext {
         OBSOutputAutoRelease output;
         OBSServiceAutoRelease service;
-        uint64_t connectAttemptingAt;
-        uint64_t disconnectAttemptingAt;
         uint64_t reconnectAttemptingAt;
+        bool outputStarting;
         bool active;
         bool stopping;
+        OBSSignal outputStartingSignal;
+        OBSSignal outputActivateSignal;
         OBSSignal outputReconnectSignal;
+        OBSSignal outputStopSignal;
     };
 
     QString name;
@@ -123,10 +125,8 @@ class BranchOutputFilter : public QObject {
     void loadProfile(obs_data_t *settings);
     void loadRecently(obs_data_t *settings);
     void restartOutput();
-    bool connectAttemptingTimedOut(size_t index = 0);
-    bool disconnectAttemptingTimedOut(size_t index = 0);
     bool reconnectAttemptingTimedOut(size_t index = 0);
-    bool everyConnectAttemptingsTimedOut();
+    bool someStreamingsStarting();
     int countEnabledStreamings(obs_data_t *settings);
     int countAliveStreamings();
     int countActiveStreamings();
