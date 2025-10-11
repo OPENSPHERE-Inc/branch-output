@@ -9,5 +9,8 @@
     <file>images/visible.svg</file>
     <file>images/invisible.svg</file>
     <file>images/chapter.svg</file>
+    <file>images/sort-ascending.svg</file>
+    <file>images/sort-descending.svg</file>
+    <file>images/reset.svg</file>
   </qresource>
 </RCC>
