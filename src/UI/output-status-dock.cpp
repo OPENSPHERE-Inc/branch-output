@@ -919,14 +919,7 @@ bool OutputTableCellItem::operator<(const QTableWidgetItem &other) const
 {
     auto value1 = data(ItemRole::ValueRole);
     auto value2 = other.data(ItemRole::ValueRole);
-    auto id1 = data(ItemRole::RowIdRole).toString();
-    auto id2 = other.data(ItemRole::RowIdRole).toString();
-
-    if (value1 == value2) {
-        return id1 < id2;
-    } else {
-        return QVariant::compare(value1, value2) == QPartialOrdering::Less;
-    }
+    return QVariant::compare(value1, value2) == QPartialOrdering::Less;
 }
 
 //--- LabelCell class ---//
