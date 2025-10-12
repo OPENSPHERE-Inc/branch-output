@@ -894,8 +894,8 @@ void OutputTableRow::addChapterToRecording()
 void OutputTableRow::updateRowId()
 {
     auto rowId = QString("%1_%2_%3")
-                     .arg(parentCell->item()->data(OutputTableCellItem::ValueRole).toString())
-                     .arg(filterCell->item()->data(OutputTableCellItem::ValueRole).toString())
+                     .arg(parentCell->item()->value().toString())
+                     .arg(filterCell->item()->value().toString())
                      .arg(groupIndex);
 
     filterCell->item()->setRowId(rowId);

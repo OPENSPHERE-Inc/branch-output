@@ -40,17 +40,19 @@ class BranchOutputFilter;
 class OutputTableRow;
 
 class OutputTableCellItem : public QTableWidgetItem {
-public:
     enum ItemRole {
         ValueRole = Qt::UserRole,
         RowIdRole,
     };
 
+public:
     explicit OutputTableCellItem(const QString &rowId, const QVariant &value);
     ~OutputTableCellItem() {}
 
     bool operator<(const QTableWidgetItem &other) const override;
     inline void setRowId(const QString &id) { setData(RowIdRole, id); }
+    inline QString rowId() const { return data(RowIdRole).toString(); }
+    inline QVariant value() const { return data(ValueRole); }
 };
 
 class LabelCell : public QLabel {
