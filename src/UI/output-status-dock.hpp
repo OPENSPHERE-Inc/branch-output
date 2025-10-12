@@ -41,10 +41,31 @@ class OutputTableRow;
 
 class OutputTableCellItem : public QTableWidgetItem {
 public:
-    inline explicit OutputTableCellItem(const QVariant &value) : QTableWidgetItem() { setData(Qt::UserRole, value); }
+    enum ItemRole {
+        ValueRole = Qt::UserRole,
+        RowIdRole,
+    };
+
+    explicit OutputTableCellItem(const QString &rowId, const QVariant &value);
     ~OutputTableCellItem() {}
 
     bool operator<(const QTableWidgetItem &other) const override;
+    inline void setRowId(const QString &id) { setData(RowIdRole, id); }
+};
+
+class LabelCell : public QLabel {
+    Q_OBJECT
+
+    OutputTableCellItem *_item;
+
+public:
+    explicit LabelCell(const QString &rowId, QWidget *parent = (QWidget *)nullptr);
+    explicit LabelCell(const QString &rowId, const QString &textValue, QWidget *parent = (QWidget *)nullptr);
+    ~LabelCell();
+
+    inline void setTextValue(const QString &textValue);
+    inline void setValue(const QVariant &value) { _item->setData(Qt::UserRole, value); }
+    inline OutputTableCellItem *item() const { return _item; }
 };
 
 class FilterCell : public QWidget {
@@ -64,26 +85,13 @@ signals:
     void renamed(const QString &newName);
 
 public:
-    explicit FilterCell(const QString &textValue, obs_source_t *_source, QWidget *parent = (QWidget *)nullptr);
+    explicit FilterCell(
+        const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent = (QWidget *)nullptr
+    );
     ~FilterCell();
 
     void setTextValue(const QString &value);
     inline bool isVisibilityChecked() const { return visibilityCheckbox->isChecked(); }
-    inline OutputTableCellItem *item() const { return _item; }
-};
-
-class LabelCell : public QLabel {
-    Q_OBJECT
-
-    OutputTableCellItem *_item;
-
-public:
-    explicit LabelCell(QWidget *parent = (QWidget *)nullptr);
-    explicit LabelCell(const QString &textValue, QWidget *parent = (QWidget *)nullptr);
-    ~LabelCell();
-
-    inline void setTextValue(const QString &textValue);
-    inline void setValue(const QVariant &value) { _item->setData(Qt::UserRole, value); }
     inline OutputTableCellItem *item() const { return _item; }
 };
 
@@ -102,7 +110,9 @@ signals:
     void renamed(const QString &newName);
 
 public:
-    explicit ParentCell(const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
+    explicit ParentCell(
+        const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr
+    );
     ~ParentCell();
 
     void setTextValue(const QString &value);
@@ -117,7 +127,9 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
 
 public:
-    explicit RecordingOutputCell(const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
+    explicit RecordingOutputCell(
+        const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr
+    );
     ~RecordingOutputCell();
 
     void setTextValue(const QString &value);
@@ -145,7 +157,7 @@ signals:
 public:
     enum StatusIcon { STATUS_ICON_NONE, STATUS_ICON_STREAMING, STATUS_ICON_RECORDING, STATUS_ICON_RECORDING_PAUSED };
 
-    explicit StatusCell(const QString &textValue, QWidget *parent = (QWidget *)nullptr);
+    explicit StatusCell(const QString &rowId, const QString &textValue, QWidget *parent = (QWidget *)nullptr);
     ~StatusCell();
 
     void setIconShow(StatusIcon showIcon);
@@ -273,6 +285,7 @@ class OutputTableRow : public QObject {
     void pauseRecording();
     void unpauseRecording();
     void addChapterToRecording();
+    void updateRowId();
 
     long double kbps = 0.0l;
 

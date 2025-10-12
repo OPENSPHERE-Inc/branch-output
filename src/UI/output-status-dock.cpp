@@ -576,25 +576,26 @@ OutputTableRow::OutputTableRow(
       groupIndex(_groupIndex)
 {
     auto source = obs_filter_get_parent(filter->filterSource);
+    auto rowId = QString("%1_%2_%3").arg(obs_source_get_name(source)).arg(filter->name).arg(groupIndex);
 
-    filterCell = new FilterCell(filter->name, filter->filterSource, parent);
-    parentCell = new ParentCell(obs_source_get_name(source), source, parent);
-    status = new StatusCell(QTStr("Status.Inactive"), parent);
+    filterCell = new FilterCell(rowId, filter->name, filter->filterSource, parent);
+    parentCell = new ParentCell(rowId, obs_source_get_name(source), source, parent);
+    status = new StatusCell(rowId, QTStr("Status.Inactive"), parent);
 
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
-        outputName = new LabelCell(QTStr("Streaming%1").arg(streamingIndex + 1), parent);
+        outputName = new LabelCell(rowId, QTStr("Streaming%1").arg(streamingIndex + 1), parent);
         break;
     case ROW_OUTPUT_RECORDING:
-        outputName = new RecordingOutputCell(QTStr("Recording"), filter->filterSource, parent);
+        outputName = new RecordingOutputCell(rowId, QTStr("Recording"), filter->filterSource, parent);
         break;
     default:
-        outputName = new LabelCell(QTStr("None"), parent);
+        outputName = new LabelCell(rowId, QTStr("None"), parent);
     }
 
-    droppedFrames = new LabelCell("", parent);
-    megabytesSent = new LabelCell("", parent);
-    bitrate = new LabelCell("", parent);
+    droppedFrames = new LabelCell(rowId, "", parent);
+    megabytesSent = new LabelCell(rowId, "", parent);
+    bitrate = new LabelCell(rowId, "", parent);
 
     auto col = 0;
     parent->outputTable->setRowCount(row + 1);
@@ -637,8 +638,14 @@ OutputTableRow::OutputTableRow(
     connect(status, &StatusCell::addChapterToRecordingButtonClicked, this, [this]() { addChapterToRecording(); });
 
     // Setup rename event
-    connect(filterCell, &FilterCell::renamed, this, [parent](const QString &) { parent->sort(); });
-    connect(parentCell, &ParentCell::renamed, this, [parent](const QString &) { parent->sort(); });
+    connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &) {
+        updateRowId(); // Update row ID with new filter name
+        parent->sort();
+    });
+    connect(parentCell, &ParentCell::renamed, this, [this, parent](const QString &) {
+        updateRowId(); // Update row ID with new source name
+        parent->sort();
+    });
 }
 
 OutputTableRow::~OutputTableRow()
@@ -884,18 +891,69 @@ void OutputTableRow::addChapterToRecording()
     filter->addChapterToRecording();
 }
 
+void OutputTableRow::updateRowId()
+{
+    auto rowId = QString("%1_%2_%3")
+                     .arg(parentCell->item()->data(OutputTableCellItem::ValueRole).toString())
+                     .arg(filterCell->item()->data(OutputTableCellItem::ValueRole).toString())
+                     .arg(groupIndex);
+
+    filterCell->item()->setRowId(rowId);
+    parentCell->item()->setRowId(rowId);
+    outputName->item()->setRowId(rowId);
+    status->item()->setRowId(rowId);
+    droppedFrames->item()->setRowId(rowId);
+    megabytesSent->item()->setRowId(rowId);
+    bitrate->item()->setRowId(rowId);
+}
+
 //--- OutputTableCellItem class ---//
+
+OutputTableCellItem::OutputTableCellItem(const QString &rowId, const QVariant &value) : QTableWidgetItem()
+{
+    setData(ItemRole::RowIdRole, rowId);
+    setData(ItemRole::ValueRole, value);
+}
 
 bool OutputTableCellItem::operator<(const QTableWidgetItem &other) const
 {
-    return QVariant::compare(data(Qt::UserRole), other.data(Qt::UserRole)) == QPartialOrdering::Less;
+    auto value1 = data(ItemRole::ValueRole);
+    auto value2 = other.data(ItemRole::ValueRole);
+    auto id1 = data(ItemRole::RowIdRole).toString();
+    auto id2 = other.data(ItemRole::RowIdRole).toString();
+
+    if (value1 == value2) {
+        return id1 < id2;
+    } else {
+        return QVariant::compare(value1, value2) == QPartialOrdering::Less;
+    }
+}
+
+//--- LabelCell class ---//
+
+LabelCell::LabelCell(const QString &rowId, QWidget *parent) : QLabel(parent), _item(new OutputTableCellItem(rowId, ""))
+{
+    setAlignment(Qt::AlignCenter);
+}
+
+LabelCell::LabelCell(const QString &rowId, const QString &textValue, QWidget *parent) : LabelCell(rowId, parent)
+{
+    setTextValue(textValue);
+}
+
+LabelCell::~LabelCell() {}
+
+void LabelCell::setTextValue(const QString &textValue)
+{
+    setText(textValue);
+    setValue(textValue);
 }
 
 //--- FilterCell class ---//
 
-FilterCell::FilterCell(const QString &textValue, obs_source_t *source, QWidget *parent)
+FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent)
     : QWidget(parent),
-      _item(new OutputTableCellItem(""))
+      _item(new OutputTableCellItem(rowId, ""))
 {
     setMinimumHeight(27);
 
@@ -955,8 +1013,8 @@ void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
 
 //--- ParentCell class ---//
 
-ParentCell::ParentCell(const QString &textValue, obs_source_t *_source, QWidget *parent)
-    : LabelCell(parent),
+ParentCell::ParentCell(const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent)
+    : LabelCell(rowId, parent),
       source(_source)
 {
     parentRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", ParentCell::onParentRenamed, this);
@@ -999,8 +1057,10 @@ void ParentCell::mousePressEvent(QMouseEvent *event)
 
 //--- RecordingOutputCell class ---//
 
-RecordingOutputCell::RecordingOutputCell(const QString &textValue, obs_source_t *_source, QWidget *parent)
-    : LabelCell(parent),
+RecordingOutputCell::RecordingOutputCell(
+    const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent
+)
+    : LabelCell(rowId, parent),
       source(_source)
 {
     // Markup as link
@@ -1034,7 +1094,9 @@ void RecordingOutputCell::mousePressEvent(QMouseEvent *event)
 
 //--- StatusCell class ---//
 
-StatusCell::StatusCell(const QString &textValue, QWidget *parent) : QWidget(parent), _item(new OutputTableCellItem(""))
+StatusCell::StatusCell(const QString &rowId, const QString &textValue, QWidget *parent)
+    : QWidget(parent),
+      _item(new OutputTableCellItem(rowId, ""))
 {
     streamingIcon = new QLabel(this);
     recordingIcon = new QLabel(this);
@@ -1127,24 +1189,4 @@ void StatusCell::setTextValue(const QString &textValue)
 {
     statusText->setText(textValue);
     _item->setData(Qt::UserRole, textValue);
-}
-
-//--- LabelCell class ---//
-
-LabelCell::LabelCell(QWidget *parent) : QLabel(parent), _item(new OutputTableCellItem(""))
-{
-    setAlignment(Qt::AlignCenter);
-}
-
-LabelCell::LabelCell(const QString &textValue, QWidget *parent) : LabelCell(parent)
-{
-    setTextValue(textValue);
-}
-
-LabelCell::~LabelCell() {}
-
-void LabelCell::setTextValue(const QString &textValue)
-{
-    setText(textValue);
-    setValue(textValue);
 }
