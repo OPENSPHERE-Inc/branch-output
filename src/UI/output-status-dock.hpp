@@ -64,12 +64,11 @@ signals:
     void renamed(const QString &newName);
 
 public:
-    explicit FilterCell(const QString &text, obs_source_t *_source, QWidget *parent = (QWidget *)nullptr);
+    explicit FilterCell(const QString &textValue, obs_source_t *_source, QWidget *parent = (QWidget *)nullptr);
     ~FilterCell();
 
-    void setText(const QString &text);
+    void setTextValue(const QString &value);
     inline bool isVisibilityChecked() const { return visibilityCheckbox->isChecked(); }
-    inline QString text() const { return name->text(); }
     inline OutputTableCellItem *item() const { return _item; }
 };
 
@@ -80,11 +79,11 @@ class LabelCell : public QLabel {
 
 public:
     explicit LabelCell(QWidget *parent = (QWidget *)nullptr);
-    explicit LabelCell(const QString &text, QWidget *parent = (QWidget *)nullptr);
+    explicit LabelCell(const QString &textValue, QWidget *parent = (QWidget *)nullptr);
     ~LabelCell();
 
-    void setData(const QVariant &value) { _item->setData(Qt::UserRole, value); }
-    inline QString text() const { return QLabel::text(); }
+    inline void setTextValue(const QString &textValue);
+    inline void setValue(const QVariant &value) { _item->setData(Qt::UserRole, value); }
     inline OutputTableCellItem *item() const { return _item; }
 };
 
@@ -103,10 +102,10 @@ signals:
     void renamed(const QString &newName);
 
 public:
-    explicit ParentCell(const QString &text, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
+    explicit ParentCell(const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
     ~ParentCell();
 
-    void setText(const QString &text);
+    void setTextValue(const QString &value);
 };
 
 class RecordingOutputCell : public LabelCell {
@@ -118,10 +117,10 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
 
 public:
-    explicit RecordingOutputCell(const QString &text, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
+    explicit RecordingOutputCell(const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
     ~RecordingOutputCell();
 
-    void setText(const QString &text);
+    void setTextValue(const QString &value);
 };
 
 class StatusCell : public QWidget {
@@ -146,12 +145,12 @@ signals:
 public:
     enum StatusIcon { STATUS_ICON_NONE, STATUS_ICON_STREAMING, STATUS_ICON_RECORDING, STATUS_ICON_RECORDING_PAUSED };
 
-    explicit StatusCell(const QString &text, QWidget *parent = (QWidget *)nullptr);
+    explicit StatusCell(const QString &textValue, QWidget *parent = (QWidget *)nullptr);
     ~StatusCell();
 
     void setIconShow(StatusIcon showIcon);
 
-    void setText(const QString &text);
+    void setTextValue(const QString &textValue);
     inline void setTheme(const QString &id, const QString &classes) { setThemeID(statusText, id, classes); };
     inline void setSplitRecordingButtonShow(bool show) { splitRecordingButton->setVisible(show); };
     inline bool isSplitRecordingButtonShow() const { return splitRecordingButton->isVisible(); };
@@ -161,7 +160,6 @@ public:
     inline bool isUnpauseRecordingButtonShow() const { return unpauseRecordingButton->isVisible(); };
     inline void setAddChapterToRecordingButtonShow(bool show) { addChapterToRecordingButton->setVisible(show); };
     inline bool isAddChapterToRecordingButtonShow() const { return addChapterToRecordingButton->isVisible(); };
-    inline QString text() const { return statusText->text(); };
     inline OutputTableCellItem *item() const { return _item; }
 };
 

@@ -682,7 +682,7 @@ void OutputTableRow::update()
         }
 
         if (reconnecting) {
-            status->setText(QTStr("Status.Reconnecting"));
+            status->setTextValue(QTStr("Status.Reconnecting"));
             status->setTheme("error", "text-danger");
             status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
             status->setSplitRecordingButtonShow(false);
@@ -694,11 +694,11 @@ void OutputTableRow::update()
             switch (outputType) {
             case ROW_OUTPUT_STREAMING:
                 if (stopping) {
-                    status->setText(QTStr("Status.Stopping"));
+                    status->setTextValue(QTStr("Status.Stopping"));
                     status->setTheme("", "");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
                 } else {
-                    status->setText(QTStr("Status.Streaming"));
+                    status->setTextValue(QTStr("Status.Streaming"));
                     status->setTheme("good", "text-success");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_STREAMING);
                 }
@@ -710,11 +710,11 @@ void OutputTableRow::update()
                 break;
             case ROW_OUTPUT_RECORDING:
                 if (paused) {
-                    status->setText(QTStr("Status.Paused"));
+                    status->setTextValue(QTStr("Status.Paused"));
                     status->setTheme("", "");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_RECORDING_PAUSED);
                 } else {
-                    status->setText(QTStr("Status.Recording"));
+                    status->setTextValue(QTStr("Status.Recording"));
                     status->setTheme("good", "text-success");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_RECORDING);
                 }
@@ -724,7 +724,7 @@ void OutputTableRow::update()
                 status->setAddChapterToRecordingButtonShow(filter->canAddChapterToRecording());
                 break;
             default:
-                status->setText(QTStr("Status.Inactive"));
+                status->setTextValue(QTStr("Status.Inactive"));
                 status->setTheme("good", "text-success");
                 status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
                 status->setSplitRecordingButtonShow(false);
@@ -735,9 +735,9 @@ void OutputTableRow::update()
         }
     } else {
         if (outputType == ROW_OUTPUT_RECORDING && filter->recordingPending) {
-            status->setText(QTStr("Status.Pending"));
+            status->setTextValue(QTStr("Status.Pending"));
         } else {
-            status->setText(QTStr("Status.Inactive"));
+            status->setTextValue(QTStr("Status.Inactive"));
         }
         status->setTheme("", "");
         status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
@@ -745,9 +745,9 @@ void OutputTableRow::update()
         status->setPauseRecordingButtonShow(false);
         status->setUnpauseRecordingButtonShow(false);
         status->setAddChapterToRecordingButtonShow(false);
-        droppedFrames->setText("");
-        megabytesSent->setText("");
-        bitrate->setText("");
+        droppedFrames->setTextValue("");
+        megabytesSent->setTextValue("");
+        bitrate->setTextValue("");
         return;
     }
 
@@ -776,7 +776,9 @@ void OutputTableRow::update()
         num /= 1024;
         unit = "GiB";
     }
-    megabytesSent->setText(outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 1).arg(unit) : "");
+    megabytesSent->setTextValue(
+        outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 1).arg(unit) : ""
+    );
 
     num = kbps;
     unit = "kb/s";
@@ -784,7 +786,7 @@ void OutputTableRow::update()
         num /= 1000;
         unit = "Mb/s";
     }
-    bitrate->setText(outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 0).arg(unit) : "");
+    bitrate->setTextValue(outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 0).arg(unit) : "");
 
     // Calculate statistics
     int total = output ? obs_output_get_total_frames(output) : 0;
@@ -803,7 +805,7 @@ void OutputTableRow::update()
     QString dropFramesStr =
         QString("%1 / %2 (%3%)")
             .arg(QString::number(dropped), QString::number(total), QString::number((double)num, 'f', 1));
-    droppedFrames->setText(outputType != ROW_OUTPUT_NONE ? dropFramesStr : "");
+    droppedFrames->setTextValue(outputType != ROW_OUTPUT_NONE ? dropFramesStr : "");
 
     if (num > 5.0l) {
         setThemeID(droppedFrames, "error", "text-danger");
@@ -833,17 +835,17 @@ void OutputTableRow::reset()
     }
 
     if (!output) {
-        droppedFrames->setText("");
-        megabytesSent->setText("");
-        bitrate->setText("");
+        droppedFrames->setTextValue("");
+        megabytesSent->setTextValue("");
+        bitrate->setTextValue("");
         return;
     }
 
     first_total = obs_output_get_total_frames(output);
     first_dropped = obs_output_get_frames_dropped(output);
-    droppedFrames->setText(QString("0 / 0 (0)"));
-    megabytesSent->setText(QString("0 MiB"));
-    bitrate->setText(QString("0 kb/s"));
+    droppedFrames->setTextValue(QString("0 / 0 (0)"));
+    megabytesSent->setTextValue(QString("0 MiB"));
+    bitrate->setTextValue(QString("0 kb/s"));
 }
 
 void OutputTableRow::splitRecording()
@@ -891,7 +893,7 @@ bool OutputTableCellItem::operator<(const QTableWidgetItem &other) const
 
 //--- FilterCell class ---//
 
-FilterCell::FilterCell(const QString &text, obs_source_t *source, QWidget *parent)
+FilterCell::FilterCell(const QString &textValue, obs_source_t *source, QWidget *parent)
     : QWidget(parent),
       _item(new OutputTableCellItem(""))
 {
@@ -922,7 +924,7 @@ FilterCell::FilterCell(const QString &text, obs_source_t *source, QWidget *paren
     // Listen signal for filter enabled/disabled
     enableSignal.Connect(obs_source_get_signal_handler(source), "enable", FilterCell::onVisibilityChanged, this);
 
-    setText(text);
+    setTextValue(textValue);
 }
 
 FilterCell::~FilterCell()
@@ -931,17 +933,17 @@ FilterCell::~FilterCell()
     enableSignal.Disconnect();
 }
 
-void FilterCell::setText(const QString &text)
+void FilterCell::setTextValue(const QString &textValue)
 {
-    name->setText(text);
-    _item->setData(Qt::UserRole, text);
-    emit renamed(text);
+    name->setText(textValue);
+    _item->setData(Qt::UserRole, textValue);
+    emit renamed(textValue);
 }
 
 void FilterCell::onFilterRenamed(void *data, calldata_t *cd)
 {
     auto cell = static_cast<FilterCell *>(data);
-    cell->setText(calldata_string(cd, "new_name"));
+    cell->setTextValue(calldata_string(cd, "new_name"));
 }
 
 void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
@@ -953,7 +955,9 @@ void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
 
 //--- ParentCell class ---//
 
-ParentCell::ParentCell(const QString &text, obs_source_t *_source, QWidget *parent) : LabelCell(parent), source(_source)
+ParentCell::ParentCell(const QString &textValue, obs_source_t *_source, QWidget *parent)
+    : LabelCell(parent),
+      source(_source)
 {
     parentRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", ParentCell::onParentRenamed, this);
 
@@ -961,7 +965,7 @@ ParentCell::ParentCell(const QString &text, obs_source_t *_source, QWidget *pare
     setTextFormat(Qt::RichText);
     setCursor(Qt::PointingHandCursor);
 
-    setText(text);
+    setTextValue(textValue);
 }
 
 ParentCell::~ParentCell()
@@ -973,15 +977,15 @@ void ParentCell::onParentRenamed(void *data, calldata_t *cd)
 {
     auto cell = static_cast<ParentCell *>(data);
     auto newName = calldata_string(cd, "new_name");
-    cell->setText(newName);
+    cell->setTextValue(newName);
 }
 
-void ParentCell::setText(const QString &text)
+void ParentCell::setTextValue(const QString &textValue)
 {
     // Markup as link
-    LabelCell::setText(QString("<u>%1</u>").arg(text));
-    setData(text);
-    emit renamed(text);
+    LabelCell::setValue(textValue);
+    LabelCell::setText(QString("<u>%1</u>").arg(textValue));
+    emit renamed(textValue);
 }
 
 void ParentCell::mousePressEvent(QMouseEvent *event)
@@ -995,7 +999,7 @@ void ParentCell::mousePressEvent(QMouseEvent *event)
 
 //--- RecordingOutputCell class ---//
 
-RecordingOutputCell::RecordingOutputCell(const QString &text, obs_source_t *_source, QWidget *parent)
+RecordingOutputCell::RecordingOutputCell(const QString &textValue, obs_source_t *_source, QWidget *parent)
     : LabelCell(parent),
       source(_source)
 {
@@ -1003,16 +1007,16 @@ RecordingOutputCell::RecordingOutputCell(const QString &text, obs_source_t *_sou
     setTextFormat(Qt::RichText);
     setCursor(Qt::PointingHandCursor);
 
-    setText(text);
+    setTextValue(textValue);
 }
 
 RecordingOutputCell::~RecordingOutputCell() {}
 
-void RecordingOutputCell::setText(const QString &text)
+void RecordingOutputCell::setTextValue(const QString &textValue)
 {
     // Markup as link
-    LabelCell::setText(QString("<u>%1</u>").arg(text));
-    setData(text);
+    LabelCell::setValue(textValue);
+    LabelCell::setText(QString("<u>%1</u>").arg(textValue));
 }
 
 void RecordingOutputCell::mousePressEvent(QMouseEvent *event)
@@ -1030,7 +1034,7 @@ void RecordingOutputCell::mousePressEvent(QMouseEvent *event)
 
 //--- StatusCell class ---//
 
-StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent), _item(new OutputTableCellItem(""))
+StatusCell::StatusCell(const QString &textValue, QWidget *parent) : QWidget(parent), _item(new OutputTableCellItem(""))
 {
     streamingIcon = new QLabel(this);
     recordingIcon = new QLabel(this);
@@ -1085,7 +1089,7 @@ StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent), 
     layout->addSpacing(5);
     setLayout(layout);
 
-    setText(text);
+    setTextValue(textValue);
 }
 
 StatusCell::~StatusCell()
@@ -1119,10 +1123,10 @@ void StatusCell::setIconShow(StatusIcon show)
     }
 }
 
-void StatusCell::setText(const QString &text)
+void StatusCell::setTextValue(const QString &textValue)
 {
-    statusText->setText(text);
-    _item->setData(Qt::UserRole, text);
+    statusText->setText(textValue);
+    _item->setData(Qt::UserRole, textValue);
 }
 
 //--- LabelCell class ---//
@@ -1132,10 +1136,15 @@ LabelCell::LabelCell(QWidget *parent) : QLabel(parent), _item(new OutputTableCel
     setAlignment(Qt::AlignCenter);
 }
 
-LabelCell::LabelCell(const QString &text, QWidget *parent) : LabelCell(parent)
+LabelCell::LabelCell(const QString &textValue, QWidget *parent) : LabelCell(parent)
 {
-    setText(text);
-    setData(text);
+    setTextValue(textValue);
 }
 
 LabelCell::~LabelCell() {}
+
+void LabelCell::setTextValue(const QString &textValue)
+{
+    setText(textValue);
+    setValue(textValue);
+}
