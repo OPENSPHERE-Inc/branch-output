@@ -41,7 +41,7 @@ class OutputTableRow;
 
 class OutputTableCellItem : public QTableWidgetItem {
 public:
-    inline explicit OutputTableCellItem(QVariant data) : QTableWidgetItem() { setData(Qt::UserRole, data); }
+    inline explicit OutputTableCellItem(const QVariant &value) : QTableWidgetItem() { setData(Qt::UserRole, value); }
     ~OutputTableCellItem() {}
 
     bool operator<(const QTableWidgetItem &other) const override;
@@ -83,7 +83,7 @@ public:
     explicit LabelCell(const QString &text, QWidget *parent = (QWidget *)nullptr);
     ~LabelCell();
 
-    void setData(const QVariant &data) { _item->setData(Qt::UserRole, data); }
+    void setData(const QVariant &value) { _item->setData(Qt::UserRole, value); }
     inline QString text() const { return QLabel::text(); }
     inline OutputTableCellItem *item() const { return _item; }
 };

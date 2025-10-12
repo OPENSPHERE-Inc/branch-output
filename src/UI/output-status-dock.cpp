@@ -637,8 +637,8 @@ OutputTableRow::OutputTableRow(
     connect(status, &StatusCell::addChapterToRecordingButtonClicked, this, [this]() { addChapterToRecording(); });
 
     // Setup rename event
-    connect(filterCell, &FilterCell::renamed, this, [parent](const QString &newName) { parent->sort(); });
-    connect(parentCell, &ParentCell::renamed, this, [parent](const QString &newName) { parent->sort(); });
+    connect(filterCell, &FilterCell::renamed, this, [parent](const QString &) { parent->sort(); });
+    connect(parentCell, &ParentCell::renamed, this, [parent](const QString &) { parent->sort(); });
 }
 
 OutputTableRow::~OutputTableRow()
