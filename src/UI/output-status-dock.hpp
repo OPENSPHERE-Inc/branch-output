@@ -39,9 +39,41 @@ class QPushButton;
 class BranchOutputFilter;
 class OutputTableRow;
 
+class OutputTableCellItem : public QTableWidgetItem {
+    enum ItemRole {
+        ValueRole = Qt::UserRole,
+        RowIdRole,
+    };
+
+public:
+    explicit OutputTableCellItem(const QString &rowId, const QVariant &value);
+    ~OutputTableCellItem() {}
+
+    bool operator<(const QTableWidgetItem &other) const override;
+    inline void setRowId(const QString &id) { setData(RowIdRole, id); }
+    inline QString rowId() const { return data(RowIdRole).toString(); }
+    inline QVariant value() const { return data(ValueRole); }
+};
+
+class LabelCell : public QLabel {
+    Q_OBJECT
+
+    OutputTableCellItem *_item;
+
+public:
+    explicit LabelCell(const QString &rowId, QWidget *parent = (QWidget *)nullptr);
+    explicit LabelCell(const QString &rowId, const QString &textValue, QWidget *parent = (QWidget *)nullptr);
+    ~LabelCell();
+
+    inline void setTextValue(const QString &textValue);
+    inline void setValue(const QVariant &value) { _item->setData(Qt::UserRole, value); }
+    inline OutputTableCellItem *item() const { return _item; }
+};
+
 class FilterCell : public QWidget {
     Q_OBJECT
 
+    OutputTableCellItem *_item;
     QCheckBox *visibilityCheckbox;
     QLabel *name;
 
@@ -51,15 +83,21 @@ class FilterCell : public QWidget {
     static void onVisibilityChanged(void *data, calldata_t *cd);
     static void onFilterRenamed(void *data, calldata_t *cd);
 
+signals:
+    void renamed(const QString &newName);
+
 public:
-    explicit FilterCell(const QString &text, obs_source_t *_source, QWidget *parent = (QWidget *)nullptr);
+    explicit FilterCell(
+        const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent = (QWidget *)nullptr
+    );
     ~FilterCell();
 
-    void setText(const QString &text);
+    void setTextValue(const QString &value);
     inline bool isVisibilityChecked() const { return visibilityCheckbox->isChecked(); }
+    inline OutputTableCellItem *item() const { return _item; }
 };
 
-class ParentCell : public QLabel {
+class ParentCell : public LabelCell {
     Q_OBJECT
 
     OBSSignal parentRenamedSignal;
@@ -70,14 +108,19 @@ class ParentCell : public QLabel {
 protected:
     void mousePressEvent(QMouseEvent *event) override;
 
+signals:
+    void renamed(const QString &newName);
+
 public:
-    explicit ParentCell(const QString &text, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
+    explicit ParentCell(
+        const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr
+    );
     ~ParentCell();
 
-    void setSourceName(const QString &text);
+    void setTextValue(const QString &value);
 };
 
-class RecordingOutputCell : public QLabel {
+class RecordingOutputCell : public LabelCell {
     Q_OBJECT
 
     obs_source_t *source;
@@ -86,15 +129,18 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
 
 public:
-    explicit RecordingOutputCell(const QString &text, obs_source_t *source, QWidget *parent = (QWidget *)nullptr);
+    explicit RecordingOutputCell(
+        const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr
+    );
     ~RecordingOutputCell();
 
-    void setOutputName(const QString &text);
+    void setTextValue(const QString &value);
 };
 
 class StatusCell : public QWidget {
     Q_OBJECT
 
+    OutputTableCellItem *_item;
     QLabel *streamingIcon;
     QLabel *recordingIcon;
     QLabel *recordingPausedIcon;
@@ -113,12 +159,12 @@ signals:
 public:
     enum StatusIcon { STATUS_ICON_NONE, STATUS_ICON_STREAMING, STATUS_ICON_RECORDING, STATUS_ICON_RECORDING_PAUSED };
 
-    explicit StatusCell(const QString &text, QWidget *parent = (QWidget *)nullptr);
+    explicit StatusCell(const QString &rowId, const QString &textValue, QWidget *parent = (QWidget *)nullptr);
     ~StatusCell();
 
     void setIconShow(StatusIcon showIcon);
 
-    inline void setText(const QString &text) { statusText->setText(text); };
+    void setTextValue(const QString &textValue);
     inline void setTheme(const QString &id, const QString &classes) { setThemeID(statusText, id, classes); };
     inline void setSplitRecordingButtonShow(bool show) { splitRecordingButton->setVisible(show); };
     inline bool isSplitRecordingButtonShow() const { return splitRecordingButton->isVisible(); };
@@ -128,6 +174,7 @@ public:
     inline bool isUnpauseRecordingButtonShow() const { return unpauseRecordingButton->isVisible(); };
     inline void setAddChapterToRecordingButtonShow(bool show) { addChapterToRecordingButton->setVisible(show); };
     inline bool isAddChapterToRecordingButtonShow() const { return addChapterToRecordingButton->isVisible(); };
+    inline OutputTableCellItem *item() const { return _item; }
 };
 
 enum RowOutputType {
@@ -140,6 +187,9 @@ class BranchOutputStatusDock : public QFrame {
     Q_OBJECT
 
     friend class OutputTableRow;
+
+    QIcon ascendingIcon;
+    QIcon descendingIcon;
 
     QTimer timer;
     QTableWidget *outputTable = nullptr;
@@ -160,6 +210,9 @@ class BranchOutputStatusDock : public QFrame {
     obs_hotkey_id pauseRecordingAllHotkey;
     obs_hotkey_id unpauseRecordingAllHotkey;
     obs_hotkey_id addChapterToRecordingAllHotkey;
+    int resetColumnIndex;
+    int sortingColumnIndex;
+    Qt::SortOrder sortingOrder;
 
     void update();
     void applyEnableAllButtonEnabled();
@@ -178,6 +231,9 @@ class BranchOutputStatusDock : public QFrame {
     static void onUnpauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onAddChapterToRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
 
+private slots:
+    void onHeaderPressed(int index);
+
 protected:
     virtual void showEvent(QShowEvent *event) override;
     virtual void hideEvent(QHideEvent *event) override;
@@ -195,6 +251,8 @@ public slots:
     void pauseRecordingAll();
     void unpauseRecordingAll();
     void addChapterToRecordingAll();
+    void resetStatsAll();
+    void sort();
 
     inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
 };
@@ -208,13 +266,14 @@ class OutputTableRow : public QObject {
     FilterCell *filterCell;
     ParentCell *parentCell;
     StatusCell *status;
+    LabelCell *droppedFrames;
+    LabelCell *megabytesSent;
+    LabelCell *bitrate;
+    LabelCell *outputName;
+
     RowOutputType outputType;
     size_t streamingIndex;
     size_t groupIndex;
-    QLabel *droppedFrames;
-    QLabel *megabytesSent;
-    QLabel *bitrate;
-    QLabel *outputName;
 
     uint64_t lastBytesSent = 0;
     uint64_t lastBytesSentTime = 0;
@@ -228,6 +287,7 @@ class OutputTableRow : public QObject {
     void pauseRecording();
     void unpauseRecording();
     void addChapterToRecording();
+    void updateRowId();
 
     long double kbps = 0.0l;
 

@@ -146,8 +146,8 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
         obs_source_get_signal_handler(filterSource), "rename",
         [](void *_data, calldata_t *cd) {
             auto _filter = static_cast<BranchOutputFilter *>(_data);
-            _filter->registerHotkey();
             _filter->name = calldata_string(cd, "new_name");
+            _filter->registerHotkey();
         },
         this
     );
@@ -1611,6 +1611,18 @@ void BranchOutputFilter::registerHotkey()
     if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
         // Unregsiter previous
         obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
+    }
+    if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        // Unregsiter previous
+        obs_hotkey_unregister(splitRecordingHotkeyId);
+    }
+    if (togglePauseRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        // Unregsiter previous
+        obs_hotkey_pair_unregister(togglePauseRecordingHotkeyPairId);
+    }
+    if (addChapterToRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        // Unregsiter previous
+        obs_hotkey_unregister(addChapterToRecordingHotkeyId);
     }
 
     // Register enable/disable hotkeys

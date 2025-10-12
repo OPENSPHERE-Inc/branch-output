@@ -45,33 +45,54 @@ extern void obs_log(int log_level, const char *format, ...);
 
 //--- BranchOutputStatusDock class ---//
 
-BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent), timer(this)
+BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
+    : QFrame(parent),
+      timer(this),
+      sortingColumnIndex(0),
+      sortingOrder(Qt::AscendingOrder),
+      ascendingIcon(":/branch-output/images/sort-ascending.svg"),
+      descendingIcon(":/branch-output/images/sort-descending.svg")
 {
     setMinimumWidth(320);
 
     // Setup statistics table
     outputTable = new QTableWidget(this);
     outputTable->verticalHeader()->hide();
-    outputTable->horizontalHeader()->setSectionsClickable(false);
+    outputTable->horizontalHeader()->setSectionsClickable(true);
     outputTable->horizontalHeader()->setMinimumSectionSize(100);
+    outputTable->horizontalHeader()->setStyleSheet("QHeaderView::section { padding: 0 8px; }");
     outputTable->setGridStyle(Qt::NoPen);
     outputTable->setHorizontalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
     outputTable->setVerticalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
     outputTable->setSelectionMode(QTableWidget::SelectionMode::NoSelection);
     outputTable->setFocusPolicy(Qt::FocusPolicy::NoFocus);
     outputTable->setColumnCount(8);
+    outputTable->sortItems(sortingColumnIndex, sortingOrder);
+
+    auto createHeaderItem = [](const QString &name, const QString &text, const QIcon &icon = QIcon()) {
+        auto item = new QTableWidgetItem(icon, text);
+        item->setData(Qt::UserRole, name);
+        return item;
+    };
 
     int col = 0;
-    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("FilterName")));
-    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("SourceName")));
-    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("Output")));
-    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("Status")));
-    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("DropFrames")));
-    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("SentDataSize")));
-    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QTStr("BitRate")));
-    outputTable->setHorizontalHeaderItem(col++, new QTableWidgetItem(QString::fromUtf8("")));
+    outputTable->setHorizontalHeaderItem(col++, createHeaderItem("filterName", QTStr("FilterName")));
+    outputTable->setHorizontalHeaderItem(col++, createHeaderItem("sourceName", QTStr("SourceName")));
+    outputTable->setHorizontalHeaderItem(col++, createHeaderItem("output", QTStr("Output")));
+    outputTable->setHorizontalHeaderItem(col++, createHeaderItem("status", QTStr("Status")));
+    outputTable->setHorizontalHeaderItem(col++, createHeaderItem("dropFrames", QTStr("DropFrames")));
+    outputTable->setHorizontalHeaderItem(col++, createHeaderItem("sentDataSize", QTStr("SentDataSize")));
+    outputTable->setHorizontalHeaderItem(col++, createHeaderItem("bitRate", QTStr("BitRate")));
 
-    QObject::connect(&timer, &QTimer::timeout, this, &BranchOutputStatusDock::update);
+    resetColumnIndex = col++;
+    outputTable->setHorizontalHeaderItem(
+        resetColumnIndex, createHeaderItem("resetAll", QTStr("ResetAll"), QIcon(":/branch-output/images/reset.svg"))
+    );
+
+    connect(
+        outputTable->horizontalHeader(), &QHeaderView::sectionPressed, this, &BranchOutputStatusDock::onHeaderPressed
+    );
+    connect(&timer, &QTimer::timeout, this, &BranchOutputStatusDock::update);
 
     timer.setInterval(TIMER_INTERVAL);
     if (isVisible()) {
@@ -175,6 +196,8 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent) : QFrame(parent)
     loadHotkey(unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
     loadHotkey(addChapterToRecordingAllHotkey, "AddChapterToRecordingAllBranchOutputsHotkey");
 
+    sort();
+
     obs_log(LOG_DEBUG, "BranchOutputStatusDock created");
 }
 
@@ -201,43 +224,50 @@ void BranchOutputStatusDock::loadSettings()
         return;
     }
 
-    auto loadColumn = [&](int i, const char *key) {
+    for (int i = 0; i < outputTable->columnCount(); i++) {
+        if (i == resetColumnIndex) {
+            // Skip reset button column
+            continue;
+        }
+        auto key = outputTable->horizontalHeaderItem(i)->data(Qt::UserRole).toString();
         auto width = obs_data_get_int(settings, qUtf8Printable(QString("column.%1.width").arg(key)));
         if (width > 0) {
             outputTable->setColumnWidth(i, (int)width);
         }
-    };
-
-    int col = 0;
-    loadColumn(col++, "filterName");
-    loadColumn(col++, "sourceName");
-    loadColumn(col++, "output");
-    loadColumn(col++, "status");
-    loadColumn(col++, "dropFrames");
-    loadColumn(col++, "sentDataSize");
-    loadColumn(col++, "bitRate");
+    }
 
     interlockComboBox->setCurrentIndex(interlockComboBox->findData(obs_data_get_int(settings, "interlock")));
+
+    auto sortingColumn = QString(obs_data_get_string(settings, "sortingColumn"));
+    for (int i = 0; i < outputTable->columnCount(); i++) {
+        if (outputTable->horizontalHeaderItem(i)->data(Qt::UserRole) == sortingColumn) {
+            sortingColumnIndex = i;
+            break;
+        }
+    }
+
+    sortingOrder = (obs_data_get_int(settings, "sortingOrder") == 1) ? Qt::DescendingOrder : Qt::AscendingOrder;
 }
 
 void BranchOutputStatusDock::saveSettings()
 {
     OBSDataAutoRelease settings = obs_data_create();
 
-    auto saveColumn = [&](int i, const char *key) {
+    for (int i = 0; i < outputTable->columnCount(); i++) {
+        if (i == resetColumnIndex) {
+            // Skip reset button column
+            continue;
+        }
+        auto key = outputTable->horizontalHeaderItem(i)->data(Qt::UserRole).toString();
         obs_data_set_int(settings, qUtf8Printable(QString("column.%1.width").arg(key)), outputTable->columnWidth(i));
-    };
-
-    int col = 0;
-    saveColumn(col++, "filterName");
-    saveColumn(col++, "sourceName");
-    saveColumn(col++, "output");
-    saveColumn(col++, "status");
-    saveColumn(col++, "dropFrames");
-    saveColumn(col++, "sentDataSize");
-    saveColumn(col++, "bitRate");
+    }
 
     obs_data_set_int(settings, "interlock", interlockComboBox->currentData().toInt());
+    obs_data_set_string(
+        settings, "sortingColumn",
+        qUtf8Printable(outputTable->horizontalHeaderItem(sortingColumnIndex)->data(Qt::UserRole).toString())
+    );
+    obs_data_set_int(settings, "sortingOrder", sortingOrder);
 
     OBSString config_dir_path = obs_module_get_config_path(obs_current_module(), "");
     os_mkdirs(config_dir_path);
@@ -283,6 +313,8 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
         // Add disabled row
         addRow(filter, 0, ROW_OUTPUT_NONE, groupIndex++);
     }
+
+    sort();
 }
 
 void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
@@ -290,11 +322,13 @@ void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
     // DO NOT access filter resources at this time (It may be already deleted)
     foreach (auto row, outputTableRows) {
         if (row->filter == filter) {
-            outputTable->removeRow((int)outputTableRows.indexOf(row));
+            outputTable->removeRow(outputTable->row(row->filterCell->item()));
             outputTableRows.removeOne(row);
             row->deleteLater();
         }
     }
+
+    sort();
 }
 
 void BranchOutputStatusDock::update()
@@ -314,6 +348,7 @@ void BranchOutputStatusDock::update()
     applyPauseRecordingAllButtonEnabled();
     applyUnpauseRecordingAllButtonEnabled();
     applyAddChapterToRecordingAllButtonEnabled();
+    sort();
 }
 
 void BranchOutputStatusDock::applyEnableAllButtonEnabled()
@@ -441,6 +476,27 @@ void BranchOutputStatusDock::addChapterToRecordingAll()
     }
 }
 
+void BranchOutputStatusDock::resetStatsAll()
+{
+    foreach (auto row, outputTableRows) {
+        row->reset();
+    }
+}
+
+void BranchOutputStatusDock::sort()
+{
+    outputTable->sortItems(sortingColumnIndex, sortingOrder);
+
+    for (int i = 0; i < outputTable->horizontalHeader()->count(); i++) {
+        if (i != sortingColumnIndex && i != resetColumnIndex) {
+            outputTable->horizontalHeaderItem(i)->setIcon(QIcon());
+        }
+    }
+
+    outputTable->horizontalHeaderItem(sortingColumnIndex)
+        ->setIcon((sortingOrder == Qt::AscendingOrder) ? ascendingIcon : descendingIcon);
+}
+
 void BranchOutputStatusDock::onEanbleAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     auto dock = static_cast<BranchOutputStatusDock *>(data);
@@ -491,6 +547,22 @@ void BranchOutputStatusDock::onAddChapterToRecordingAllHotkeyPressed(
     }
 }
 
+void BranchOutputStatusDock::onHeaderPressed(int index)
+{
+    if (index == resetColumnIndex) {
+        resetStatsAll();
+    } else {
+        if (sortingColumnIndex == index) {
+            // Reverse order
+            sortingOrder = (sortingOrder == Qt::AscendingOrder) ? Qt::DescendingOrder : Qt::AscendingOrder;
+        } else {
+            sortingColumnIndex = index;
+            sortingOrder = Qt::AscendingOrder;
+        }
+        sort();
+    }
+}
+
 //--- OutputTableRow class ---//
 
 OutputTableRow::OutputTableRow(
@@ -504,34 +576,42 @@ OutputTableRow::OutputTableRow(
       groupIndex(_groupIndex)
 {
     auto source = obs_filter_get_parent(filter->filterSource);
+    auto rowId = QString("%1_%2_%3").arg(obs_source_get_name(source)).arg(filter->name).arg(groupIndex);
 
-    filterCell = new FilterCell(filter->name, filter->filterSource, parent);
-    parentCell = new ParentCell(obs_source_get_name(source), source, parent);
-    status = new StatusCell(QTStr("Status.Inactive"), parent);
+    filterCell = new FilterCell(rowId, filter->name, filter->filterSource, parent);
+    parentCell = new ParentCell(rowId, obs_source_get_name(source), source, parent);
+    status = new StatusCell(rowId, QTStr("Status.Inactive"), parent);
 
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
-        outputName = new QLabel(QTStr("Streaming%1").arg(streamingIndex + 1), parent);
+        outputName = new LabelCell(rowId, QTStr("Streaming%1").arg(streamingIndex + 1), parent);
         break;
     case ROW_OUTPUT_RECORDING:
-        outputName = new RecordingOutputCell(QTStr("Recording"), filter->filterSource, parent);
+        outputName = new RecordingOutputCell(rowId, QTStr("Recording"), filter->filterSource, parent);
         break;
     default:
-        outputName = new QLabel(QTStr("None"), parent);
+        outputName = new LabelCell(rowId, QTStr("None"), parent);
     }
 
-    droppedFrames = new QLabel("", parent);
-    megabytesSent = new QLabel("", parent);
-    bitrate = new QLabel("", parent);
+    droppedFrames = new LabelCell(rowId, "", parent);
+    megabytesSent = new LabelCell(rowId, "", parent);
+    bitrate = new LabelCell(rowId, "", parent);
 
     auto col = 0;
     parent->outputTable->setRowCount(row + 1);
+    parent->outputTable->setItem(row, col, filterCell->item());
     parent->outputTable->setCellWidget(row, col++, filterCell);
+    parent->outputTable->setItem(row, col, parentCell->item());
     parent->outputTable->setCellWidget(row, col++, parentCell);
+    parent->outputTable->setItem(row, col, outputName->item());
     parent->outputTable->setCellWidget(row, col++, outputName);
+    parent->outputTable->setItem(row, col, status->item());
     parent->outputTable->setCellWidget(row, col++, status);
+    parent->outputTable->setItem(row, col, droppedFrames->item());
     parent->outputTable->setCellWidget(row, col++, droppedFrames);
+    parent->outputTable->setItem(row, col, megabytesSent->item());
     parent->outputTable->setCellWidget(row, col++, megabytesSent);
+    parent->outputTable->setItem(row, col, bitrate->item());
     parent->outputTable->setCellWidget(row, col++, bitrate);
 
     parent->outputTable->setRowHeight(row, 32);
@@ -556,6 +636,16 @@ OutputTableRow::OutputTableRow(
     connect(status, &StatusCell::pauseRecordingButtonClicked, this, [this]() { pauseRecording(); });
     connect(status, &StatusCell::unpauseRecordingButtonClicked, this, [this]() { unpauseRecording(); });
     connect(status, &StatusCell::addChapterToRecordingButtonClicked, this, [this]() { addChapterToRecording(); });
+
+    // Setup rename event
+    connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &) {
+        updateRowId(); // Update row ID with new filter name
+        parent->sort();
+    });
+    connect(parentCell, &ParentCell::renamed, this, [this, parent](const QString &) {
+        updateRowId(); // Update row ID with new source name
+        parent->sort();
+    });
 }
 
 OutputTableRow::~OutputTableRow()
@@ -599,7 +689,7 @@ void OutputTableRow::update()
         }
 
         if (reconnecting) {
-            status->setText(QTStr("Status.Reconnecting"));
+            status->setTextValue(QTStr("Status.Reconnecting"));
             status->setTheme("error", "text-danger");
             status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
             status->setSplitRecordingButtonShow(false);
@@ -611,11 +701,11 @@ void OutputTableRow::update()
             switch (outputType) {
             case ROW_OUTPUT_STREAMING:
                 if (stopping) {
-                    status->setText(QTStr("Status.Stopping"));
+                    status->setTextValue(QTStr("Status.Stopping"));
                     status->setTheme("", "");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
                 } else {
-                    status->setText(QTStr("Status.Streaming"));
+                    status->setTextValue(QTStr("Status.Streaming"));
                     status->setTheme("good", "text-success");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_STREAMING);
                 }
@@ -627,11 +717,11 @@ void OutputTableRow::update()
                 break;
             case ROW_OUTPUT_RECORDING:
                 if (paused) {
-                    status->setText(QTStr("Status.Paused"));
+                    status->setTextValue(QTStr("Status.Paused"));
                     status->setTheme("", "");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_RECORDING_PAUSED);
                 } else {
-                    status->setText(QTStr("Status.Recording"));
+                    status->setTextValue(QTStr("Status.Recording"));
                     status->setTheme("good", "text-success");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_RECORDING);
                 }
@@ -641,7 +731,7 @@ void OutputTableRow::update()
                 status->setAddChapterToRecordingButtonShow(filter->canAddChapterToRecording());
                 break;
             default:
-                status->setText(QTStr("Status.Inactive"));
+                status->setTextValue(QTStr("Status.Inactive"));
                 status->setTheme("good", "text-success");
                 status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
                 status->setSplitRecordingButtonShow(false);
@@ -652,9 +742,9 @@ void OutputTableRow::update()
         }
     } else {
         if (outputType == ROW_OUTPUT_RECORDING && filter->recordingPending) {
-            status->setText(QTStr("Status.Pending"));
+            status->setTextValue(QTStr("Status.Pending"));
         } else {
-            status->setText(QTStr("Status.Inactive"));
+            status->setTextValue(QTStr("Status.Inactive"));
         }
         status->setTheme("", "");
         status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
@@ -662,9 +752,9 @@ void OutputTableRow::update()
         status->setPauseRecordingButtonShow(false);
         status->setUnpauseRecordingButtonShow(false);
         status->setAddChapterToRecordingButtonShow(false);
-        droppedFrames->setText("");
-        megabytesSent->setText("");
-        bitrate->setText("");
+        droppedFrames->setTextValue("");
+        megabytesSent->setTextValue("");
+        bitrate->setTextValue("");
         return;
     }
 
@@ -693,7 +783,9 @@ void OutputTableRow::update()
         num /= 1024;
         unit = "GiB";
     }
-    megabytesSent->setText(outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 1).arg(unit) : "");
+    megabytesSent->setTextValue(
+        outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 1).arg(unit) : ""
+    );
 
     num = kbps;
     unit = "kb/s";
@@ -701,7 +793,7 @@ void OutputTableRow::update()
         num /= 1000;
         unit = "Mb/s";
     }
-    bitrate->setText(outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 0).arg(unit) : "");
+    bitrate->setTextValue(outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 0).arg(unit) : "");
 
     // Calculate statistics
     int total = output ? obs_output_get_total_frames(output) : 0;
@@ -720,7 +812,7 @@ void OutputTableRow::update()
     QString dropFramesStr =
         QString("%1 / %2 (%3%)")
             .arg(QString::number(dropped), QString::number(total), QString::number((double)num, 'f', 1));
-    droppedFrames->setText(outputType != ROW_OUTPUT_NONE ? dropFramesStr : "");
+    droppedFrames->setTextValue(outputType != ROW_OUTPUT_NONE ? dropFramesStr : "");
 
     if (num > 5.0l) {
         setThemeID(droppedFrames, "error", "text-danger");
@@ -750,17 +842,17 @@ void OutputTableRow::reset()
     }
 
     if (!output) {
-        droppedFrames->setText("");
-        megabytesSent->setText("");
-        bitrate->setText("");
+        droppedFrames->setTextValue("");
+        megabytesSent->setTextValue("");
+        bitrate->setTextValue("");
         return;
     }
 
     first_total = obs_output_get_total_frames(output);
     first_dropped = obs_output_get_frames_dropped(output);
-    droppedFrames->setText(QString("0 / 0 (0)"));
-    megabytesSent->setText(QString("0 MiB"));
-    bitrate->setText(QString("0 kb/s"));
+    droppedFrames->setTextValue(QString("0 / 0 (0)"));
+    megabytesSent->setTextValue(QString("0 MiB"));
+    bitrate->setTextValue(QString("0 kb/s"));
 }
 
 void OutputTableRow::splitRecording()
@@ -799,9 +891,62 @@ void OutputTableRow::addChapterToRecording()
     filter->addChapterToRecording();
 }
 
+void OutputTableRow::updateRowId()
+{
+    auto rowId = QString("%1_%2_%3")
+                     .arg(parentCell->item()->value().toString())
+                     .arg(filterCell->item()->value().toString())
+                     .arg(groupIndex);
+
+    filterCell->item()->setRowId(rowId);
+    parentCell->item()->setRowId(rowId);
+    outputName->item()->setRowId(rowId);
+    status->item()->setRowId(rowId);
+    droppedFrames->item()->setRowId(rowId);
+    megabytesSent->item()->setRowId(rowId);
+    bitrate->item()->setRowId(rowId);
+}
+
+//--- OutputTableCellItem class ---//
+
+OutputTableCellItem::OutputTableCellItem(const QString &rowId, const QVariant &value) : QTableWidgetItem()
+{
+    setData(ItemRole::RowIdRole, rowId);
+    setData(ItemRole::ValueRole, value);
+}
+
+bool OutputTableCellItem::operator<(const QTableWidgetItem &other) const
+{
+    auto value1 = data(ItemRole::ValueRole);
+    auto value2 = other.data(ItemRole::ValueRole);
+    return QVariant::compare(value1, value2) == QPartialOrdering::Less;
+}
+
+//--- LabelCell class ---//
+
+LabelCell::LabelCell(const QString &rowId, QWidget *parent) : QLabel(parent), _item(new OutputTableCellItem(rowId, ""))
+{
+    setAlignment(Qt::AlignCenter);
+}
+
+LabelCell::LabelCell(const QString &rowId, const QString &textValue, QWidget *parent) : LabelCell(rowId, parent)
+{
+    setTextValue(textValue);
+}
+
+LabelCell::~LabelCell() {}
+
+void LabelCell::setTextValue(const QString &textValue)
+{
+    setText(textValue);
+    setValue(textValue);
+}
+
 //--- FilterCell class ---//
 
-FilterCell::FilterCell(const QString &text, obs_source_t *source, QWidget *parent) : QWidget(parent)
+FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent)
+    : QWidget(parent),
+      _item(new OutputTableCellItem(rowId, ""))
 {
     setMinimumHeight(27);
 
@@ -816,7 +961,7 @@ FilterCell::FilterCell(const QString &text, obs_source_t *source, QWidget *paren
         obs_source_set_enabled(source, visible);
     });
 
-    name = new QLabel(text, this);
+    name = new QLabel(this);
 
     auto checkboxLayout = new QHBoxLayout();
     checkboxLayout->setContentsMargins(0, 0, 0, 0);
@@ -829,6 +974,8 @@ FilterCell::FilterCell(const QString &text, obs_source_t *source, QWidget *paren
 
     // Listen signal for filter enabled/disabled
     enableSignal.Connect(obs_source_get_signal_handler(source), "enable", FilterCell::onVisibilityChanged, this);
+
+    setTextValue(textValue);
 }
 
 FilterCell::~FilterCell()
@@ -837,15 +984,17 @@ FilterCell::~FilterCell()
     enableSignal.Disconnect();
 }
 
-void FilterCell::setText(const QString &text)
+void FilterCell::setTextValue(const QString &textValue)
 {
-    name->setText(text);
+    name->setText(textValue);
+    _item->setData(Qt::UserRole, textValue);
+    emit renamed(textValue);
 }
 
 void FilterCell::onFilterRenamed(void *data, calldata_t *cd)
 {
-    auto item = static_cast<FilterCell *>(data);
-    item->setText(calldata_string(cd, "new_name"));
+    auto cell = static_cast<FilterCell *>(data);
+    cell->setTextValue(calldata_string(cd, "new_name"));
 }
 
 void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
@@ -857,7 +1006,9 @@ void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
 
 //--- ParentCell class ---//
 
-ParentCell::ParentCell(const QString &text, obs_source_t *_source, QWidget *parent) : QLabel(parent), source(_source)
+ParentCell::ParentCell(const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent)
+    : LabelCell(rowId, parent),
+      source(_source)
 {
     parentRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", ParentCell::onParentRenamed, this);
 
@@ -865,7 +1016,7 @@ ParentCell::ParentCell(const QString &text, obs_source_t *_source, QWidget *pare
     setTextFormat(Qt::RichText);
     setCursor(Qt::PointingHandCursor);
 
-    setSourceName(text);
+    setTextValue(textValue);
 }
 
 ParentCell::~ParentCell()
@@ -875,15 +1026,17 @@ ParentCell::~ParentCell()
 
 void ParentCell::onParentRenamed(void *data, calldata_t *cd)
 {
-    auto item = static_cast<ParentCell *>(data);
+    auto cell = static_cast<ParentCell *>(data);
     auto newName = calldata_string(cd, "new_name");
-    item->setSourceName(newName);
+    cell->setTextValue(newName);
 }
 
-void ParentCell::setSourceName(const QString &text)
+void ParentCell::setTextValue(const QString &textValue)
 {
     // Markup as link
-    setText(QString("<u>%1</u>").arg(text));
+    LabelCell::setValue(textValue);
+    LabelCell::setText(QString("<u>%1</u>").arg(textValue));
+    emit renamed(textValue);
 }
 
 void ParentCell::mousePressEvent(QMouseEvent *event)
@@ -897,24 +1050,26 @@ void ParentCell::mousePressEvent(QMouseEvent *event)
 
 //--- RecordingOutputCell class ---//
 
-RecordingOutputCell::RecordingOutputCell(const QString &text, obs_source_t *_source, QWidget *parent)
-    : QLabel(parent),
+RecordingOutputCell::RecordingOutputCell(
+    const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent
+)
+    : LabelCell(rowId, parent),
       source(_source)
 {
     // Markup as link
     setTextFormat(Qt::RichText);
     setCursor(Qt::PointingHandCursor);
 
-    setOutputName(text);
+    setTextValue(textValue);
 }
 
 RecordingOutputCell::~RecordingOutputCell() {}
 
-void RecordingOutputCell::setOutputName(const QString &text)
+void RecordingOutputCell::setTextValue(const QString &textValue)
 {
-
     // Markup as link
-    setText(QString("<u>%1</u>").arg(text));
+    LabelCell::setValue(textValue);
+    LabelCell::setText(QString("<u>%1</u>").arg(textValue));
 }
 
 void RecordingOutputCell::mousePressEvent(QMouseEvent *event)
@@ -932,12 +1087,14 @@ void RecordingOutputCell::mousePressEvent(QMouseEvent *event)
 
 //--- StatusCell class ---//
 
-StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent)
+StatusCell::StatusCell(const QString &rowId, const QString &textValue, QWidget *parent)
+    : QWidget(parent),
+      _item(new OutputTableCellItem(rowId, ""))
 {
     streamingIcon = new QLabel(this);
     recordingIcon = new QLabel(this);
     recordingPausedIcon = new QLabel(this);
-    statusText = new QLabel(text, this);
+    statusText = new QLabel(this);
     splitRecordingButton = new QToolButton(this);
     pauseRecordingButton = new QToolButton(this);
     unpauseRecordingButton = new QToolButton(this);
@@ -986,6 +1143,8 @@ StatusCell::StatusCell(const QString &text, QWidget *parent) : QWidget(parent)
     layout->addWidget(addChapterToRecordingButton);
     layout->addSpacing(5);
     setLayout(layout);
+
+    setTextValue(textValue);
 }
 
 StatusCell::~StatusCell()
@@ -1017,4 +1176,10 @@ void StatusCell::setIconShow(StatusIcon show)
         recordingPausedIcon->setVisible(true);
         break;
     }
+}
+
+void StatusCell::setTextValue(const QString &textValue)
+{
+    statusText->setText(textValue);
+    _item->setData(Qt::UserRole, textValue);
 }
