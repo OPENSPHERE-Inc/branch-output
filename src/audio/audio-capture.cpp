@@ -18,6 +18,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs-module.h>
 
+#include <QMutexLocker>
+
 #include "audio-capture.hpp"
 #include "../plugin-support.h"
 
@@ -37,7 +39,8 @@ AudioCapture::AudioCapture(
       audioBuffer({0}),
       audioBufferFrames(0),
       audioConvBuffer(nullptr),
-      audioConvBufferSize(0)
+      audioConvBufferSize(0),
+      active(true)
 {
     audio_output_info aoi = {0};
     aoi.name = _name;
@@ -51,13 +54,11 @@ AudioCapture::AudioCapture(
         audio = nullptr;
         return;
     }
-
-    active = true;
 }
 
 AudioCapture::~AudioCapture()
 {
-    active = false;
+    active.store(false);
 
     if (audio) {
         audio_output_close(audio);
@@ -69,7 +70,7 @@ AudioCapture::~AudioCapture()
 
 uint64_t AudioCapture::popAudio(uint64_t startTsIn, uint32_t mixers, audio_output_data *audioData)
 {
-    if (!active) {
+    if (!active.load()) {
         return startTsIn;
     }
 
@@ -141,7 +142,7 @@ uint64_t AudioCapture::popAudio(uint64_t startTsIn, uint32_t mixers, audio_outpu
 
 void AudioCapture::pushAudio(const audio_data *audioData)
 {
-    if (!active) {
+    if (!active.load()) {
         return;
     }
 
@@ -204,6 +205,17 @@ void AudioCapture::pushAudio(const obs_audio_data *audioData)
     memcpy(ad.data, audioData->data, sizeof(audio_data::data));
 
     pushAudio(&ad);
+}
+
+void AudioCapture::setActive(bool enable)
+{
+    active.store(enable);
+    if (!enable) {
+        QMutexLocker locker(&audioBufferMutex);
+        deque_free(&audioBuffer);
+        deque_init(&audioBuffer);
+        audioBufferFrames = 0;
+    }
 }
 
 // Callback from audio_output_open

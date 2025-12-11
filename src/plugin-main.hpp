@@ -75,6 +75,8 @@ class BranchOutputFilter : public QObject {
     uint32_t activeSettingsRev;
     QTimer *intervalTimer;
     bool streamingStopping;
+    bool blankingOutput;
+    bool audioMutedByBlank;
 
     // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
@@ -142,6 +144,8 @@ class BranchOutputFilter : public QObject {
     bool pauseRecording();
     bool unpauseRecording();
     bool addChapterToRecording(QString chapterName = QString());
+    void setBlankingState(bool blank, bool muteAudio, obs_source_t *parent);
+    void setAudioCapturesActive(bool active);
 
     // Implemented in plugin-ui.cpp
     void addApplyButton(obs_properties_t *props, const char *propName = "apply");

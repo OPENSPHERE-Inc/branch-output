@@ -57,6 +57,9 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       storedSettingsRev(0),
       activeSettingsRev(0),
       intervalTimer(nullptr),
+      streamingStopping(false),
+      blankingOutput(false),
+      audioMutedByBlank(false),
       recordingOutput(nullptr),
       videoEncoder(nullptr),
       videoOutput(nullptr),
@@ -303,6 +306,9 @@ void BranchOutputFilter::stopOutput()
 
         view = nullptr;
     }
+
+    blankingOutput = false;
+    audioMutedByBlank = false;
 }
 
 obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bool createFolder)
@@ -734,6 +740,9 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             return;
         }
 
+        bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
+        bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
+
         obs_video_info ovi = {0};
         if (!obs_get_video_info(&ovi)) {
             // Abort when no video situation
@@ -941,6 +950,14 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
                 return;
             }
             obs_encoder_set_audio(audioContext->encoder, audioContext->audio);
+        }
+
+        if (blankWhenHidden) {
+            bool previewMode = obs_frontend_preview_enabled();
+            bool visible = previewMode ? sourceVisibleInPreview(parent) : sourceVisibleInProgram(parent);
+            setBlankingState(!visible, muteWhenHidden, parent);
+        } else {
+            setBlankingState(false, muteWhenHidden, parent);
         }
 
         //--- Start recording output (if requested) ---//
@@ -1247,6 +1264,10 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 return;
             }
 
+            OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+            bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
+            bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
+
             // Check interlock condition
             if (interlockType == INTERLOCK_TYPE_STREAMING) {
                 if (!obs_frontend_streaming_active()) {
@@ -1295,9 +1316,23 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     return;
                 }
 
+                if (blankWhenHidden) {
+                    bool visible = sourceVisibleInProgram(parent);
+                    pthread_mutex_lock(&outputMutex);
+                    {
+                        OBSMutexAutoUnlock outputLocked(&outputMutex);
+                        setBlankingState(!visible, muteWhenHidden, parent);
+                    }
+                } else if (blankingOutput || audioMutedByBlank) {
+                    pthread_mutex_lock(&outputMutex);
+                    {
+                        OBSMutexAutoUnlock outputLocked(&outputMutex);
+                        setBlankingState(false, muteWhenHidden, parent);
+                    }
+                }
+
                 if (width != sourceWidth || height != sourceHeight) {
                     // Source resolution was changed
-                    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
                     if (sourceWidth > 0 && sourceHeight > 0) {
                         if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
                             // Restart output when source resolution was changed.
@@ -1352,8 +1387,8 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                         // If the output has not yet been created.
                         // Create and start recording when recording output was pending.
                         obs_log(LOG_INFO, "%s: Attempting resume the recording output", qUtf8Printable(name));
-                        OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-                        createAndStartRecordingOutput(settings);
+                        OBSDataAutoRelease pendingSettings = obs_source_get_settings(filterSource);
+                        createAndStartRecordingOutput(pendingSettings);
                         return;
                     }
                 }
@@ -1525,6 +1560,66 @@ bool BranchOutputFilter::addChapterToRecording(QString chapterName)
         bool result = proc_handler_call(ph, "add_chapter", &cd);
         calldata_free(&cd);
         return result;
+    }
+}
+
+void BranchOutputFilter::setAudioCapturesActive(bool active)
+{
+    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
+        auto audioContext = &audios[i];
+        if (audioContext->capture) {
+            audioContext->capture->setActive(active);
+        }
+    }
+}
+
+void BranchOutputFilter::setBlankingState(bool blank, bool muteAudio, obs_source_t *parent)
+{
+    if (!parent) {
+        parent = obs_filter_get_parent(filterSource);
+    }
+
+    if (!view) {
+        blankingOutput = false;
+        if (audioMutedByBlank) {
+            setAudioCapturesActive(true);
+            audioMutedByBlank = false;
+        }
+        return;
+    }
+
+    if (blank) {
+        if (!blankingOutput) {
+            obs_view_set_source(view, 0, nullptr);
+            if (muteAudio) {
+                setAudioCapturesActive(false);
+                audioMutedByBlank = true;
+            } else {
+                audioMutedByBlank = false;
+            }
+            blankingOutput = true;
+            obs_log(LOG_INFO, "%s: Output blanked because source is not visible", qUtf8Printable(name));
+        } else {
+            if (muteAudio && !audioMutedByBlank) {
+                setAudioCapturesActive(false);
+                audioMutedByBlank = true;
+            } else if (!muteAudio && audioMutedByBlank) {
+                setAudioCapturesActive(true);
+                audioMutedByBlank = false;
+            }
+        }
+    } else {
+        if (blankingOutput) {
+            if (parent) {
+                obs_view_set_source(view, 0, parent);
+            }
+            blankingOutput = false;
+            obs_log(LOG_INFO, "%s: Output resumed because source became visible", qUtf8Printable(name));
+        }
+        if (audioMutedByBlank) {
+            setAudioCapturesActive(true);
+            audioMutedByBlank = false;
+        }
     }
 }
 

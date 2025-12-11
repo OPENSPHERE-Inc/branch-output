@@ -183,6 +183,8 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
     obs_data_set_default_bool(defaults, "keep_output_base_resolution", false);
     obs_data_set_default_bool(defaults, "suspend_recording_when_source_collapsed", false);
+    obs_data_set_default_bool(defaults, "blank_when_not_visible", false);
+    obs_data_set_default_bool(defaults, "mute_audio_when_blank", false);
     obs_data_set_default_string(defaults, "rec_muxer_custom", mux);
 
     auto path = getProfileRecordingPath(config);
@@ -433,6 +435,25 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
         streamGroup, "keep_output_base_resolution", obs_module_text("KeepOutputBaseResolution")
     );
     obs_property_set_long_description(keepOutputBaseResolution, obs_module_text("KeepOutputBaseResolutionNote"));
+
+    auto blankWhenNotVisible =
+        obs_properties_add_bool(streamGroup, "blank_when_not_visible", obs_module_text("BlankWhenNotVisible"));
+    obs_property_set_long_description(blankWhenNotVisible, obs_module_text("BlankWhenNotVisibleNote"));
+
+    auto muteAudioWhenBlank =
+        obs_properties_add_bool(streamGroup, "mute_audio_when_blank", obs_module_text("MuteAudioWhenBlank"));
+    obs_property_set_long_description(muteAudioWhenBlank, obs_module_text("MuteAudioWhenBlankNote"));
+    obs_property_set_visible(muteAudioWhenBlank, false);
+
+    obs_property_set_modified_callback2(
+        blankWhenNotVisible,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            bool enabled = obs_data_get_bool(settings, "blank_when_not_visible");
+            obs_property_set_visible(obs_properties_get(_props, "mute_audio_when_blank"), enabled);
+            return true;
+        },
+        nullptr
+    );
 
     obs_properties_add_group(props, "stream", obs_module_text("Stream"), OBS_GROUP_NORMAL, streamGroup);
 }
