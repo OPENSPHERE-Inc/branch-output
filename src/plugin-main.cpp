@@ -305,6 +305,7 @@ void BranchOutputFilter::stopOutput()
         }
 
         view = nullptr;
+        blankSource = nullptr;
     }
 
     blankingOutput = false;
@@ -1316,12 +1317,13 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     return;
                 }
 
+                bool visibleInProgram = true;
                 if (blankWhenHidden) {
-                    bool visible = sourceVisibleInProgram(parent);
+                    visibleInProgram = sourceVisibleInProgram(parent);
                     pthread_mutex_lock(&outputMutex);
                     {
                         OBSMutexAutoUnlock outputLocked(&outputMutex);
-                        setBlankingState(!visible, muteWhenHidden, parent);
+                        setBlankingState(!visibleInProgram, muteWhenHidden, parent);
                     }
                 } else if (blankingOutput || audioMutedByBlank) {
                     pthread_mutex_lock(&outputMutex);
@@ -1331,7 +1333,11 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     }
                 }
 
-                if (width != sourceWidth || height != sourceHeight) {
+                // When blanking because the source is not visible, some sources report unstable base sizes.
+                // Avoid restart storms while hidden; resolution will be re-evaluated when visible again.
+                bool skipResolutionRestart = blankWhenHidden && !visibleInProgram;
+
+                if (!skipResolutionRestart && (width != sourceWidth || height != sourceHeight)) {
                     // Source resolution was changed
                     if (sourceWidth > 0 && sourceHeight > 0) {
                         if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
@@ -1590,7 +1596,30 @@ void BranchOutputFilter::setBlankingState(bool blank, bool muteAudio, obs_source
 
     if (blank) {
         if (!blankingOutput) {
-            obs_view_set_source(view, 0, nullptr);
+            if (!blankSource) {
+                OBSDataAutoRelease blankSettings = obs_data_create();
+                // Solid black, fully opaque.
+                obs_data_set_int(blankSettings, "color", 0xFF000000);
+                if (width > 0 && height > 0) {
+                    obs_data_set_int(blankSettings, "width", width);
+                    obs_data_set_int(blankSettings, "height", height);
+                }
+
+                blankSource = obs_source_create_private(
+                    "color_source", "Branch Output Blank", blankSettings
+                );
+                if (!blankSource) {
+                    obs_log(
+                        LOG_WARNING,
+                        "%s: Failed to create blank color source; leaving original source active",
+                        qUtf8Printable(name)
+                    );
+                }
+            }
+
+            if (blankSource) {
+                obs_view_set_source(view, 0, blankSource);
+            }
             if (muteAudio) {
                 setAudioCapturesActive(false);
                 audioMutedByBlank = true;

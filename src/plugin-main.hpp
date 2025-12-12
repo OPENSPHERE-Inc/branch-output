@@ -81,6 +81,9 @@ class BranchOutputFilter : public QObject {
     // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
 
+    // Private solid-color source used for blanking
+    OBSSourceAutoRelease blankSource;
+
     // User choosed encoder
     OBSEncoderAutoRelease videoEncoder;
 
