@@ -203,6 +203,8 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
 
 BranchOutputStatusDock::~BranchOutputStatusDock()
 {
+    timer.stop();
+
     saveSettings();
 
     // Unregister hotkeys
@@ -334,7 +336,15 @@ void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
 void BranchOutputStatusDock::update()
 {
     foreach (auto row, outputTableRows) {
-        if (!sourceInFrontend(obs_filter_get_parent(row->filter->filterSource))) {
+        if (!row->filter) {
+            outputTable->removeRow(outputTable->row(row->filterCell->item()));
+            outputTableRows.removeOne(row);
+            row->deleteLater();
+            continue;
+        }
+
+        auto parent = obs_filter_get_parent(row->filter->filterSource);
+        if (!parent || !sourceInFrontend(parent)) {
             // Remove filter that no longer exists in the frontend
             removeFilter(row->filter);
             continue;
@@ -430,7 +440,7 @@ void BranchOutputStatusDock::hideEvent(QHideEvent *)
 void BranchOutputStatusDock::setEabnleAll(bool enabled)
 {
     foreach (auto row, outputTableRows) {
-        if (row->groupIndex == 0) {
+        if (row->filter && row->groupIndex == 0) {
             // Do only once for each filters
             obs_source_set_enabled(row->filter->filterSource, enabled);
         }
@@ -443,7 +453,7 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
 void BranchOutputStatusDock::splitRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isSplitRecordingButtonShow()) {
+        if (row->filter && row->outputType == ROW_OUTPUT_RECORDING && row->status->isSplitRecordingButtonShow()) {
             row->filter->splitRecording();
         }
     }
@@ -452,7 +462,7 @@ void BranchOutputStatusDock::splitRecordingAll()
 void BranchOutputStatusDock::pauseRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isPauseRecordingButtonShow()) {
+        if (row->filter && row->outputType == ROW_OUTPUT_RECORDING && row->status->isPauseRecordingButtonShow()) {
             row->filter->pauseRecording();
         }
     }
@@ -461,7 +471,7 @@ void BranchOutputStatusDock::pauseRecordingAll()
 void BranchOutputStatusDock::unpauseRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isUnpauseRecordingButtonShow()) {
+        if (row->filter && row->outputType == ROW_OUTPUT_RECORDING && row->status->isUnpauseRecordingButtonShow()) {
             row->filter->unpauseRecording();
         }
     }
@@ -470,10 +480,21 @@ void BranchOutputStatusDock::unpauseRecordingAll()
 void BranchOutputStatusDock::addChapterToRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isAddChapterToRecordingButtonShow()) {
+        if (row->filter && row->outputType == ROW_OUTPUT_RECORDING && row->status->isAddChapterToRecordingButtonShow()) {
             row->filter->addChapterToRecording();
         }
     }
+}
+
+void BranchOutputStatusDock::onObsShuttingDown()
+{
+    timer.stop();
+
+    foreach (auto row, outputTableRows) {
+        outputTable->removeRow(outputTable->row(row->filterCell->item()));
+        row->deleteLater();
+    }
+    outputTableRows.clear();
 }
 
 void BranchOutputStatusDock::resetStatsAll()

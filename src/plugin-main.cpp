@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 
 #include <QDateTime>
+#include <QPointer>
 
 #include "audio/audio-capture.hpp"
 #include "plugin-support.h"
@@ -42,8 +43,18 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-BranchOutputStatusDock *statusDock = nullptr;
+QPointer<BranchOutputStatusDock> statusDock;
 pthread_mutex_t pluginMutex;
+
+static void onFrontendEvent(enum obs_frontend_event event, void *)
+{
+    if (event == OBS_FRONTEND_EVENT_EXIT || event == OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN) {
+        if (statusDock) {
+            QPointer<BranchOutputStatusDock> dock = statusDock;
+            QMetaObject::invokeMethod(dock, "onObsShuttingDown", Qt::QueuedConnection);
+        }
+    }
+}
 
 //--- BranchOutputFilter class ---//
 
@@ -1750,6 +1761,8 @@ void obs_module_post_load()
     qRegisterMetaType<BranchOutputFilter *>();
 
     statusDock = BranchOutputFilter::createOutputStatusDock();
+
+    obs_frontend_add_event_callback(onFrontendEvent, nullptr);
 }
 
 void obs_module_unload()
@@ -1757,7 +1770,10 @@ void obs_module_unload()
     // Remove and destroy status dock to avoid leaks (hotkeys, timers, widgets)
     if (statusDock) {
         obs_frontend_remove_dock("BranchOutputStatusDock");
+        statusDock = nullptr;
     }
+
+    obs_frontend_remove_event_callback(onFrontendEvent, nullptr);
 
     pthread_mutex_destroy(&pluginMutex);
 

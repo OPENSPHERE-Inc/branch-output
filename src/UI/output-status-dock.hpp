@@ -246,6 +246,7 @@ public slots:
     void addRow(BranchOutputFilter *filter, size_t streamingIndex, RowOutputType outputType, size_t groupIndex = 0);
     void addFilter(BranchOutputFilter *filter);
     void removeFilter(BranchOutputFilter *filter);
+    void onObsShuttingDown();
     void setEabnleAll(bool enabled);
     void splitRecordingAll();
     void pauseRecordingAll();
@@ -262,7 +263,7 @@ class OutputTableRow : public QObject {
 
     friend class BranchOutputStatusDock;
 
-    BranchOutputFilter *filter;
+    QPointer<BranchOutputFilter> filter;
     FilterCell *filterCell;
     ParentCell *parentCell;
     StatusCell *status;

@@ -26,11 +26,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/threading.h>
 
 #include <QObject>
+#include <QPointer>
 
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
 
 #define MAX_SERVICES 8
+
+class QTimer;
 
 class BranchOutputFilter : public QObject {
     Q_OBJECT
@@ -73,7 +76,7 @@ class BranchOutputFilter : public QObject {
     bool initialized; // Activate after first "Apply" click
     uint32_t storedSettingsRev;
     uint32_t activeSettingsRev;
-    QTimer *intervalTimer;
+    QPointer<QTimer> intervalTimer;
     bool streamingStopping;
 
     // Filter source (Do not use OBSSourceAutoRelease)
