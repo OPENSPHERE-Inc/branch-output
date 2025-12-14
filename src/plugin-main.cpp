@@ -954,9 +954,8 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         }
 
         if (blankWhenHidden) {
-            bool previewMode = obs_frontend_preview_enabled();
-            bool visible = previewMode ? sourceVisibleInPreview(parent) : sourceVisibleInProgram(parent);
-            setBlankingState(!visible, muteWhenHidden, parent);
+            bool visibleInProgram = sourceVisibleInProgram(parent);
+            setBlankingState(!visibleInProgram, muteWhenHidden, parent);
         } else {
             setBlankingState(false, muteWhenHidden, parent);
         }
@@ -1605,13 +1604,10 @@ void BranchOutputFilter::setBlankingState(bool blank, bool muteAudio, obs_source
                     obs_data_set_int(blankSettings, "height", height);
                 }
 
-                blankSource = obs_source_create_private(
-                    "color_source", "Branch Output Blank", blankSettings
-                );
+                blankSource = obs_source_create_private("color_source", "Branch Output Blank", blankSettings);
                 if (!blankSource) {
                     obs_log(
-                        LOG_WARNING,
-                        "%s: Failed to create blank color source; leaving original source active",
+                        LOG_WARNING, "%s: Failed to create blank color source; leaving original source active",
                         qUtf8Printable(name)
                     );
                 }

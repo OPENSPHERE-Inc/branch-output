@@ -196,12 +196,33 @@ static bool sourceVisibleInSceneSource(obs_source_t *sceneSource, obs_source_t *
 
 bool sourceVisibleInProgram(obs_source_t *source)
 {
+    if (!source) {
+        return false;
+    }
+
+    // Prefer using OBS' actual program output source (transition), because in Studio Mode the
+    // Program display may use duplicated/private scenes that differ from the "current scene".
+    //
+    // During transitions, the Program output can contain both Source A and Source B. Consider
+    // the source visible if it's visible in either one, so we don't blank incorrectly mid-transition.
+    OBSSourceAutoRelease output = obs_get_output_source(0);
+    if (output) {
+        OBSSourceAutoRelease a = obs_transition_get_source(output, OBS_TRANSITION_SOURCE_A);
+        OBSSourceAutoRelease b = obs_transition_get_source(output, OBS_TRANSITION_SOURCE_B);
+
+        if (a || b) {
+            return sourceVisibleInSceneSource(a, source) || sourceVisibleInSceneSource(b, source);
+        }
+
+        OBSSourceAutoRelease active = obs_transition_get_active_source(output);
+        if (active) {
+            return sourceVisibleInSceneSource(active, source);
+        }
+
+        return sourceVisibleInSceneSource(output, source);
+    }
+
+    // Fallback: frontend API scene pointer.
     OBSSourceAutoRelease program = obs_frontend_get_current_scene();
     return sourceVisibleInSceneSource(program, source);
-}
-
-bool sourceVisibleInPreview(obs_source_t *source)
-{
-    OBSSourceAutoRelease preview = obs_frontend_get_current_preview_scene();
-    return sourceVisibleInSceneSource(preview, source);
 }

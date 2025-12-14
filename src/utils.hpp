@@ -124,7 +124,6 @@ inline bool sourceIsPrivate(obs_source_t *source)
 }
 
 bool sourceVisibleInProgram(obs_source_t *source);
-bool sourceVisibleInPreview(obs_source_t *source);
 
 // Return value must be obs_data_release() after use
 inline obs_data_t *loadHotkeyData(const char *name)
