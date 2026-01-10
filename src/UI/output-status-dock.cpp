@@ -203,6 +203,8 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
 
 BranchOutputStatusDock::~BranchOutputStatusDock()
 {
+    timer.stop();
+
     saveSettings();
 
     // Unregister hotkeys
@@ -485,16 +487,43 @@ void BranchOutputStatusDock::resetStatsAll()
 
 void BranchOutputStatusDock::sort()
 {
-    outputTable->sortItems(sortingColumnIndex, sortingOrder);
-
-    for (int i = 0; i < outputTable->horizontalHeader()->count(); i++) {
-        if (i != sortingColumnIndex && i != resetColumnIndex) {
-            outputTable->horizontalHeaderItem(i)->setIcon(QIcon());
-        }
+    if (!outputTable) {
+        return;
     }
 
-    outputTable->horizontalHeaderItem(sortingColumnIndex)
-        ->setIcon((sortingOrder == Qt::AscendingOrder) ? ascendingIcon : descendingIcon);
+    QHeaderView *header = outputTable->horizontalHeader();
+    if (!header) {
+        return;
+    }
+
+    const int headerCount = header->count();
+    if (headerCount <= 0) {
+        return;
+    }
+
+    if (sortingColumnIndex < 0 || sortingColumnIndex >= headerCount) {
+        sortingColumnIndex = 0;
+    }
+
+    outputTable->sortItems(sortingColumnIndex, sortingOrder);
+
+    for (int i = 0; i < headerCount; i++) {
+        if (i == sortingColumnIndex || i == resetColumnIndex) {
+            continue;
+        }
+
+        QTableWidgetItem *item = outputTable->horizontalHeaderItem(i);
+        if (!item) {
+            continue;
+        }
+        item->setIcon(QIcon());
+    }
+
+    QTableWidgetItem *sortHeaderItem = outputTable->horizontalHeaderItem(sortingColumnIndex);
+    if (!sortHeaderItem) {
+        return;
+    }
+    sortHeaderItem->setIcon((sortingOrder == Qt::AscendingOrder) ? ascendingIcon : descendingIcon);
 }
 
 void BranchOutputStatusDock::onEanbleAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
