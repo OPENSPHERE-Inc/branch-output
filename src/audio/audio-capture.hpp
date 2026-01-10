@@ -22,6 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 #include <util/deque.h>
 
+#include <atomic>
 #include <QObject>
 #include <QMutex>
 
@@ -41,7 +42,7 @@ protected:
     uint8_t *audioConvBuffer;
     size_t audioConvBufferSize;
     QMutex audioBufferMutex;
-    bool active;
+    std::atomic_bool active;
 
 public:
     struct AudioBufferHeader {
@@ -64,6 +65,8 @@ public:
     uint64_t popAudio(uint64_t startTsIn, uint32_t mixers, audio_output_data *audioData);
     void pushAudio(const audio_data *audioData);
     void pushAudio(const obs_audio_data *audioData);
+    void setActive(bool enable);
+    inline bool isActive() const { return active.load(); }
     virtual bool hasSource() { return true; }
     inline QString getName() { return name; }
 

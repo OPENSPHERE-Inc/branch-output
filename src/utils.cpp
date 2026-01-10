@@ -17,7 +17,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include <obs-module.h>
+#include <obs-frontend-api.h>
 #include <util/platform.h>
+#include <obs.hpp>
 
 #include <QWidget>
 
@@ -118,4 +120,109 @@ QString getOutputFilename(const char *path, const char *container, bool noSpace,
     }
 
     return strPath;
+}
+
+// Recursively check whether a source is visible inside a scene (including nested scenes and groups)
+static bool sceneHasVisibleSource(obs_scene_t *scene, obs_source_t *target)
+{
+    if (!scene || !target) {
+        return false;
+    }
+
+    struct FindContext {
+        obs_source_t *target;
+        bool found;
+    } context = {target, false};
+
+    obs_scene_enum_items(
+        scene,
+        [](obs_scene_t *, obs_sceneitem_t *item, void *param) {
+            auto ctx = static_cast<FindContext *>(param);
+            if (ctx->found) {
+                return false;
+            }
+
+            if (!obs_sceneitem_visible(item)) {
+                return true;
+            }
+
+            obs_source_t *itemSource = obs_sceneitem_get_source(item);
+            if (itemSource == ctx->target) {
+                ctx->found = true;
+                return false;
+            }
+
+            if (obs_sceneitem_is_group(item)) {
+                obs_scene_t *groupScene = obs_sceneitem_group_get_scene(item);
+                if (sceneHasVisibleSource(groupScene, ctx->target)) {
+                    ctx->found = true;
+                    return false;
+                }
+            }
+
+            if (obs_source_get_type(itemSource) == OBS_SOURCE_TYPE_SCENE) {
+                obs_scene_t *subScene = obs_scene_from_source(itemSource);
+                if (sceneHasVisibleSource(subScene, ctx->target)) {
+                    ctx->found = true;
+                    return false;
+                }
+            }
+
+            return true;
+        },
+        &context
+    );
+
+    return context.found;
+}
+
+static bool sourceVisibleInSceneSource(obs_source_t *sceneSource, obs_source_t *target)
+{
+    if (!sceneSource || !target) {
+        return false;
+    }
+
+    if (sceneSource == target) {
+        return true;
+    }
+
+    obs_scene_t *scene = obs_scene_from_source(sceneSource);
+    if (!scene) {
+        return false;
+    }
+
+    return sceneHasVisibleSource(scene, target);
+}
+
+bool sourceVisibleInProgram(obs_source_t *source)
+{
+    if (!source) {
+        return false;
+    }
+
+    // Prefer using OBS' actual program output source (transition), because in Studio Mode the
+    // Program display may use duplicated/private scenes that differ from the "current scene".
+    //
+    // During transitions, the Program output can contain both Source A and Source B. Consider
+    // the source visible if it's visible in either one, so we don't blank incorrectly mid-transition.
+    OBSSourceAutoRelease output = obs_get_output_source(0);
+    if (output) {
+        OBSSourceAutoRelease a = obs_transition_get_source(output, OBS_TRANSITION_SOURCE_A);
+        OBSSourceAutoRelease b = obs_transition_get_source(output, OBS_TRANSITION_SOURCE_B);
+
+        if (a || b) {
+            return sourceVisibleInSceneSource(a, source) || sourceVisibleInSceneSource(b, source);
+        }
+
+        OBSSourceAutoRelease active = obs_transition_get_active_source(output);
+        if (active) {
+            return sourceVisibleInSceneSource(active, source);
+        }
+
+        return sourceVisibleInSceneSource(output, source);
+    }
+
+    // Fallback: frontend API scene pointer.
+    OBSSourceAutoRelease program = obs_frontend_get_current_scene();
+    return sourceVisibleInSceneSource(program, source);
 }
