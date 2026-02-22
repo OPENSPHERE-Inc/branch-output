@@ -311,8 +311,15 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
         dock->saveSettings();
         break;
     case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
-        dock->loadSettings();
-        dock->sort();
+        // Defer to ensure Qt event loop has finished processing the profile change
+        QMetaObject::invokeMethod(
+            dock,
+            [dock]() {
+                dock->loadSettings();
+                dock->sort();
+            },
+            Qt::QueuedConnection
+        );
         break;
     default:
         break;
