@@ -335,8 +335,20 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
     auto path = useProfileRecordingPath ? getProfileRecordingPath(config) : obs_data_get_string(settings, "path");
     auto recFormat = obs_data_get_string(settings, "rec_format");
 
+    // Validate recording path
+    if (!path || !path[0]) {
+        obs_log(LOG_ERROR, "%s: Recording path is not set", qUtf8Printable(name));
+        obs_data_release(recordingSettings);
+        return nullptr;
+    }
+
     if (createFolder) {
-        os_mkdirs(path);
+        int ret = os_mkdirs(path);
+        if (ret == MKDIR_ERROR) {
+            obs_log(LOG_ERROR, "%s: Failed to create recording directory: %s", qUtf8Printable(name), path);
+            obs_data_release(recordingSettings);
+            return nullptr;
+        }
     }
 
     // Add filter name to filename format
@@ -346,6 +358,12 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
     auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
     filenameFormat = filenameFormat.arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
     auto compositePath = getOutputFilename(path, recFormat, noSpace, false, qUtf8Printable(filenameFormat));
+
+    if (compositePath.isEmpty()) {
+        obs_log(LOG_ERROR, "%s: Recording path is not accessible: %s", qUtf8Printable(name), path);
+        obs_data_release(recordingSettings);
+        return nullptr;
+    }
 
     obs_data_set_string(recordingSettings, "path", qUtf8Printable(compositePath));
 
@@ -659,6 +677,10 @@ void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
 
     // Ensure base path exists
     OBSDataAutoRelease recordingSettings = createRecordingSettings(settings, true);
+    if (!recordingSettings) {
+        obs_log(LOG_ERROR, "%s: Recording settings creation failed (path unavailable?)", qUtf8Printable(name));
+        return;
+    }
     recordingOutput = obs_output_create(outputId, qUtf8Printable(name), recordingSettings, nullptr);
     if (!recordingOutput) {
         obs_log(LOG_ERROR, "%s: Recording output creation failed", qUtf8Printable(name));
