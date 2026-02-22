@@ -727,6 +727,12 @@ void OutputTableRow::update()
             status->setAddChapterToRecordingButtonShow(false);
             status->setAddChapterToRecordingButtonShow(false);
         } else {
+            // Blanking suffix for status text
+            auto blankSuffix = filter->blankingOutputActive && filter->blankingAudioMuted
+                                   ? QTStr("Status.BlankMutedSuffix")
+                               : filter->blankingOutputActive ? QTStr("Status.BlankSuffix")
+                                                              : QStringLiteral("");
+
             switch (outputType) {
             case ROW_OUTPUT_STREAMING:
                 if (stopping) {
@@ -734,7 +740,7 @@ void OutputTableRow::update()
                     status->setTheme("", "");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
                 } else {
-                    status->setTextValue(QTStr("Status.Streaming"));
+                    status->setTextValue(QTStr("Status.Streaming") + blankSuffix);
                     status->setTheme("good", "text-success");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_STREAMING);
                 }
@@ -746,11 +752,11 @@ void OutputTableRow::update()
                 break;
             case ROW_OUTPUT_RECORDING:
                 if (paused) {
-                    status->setTextValue(QTStr("Status.Paused"));
+                    status->setTextValue(QTStr("Status.Paused") + blankSuffix);
                     status->setTheme("", "");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_RECORDING_PAUSED);
                 } else {
-                    status->setTextValue(QTStr("Status.Recording"));
+                    status->setTextValue(QTStr("Status.Recording") + blankSuffix);
                     status->setTheme("good", "text-success");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_RECORDING);
                 }
