@@ -1324,12 +1324,6 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                         OBSMutexAutoUnlock outputLocked(&outputMutex);
                         setBlankingState(!visibleInProgram, muteWhenHidden, parent);
                     }
-                } else if (blankingOutput || audioMutedByBlank) {
-                    pthread_mutex_lock(&outputMutex);
-                    {
-                        OBSMutexAutoUnlock outputLocked(&outputMutex);
-                        setBlankingState(false, muteWhenHidden, parent);
-                    }
                 }
 
                 // When blanking because the source is not visible, some sources report unstable base sizes.
