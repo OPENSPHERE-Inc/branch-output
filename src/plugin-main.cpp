@@ -58,8 +58,8 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       activeSettingsRev(0),
       intervalTimer(nullptr),
       streamingStopping(false),
-      blankingOutput(false),
-      audioMutedByBlank(false),
+      blankingOutputActive(false),
+      blankingAudioMuted(false),
       recordingOutput(nullptr),
       videoEncoder(nullptr),
       videoOutput(nullptr),
@@ -308,8 +308,8 @@ void BranchOutputFilter::stopOutput()
         blankSource = nullptr;
     }
 
-    blankingOutput = false;
-    audioMutedByBlank = false;
+    blankingOutputActive = false;
+    blankingAudioMuted = false;
 }
 
 obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bool createFolder)
@@ -954,10 +954,24 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         }
 
         if (blankWhenHidden) {
+            // Pre-create blank source so that setBlankingActive() never has to
+            // allocate during a live stream.  The color_source is lightweight and
+            // cleaned up in stopOutput().
+            if (!blankSource) {
+                OBSDataAutoRelease blankSettings = obs_data_create();
+                obs_data_set_int(blankSettings, "color", 0xFF000000);
+                if (width > 0 && height > 0) {
+                    obs_data_set_int(blankSettings, "width", width);
+                    obs_data_set_int(blankSettings, "height", height);
+                }
+                blankSource = obs_source_create_private("color_source", "Branch Output Blank", blankSettings);
+                if (!blankSource) {
+                    obs_log(LOG_WARNING, "%s: Failed to pre-create blank color source", qUtf8Printable(name));
+                }
+            }
+
             bool visibleInProgram = sourceVisibleInProgram(parent);
-            setBlankingState(!visibleInProgram, muteWhenHidden, parent);
-        } else {
-            setBlankingState(false, muteWhenHidden, parent);
+            setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
         }
 
         //--- Start recording output (if requested) ---//
@@ -1322,7 +1336,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     pthread_mutex_lock(&outputMutex);
                     {
                         OBSMutexAutoUnlock outputLocked(&outputMutex);
-                        setBlankingState(!visibleInProgram, muteWhenHidden, parent);
+                        setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
                     }
                 }
 
@@ -1572,72 +1586,60 @@ void BranchOutputFilter::setAudioCapturesActive(bool active)
     }
 }
 
-void BranchOutputFilter::setBlankingState(bool blank, bool muteAudio, obs_source_t *parent)
+void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_source_t *parent)
 {
     if (!parent) {
         parent = obs_filter_get_parent(filterSource);
     }
 
     if (!view) {
-        blankingOutput = false;
-        if (audioMutedByBlank) {
+        blankingOutputActive = false;
+        if (blankingAudioMuted) {
             setAudioCapturesActive(true);
-            audioMutedByBlank = false;
+            blankingAudioMuted = false;
         }
         return;
     }
 
-    if (blank) {
-        if (!blankingOutput) {
-            if (!blankSource) {
-                OBSDataAutoRelease blankSettings = obs_data_create();
-                // Solid black, fully opaque.
-                obs_data_set_int(blankSettings, "color", 0xFF000000);
-                if (width > 0 && height > 0) {
-                    obs_data_set_int(blankSettings, "width", width);
-                    obs_data_set_int(blankSettings, "height", height);
-                }
-
-                blankSource = obs_source_create_private("color_source", "Branch Output Blank", blankSettings);
-                if (!blankSource) {
-                    obs_log(
-                        LOG_WARNING, "%s: Failed to create blank color source; leaving original source active",
-                        qUtf8Printable(name)
-                    );
-                }
-            }
-
+    if (active) {
+        if (!blankingOutputActive) {
+            // blankSource is pre-created in startOutput().
             if (blankSource) {
                 obs_view_set_source(view, 0, blankSource);
+            } else {
+                obs_log(
+                    LOG_WARNING, "%s: Blank source not available; leaving original source active",
+                    qUtf8Printable(name)
+                );
             }
             if (muteAudio) {
                 setAudioCapturesActive(false);
-                audioMutedByBlank = true;
+                blankingAudioMuted = true;
             } else {
-                audioMutedByBlank = false;
+                blankingAudioMuted = false;
             }
-            blankingOutput = true;
+            blankingOutputActive = true;
             obs_log(LOG_INFO, "%s: Output blanked because source is not visible", qUtf8Printable(name));
         } else {
-            if (muteAudio && !audioMutedByBlank) {
+            if (muteAudio && !blankingAudioMuted) {
                 setAudioCapturesActive(false);
-                audioMutedByBlank = true;
-            } else if (!muteAudio && audioMutedByBlank) {
+                blankingAudioMuted = true;
+            } else if (!muteAudio && blankingAudioMuted) {
                 setAudioCapturesActive(true);
-                audioMutedByBlank = false;
+                blankingAudioMuted = false;
             }
         }
     } else {
-        if (blankingOutput) {
+        if (blankingOutputActive) {
             if (parent) {
                 obs_view_set_source(view, 0, parent);
             }
-            blankingOutput = false;
+            blankingOutputActive = false;
             obs_log(LOG_INFO, "%s: Output resumed because source became visible", qUtf8Printable(name));
         }
-        if (audioMutedByBlank) {
+        if (blankingAudioMuted) {
             setAudioCapturesActive(true);
-            audioMutedByBlank = false;
+            blankingAudioMuted = false;
         }
     }
 }
