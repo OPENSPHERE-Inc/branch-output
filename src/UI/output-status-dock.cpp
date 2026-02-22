@@ -198,12 +198,16 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
 
     sort();
 
+    obs_frontend_add_event_callback(onOBSFrontendEvent, this);
+
     obs_log(LOG_DEBUG, "BranchOutputStatusDock created");
 }
 
 BranchOutputStatusDock::~BranchOutputStatusDock()
 {
     timer.stop();
+
+    obs_frontend_remove_event_callback(onOBSFrontendEvent, this);
 
     saveSettings();
 
@@ -220,12 +224,26 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
 
 void BranchOutputStatusDock::loadSettings()
 {
-    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
-    OBSDataAutoRelease settings = obs_data_create_from_json_file(path);
+    // Try profile-specific settings first
+    OBSString profilePath = obs_frontend_get_current_profile_path();
+    auto profileSettingsPath = QString("%1/%2").arg(QString(profilePath)).arg(SETTINGS_JSON_NAME);
+    OBSDataAutoRelease settings = obs_data_create_from_json_file(qUtf8Printable(profileSettingsPath));
+
+    if (!settings) {
+        // Fallback to global plugin settings (backward compatibility)
+        OBSString globalPath = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
+        settings = obs_data_create_from_json_file(globalPath);
+    }
+
     if (!settings) {
         return;
     }
 
+    applySettings(settings);
+}
+
+void BranchOutputStatusDock::applySettings(obs_data_t *settings)
+{
     for (int i = 0; i < outputTable->columnCount(); i++) {
         if (i == resetColumnIndex) {
             // Skip reset button column
@@ -271,11 +289,34 @@ void BranchOutputStatusDock::saveSettings()
     );
     obs_data_set_int(settings, "sortingOrder", sortingOrder);
 
+    // Save to global plugin settings (backward compatibility)
     OBSString config_dir_path = obs_module_get_config_path(obs_current_module(), "");
     os_mkdirs(config_dir_path);
 
-    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
-    obs_data_save_json_safe(settings, path, "tmp", "bak");
+    OBSString globalPath = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
+    obs_data_save_json_safe(settings, globalPath, "tmp", "bak");
+
+    // Save to profile-specific settings
+    OBSString profilePath = obs_frontend_get_current_profile_path();
+    auto profileSettingsPath = QString("%1/%2").arg(QString(profilePath)).arg(SETTINGS_JSON_NAME);
+    obs_data_save_json_safe(settings, qUtf8Printable(profileSettingsPath), "tmp", "bak");
+}
+
+void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, void *param)
+{
+    auto *dock = static_cast<BranchOutputStatusDock *>(param);
+
+    switch (event) {
+    case OBS_FRONTEND_EVENT_PROFILE_CHANGING:
+        dock->saveSettings();
+        break;
+    case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
+        dock->loadSettings();
+        dock->sort();
+        break;
+    default:
+        break;
+    }
 }
 
 void BranchOutputStatusDock::addRow(

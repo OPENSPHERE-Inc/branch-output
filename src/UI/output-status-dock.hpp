@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include <obs-module.h>
+#include <obs-frontend-api.h>
 #include <obs.hpp>
 
 #include <QFrame>
@@ -223,7 +224,9 @@ class BranchOutputStatusDock : public QFrame {
     void applyAddChapterToRecordingAllButtonEnabled();
     void saveSettings();
     void loadSettings();
+    void applySettings(obs_data_t *settings);
 
+    static void onOBSFrontendEvent(enum obs_frontend_event event, void *param);
     static void onEanbleAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onDisableAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onSplitRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
