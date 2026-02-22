@@ -728,10 +728,12 @@ void OutputTableRow::update()
             status->setAddChapterToRecordingButtonShow(false);
         } else {
             // Blanking suffix for status text
-            auto blankSuffix = filter->blankingOutputActive && filter->blankingAudioMuted
-                                   ? QTStr("Status.BlankMutedSuffix")
-                               : filter->blankingOutputActive ? QTStr("Status.BlankSuffix")
-                                                              : QStringLiteral("");
+            QString blankSuffix;
+            if (filter->blankingOutputActive && filter->blankingAudioMuted) {
+                blankSuffix = QTStr("Status.BlankMutedSuffix");
+            } else if (filter->blankingOutputActive) {
+                blankSuffix = QTStr("Status.BlankSuffix");
+            }
 
             switch (outputType) {
             case ROW_OUTPUT_STREAMING:

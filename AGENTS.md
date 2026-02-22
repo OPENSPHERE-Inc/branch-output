@@ -168,6 +168,10 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - **Member variables**: camelCase, no prefix (`filterSource`, `videoEncoder`, `recordingActive`)
 - **Static callbacks**: camelCase with descriptive prefix (`onEnableFilterHotkeyPressed`, `audioFilterCallback`)
 
+### Ternary Operators
+
+- **Avoid multi-line ternary expressions** — clang-format cannot reliably format nested or multi-line ternary operators (`a ? b : c`) in a readable way. Use `if`/`else if`/`else` statements instead when the expression would span multiple lines.
+
 ### Error Handling
 
 - Use `obs_log(LOG_ERROR, ...)` for errors, `LOG_WARNING` for warnings, `LOG_INFO` for lifecycle events, `LOG_DEBUG` for verbose tracing.
