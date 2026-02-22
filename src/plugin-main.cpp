@@ -1608,8 +1608,7 @@ void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_sour
                 obs_view_set_source(view, 0, blankSource);
             } else {
                 obs_log(
-                    LOG_WARNING, "%s: Blank source not available; leaving original source active",
-                    qUtf8Printable(name)
+                    LOG_WARNING, "%s: Blank source not available; leaving original source active", qUtf8Printable(name)
                 );
             }
             if (muteAudio) {
