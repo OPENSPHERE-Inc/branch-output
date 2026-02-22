@@ -430,6 +430,9 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
         suspendRecordingWhenSourceCollapsed, obs_module_text("SuspendRecordingWhenSourceCollapsedNote")
     );
 
+    // Add gap line
+    obs_properties_add_text(streamGroup, "stream_options_group", "", OBS_TEXT_INFO);
+
     // Source resolution trackability
     auto keepOutputBaseResolution = obs_properties_add_bool(
         streamGroup, "keep_output_base_resolution", obs_module_text("KeepOutputBaseResolution")
@@ -443,13 +446,13 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     auto muteAudioWhenBlank =
         obs_properties_add_bool(streamGroup, "mute_audio_when_blank", obs_module_text("MuteAudioWhenBlank"));
     obs_property_set_long_description(muteAudioWhenBlank, obs_module_text("MuteAudioWhenBlankNote"));
-    obs_property_set_visible(muteAudioWhenBlank, false);
+    obs_property_set_enabled(muteAudioWhenBlank, false);
 
     obs_property_set_modified_callback2(
         blankWhenNotVisible,
         [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
             bool enabled = obs_data_get_bool(settings, "blank_when_not_visible");
-            obs_property_set_visible(obs_properties_get(_props, "mute_audio_when_blank"), enabled);
+            obs_property_set_enabled(obs_properties_get(_props, "mute_audio_when_blank"), enabled);
             return true;
         },
         nullptr
