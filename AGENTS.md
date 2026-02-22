@@ -212,7 +212,7 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 1. Add the setting key to `BranchOutputFilter::getDefaults()` in `plugin-main.cpp`.
 2. Add UI controls in `plugin-ui.cpp` (use OBS properties API: `obs_properties_add_*`).
 3. Handle the setting in `startOutput()` / `stopOutput()` / `updateCallback()` as needed.
-4. Add locale strings to `data/locale/en-US.ini` and `data/locale/ja-JP.ini`.
+4. Add locale strings to **all** locale files under `data/locale/` (`en-US.ini`, `ja-JP.ini`, `zh-CN.ini`, `ko-KR.ini`, `de-DE.ini`, `fr-FR.ini`, `ca-ES.ini`, `ro-RO.ini`, `ru-RU.ini`, `uk-UA.ini`). `en-US.ini` is the primary (required); all others should also be updated.
 5. Ensure backward compatibility — existing saved settings must still load correctly.
 
 ### Adding a New Streaming Service Slot
