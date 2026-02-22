@@ -212,9 +212,12 @@ void AudioCapture::setActive(bool enable)
     active.store(enable);
     if (!enable) {
         QMutexLocker locker(&audioBufferMutex);
-        deque_free(&audioBuffer);
-        deque_init(&audioBuffer);
-        audioBufferFrames = 0;
+        {
+            deque_free(&audioBuffer);
+            deque_init(&audioBuffer);
+            audioBufferFrames = 0;
+        }
+        locker.unlock();
     }
 }
 
