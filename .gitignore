@@ -28,7 +28,7 @@
 # Except additional project files
 !screenshot1.jpg
 !screenshot2.jpg
-!build-windows-installer.ps1
+!build.ps1
 !README_ja.md
 
 # Except for AI agent instructions

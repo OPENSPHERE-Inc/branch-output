@@ -21,7 +21,6 @@ branch-output/
 ├── CMakePresets.json        # CMake presets (windows-x64, macos, linux-x86_64, CI variants)
 ├── buildspec.json           # Build specification (name, version, dependencies, UUIDs)
 ├── build.ps1                # Local Windows build script (RelWithDebInfo)
-├── build-windows-installer.ps1
 ├── .clang-format            # C++ code style (clang-format ≥ 16)
 ├── .cmake-format.json       # CMake code style
 ├── .github/
