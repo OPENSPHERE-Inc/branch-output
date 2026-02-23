@@ -1363,9 +1363,7 @@ StatusCell::StatusCell(const QString &rowId, const QString &textValue, QWidget *
     connect(addChapterToRecordingButton, &QToolButton::clicked, this, [this]() {
         emit addChapterToRecordingButtonClicked();
     });
-    connect(saveReplayBufferButton, &QToolButton::clicked, this, [this]() {
-        emit saveReplayBufferButtonClicked();
-    });
+    connect(saveReplayBufferButton, &QToolButton::clicked, this, [this]() { emit saveReplayBufferButtonClicked(); });
 
     auto layout = new QHBoxLayout();
     layout->setContentsMargins(0, 0, 0, 0);

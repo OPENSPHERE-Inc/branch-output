@@ -61,8 +61,7 @@ obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
 
     // Use replay buffer specific path settings
     auto useProfilePath = obs_data_get_bool(settings, "replay_buffer_use_profile_path");
-    auto path = useProfilePath ? getProfileRecordingPath(config)
-                               : obs_data_get_string(settings, "replay_buffer_path");
+    auto path = useProfilePath ? getProfileRecordingPath(config) : obs_data_get_string(settings, "replay_buffer_path");
     auto rbFormat = obs_data_get_string(settings, "replay_buffer_format");
 
     // Validate path

@@ -200,9 +200,7 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_int(defaults, "replay_buffer_duration", 20);
     obs_data_set_default_bool(defaults, "replay_buffer_use_profile_path", false);
     obs_data_set_default_string(defaults, "replay_buffer_path", path);
-    obs_data_set_default_string(
-        defaults, "replay_buffer_filename_formatting", qUtf8Printable(filenameFormatting)
-    );
+    obs_data_set_default_string(defaults, "replay_buffer_filename_formatting", qUtf8Printable(filenameFormatting));
     obs_data_set_default_bool(defaults, "replay_buffer_no_space_filename", fileNameWithoutSpace);
     obs_data_set_default_string(defaults, "replay_buffer_format", recFormat);
 
@@ -496,13 +494,10 @@ void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
         replayBufferGroup, "replay_buffer_path", obs_module_text("Path"), OBS_PATH_DIRECTORY, nullptr, nullptr
     );
     auto rbFilenameFormatting = obs_properties_add_text(
-        replayBufferGroup, "replay_buffer_filename_formatting", obs_module_text("FilenameFormatting"),
-        OBS_TEXT_DEFAULT
+        replayBufferGroup, "replay_buffer_filename_formatting", obs_module_text("FilenameFormatting"), OBS_TEXT_DEFAULT
     );
     obs_property_set_long_description(rbFilenameFormatting, qUtf8Printable(makeFormatToolTip()));
-    obs_properties_add_bool(
-        replayBufferGroup, "replay_buffer_no_space_filename", obs_module_text("NoSpaceFileName")
-    );
+    obs_properties_add_bool(replayBufferGroup, "replay_buffer_no_space_filename", obs_module_text("NoSpaceFileName"));
 
     //--- Replay buffer format (replay_buffer output compatible formats only) ---//
     auto rbFormatList = obs_properties_add_list(
@@ -527,16 +522,10 @@ void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
         [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
             auto _replayBuffer = obs_data_get_bool(settings, "replay_buffer");
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_duration"), _replayBuffer);
-            obs_property_set_visible(
-                obs_properties_get(_props, "replay_buffer_use_profile_path"), _replayBuffer
-            );
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_use_profile_path"), _replayBuffer);
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_path"), _replayBuffer);
-            obs_property_set_visible(
-                obs_properties_get(_props, "replay_buffer_filename_formatting"), _replayBuffer
-            );
-            obs_property_set_visible(
-                obs_properties_get(_props, "replay_buffer_no_space_filename"), _replayBuffer
-            );
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_filename_formatting"), _replayBuffer);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_no_space_filename"), _replayBuffer);
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_format"), _replayBuffer);
             return true;
         },
