@@ -1038,8 +1038,13 @@ void OutputTableRow::reset()
     first_total = obs_output_get_total_frames(output);
     first_dropped = obs_output_get_frames_dropped(output);
     droppedFrames->setTextValue(QString("0 / 0 (0)"));
-    megabytesSent->setTextValue(QString("0 MiB"));
-    bitrate->setTextValue(QString("0 kb/s"));
+    if (outputType != ROW_OUTPUT_REPLAY_BUFFER) {
+        megabytesSent->setTextValue(QString("0 MiB"));
+        bitrate->setTextValue(QString("0 kb/s"));
+    } else {
+        megabytesSent->setTextValue("");
+        bitrate->setTextValue("");
+    }
 }
 
 void OutputTableRow::splitRecording()
