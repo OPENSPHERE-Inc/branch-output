@@ -12,5 +12,7 @@
     <file>images/sort-ascending.svg</file>
     <file>images/sort-descending.svg</file>
     <file>images/reset.svg</file>
+    <file>images/replay-save.svg</file>
+    <file>images/replay-buffering.svg</file>
   </qresource>
 </RCC>

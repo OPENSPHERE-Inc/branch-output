@@ -138,6 +138,23 @@ public:
     void setTextValue(const QString &value);
 };
 
+class ReplayBufferOutputCell : public LabelCell {
+    Q_OBJECT
+
+    obs_source_t *source;
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override;
+
+public:
+    explicit ReplayBufferOutputCell(
+        const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr
+    );
+    ~ReplayBufferOutputCell();
+
+    void setTextValue(const QString &value);
+};
+
 class StatusCell : public QWidget {
     Q_OBJECT
 
@@ -145,20 +162,29 @@ class StatusCell : public QWidget {
     QLabel *streamingIcon;
     QLabel *recordingIcon;
     QLabel *recordingPausedIcon;
+    QLabel *replayBufferIcon;
     QLabel *statusText;
     QToolButton *splitRecordingButton;
     QToolButton *pauseRecordingButton;
     QToolButton *unpauseRecordingButton;
     QToolButton *addChapterToRecordingButton;
+    QToolButton *saveReplayBufferButton;
 
 signals:
     void splitRecordingButtonClicked();
     void pauseRecordingButtonClicked();
     void unpauseRecordingButtonClicked();
     void addChapterToRecordingButtonClicked();
+    void saveReplayBufferButtonClicked();
 
 public:
-    enum StatusIcon { STATUS_ICON_NONE, STATUS_ICON_STREAMING, STATUS_ICON_RECORDING, STATUS_ICON_RECORDING_PAUSED };
+    enum StatusIcon {
+        STATUS_ICON_NONE,
+        STATUS_ICON_STREAMING,
+        STATUS_ICON_RECORDING,
+        STATUS_ICON_RECORDING_PAUSED,
+        STATUS_ICON_REPLAY_BUFFER,
+    };
 
     explicit StatusCell(const QString &rowId, const QString &textValue, QWidget *parent = (QWidget *)nullptr);
     ~StatusCell();
@@ -175,6 +201,8 @@ public:
     inline bool isUnpauseRecordingButtonShow() const { return unpauseRecordingButton->isVisible(); };
     inline void setAddChapterToRecordingButtonShow(bool show) { addChapterToRecordingButton->setVisible(show); };
     inline bool isAddChapterToRecordingButtonShow() const { return addChapterToRecordingButton->isVisible(); };
+    inline void setSaveReplayBufferButtonShow(bool show) { saveReplayBufferButton->setVisible(show); };
+    inline bool isSaveReplayBufferButtonShow() const { return saveReplayBufferButton->isVisible(); };
     inline OutputTableCellItem *item() const { return _item; }
 };
 
@@ -182,6 +210,7 @@ enum RowOutputType {
     ROW_OUTPUT_NONE = 0,
     ROW_OUTPUT_STREAMING = 1,
     ROW_OUTPUT_RECORDING = 2,
+    ROW_OUTPUT_REPLAY_BUFFER = 3,
 };
 
 class BranchOutputStatusDock : public QFrame {
@@ -202,6 +231,7 @@ class BranchOutputStatusDock : public QFrame {
     QToolButton *pauseRecordingAllButton = nullptr;
     QToolButton *unpauseRecordingAllButton = nullptr;
     QToolButton *addChapterToRecordingAllButton = nullptr;
+    QToolButton *saveReplayBufferAllButton = nullptr;
     QLabel *interlockLabel = nullptr;
     QComboBox *interlockComboBox = nullptr;
     OBSSignal sourceAddedSignal;
@@ -211,6 +241,7 @@ class BranchOutputStatusDock : public QFrame {
     obs_hotkey_id pauseRecordingAllHotkey;
     obs_hotkey_id unpauseRecordingAllHotkey;
     obs_hotkey_id addChapterToRecordingAllHotkey;
+    obs_hotkey_id saveReplayBufferAllHotkey;
     int resetColumnIndex;
     int sortingColumnIndex;
     Qt::SortOrder sortingOrder;
@@ -222,6 +253,7 @@ class BranchOutputStatusDock : public QFrame {
     void applyPauseRecordingAllButtonEnabled();
     void applyUnpauseRecordingAllButtonEnabled();
     void applyAddChapterToRecordingAllButtonEnabled();
+    void applySaveReplayBufferAllButtonEnabled();
     void saveSettings();
     void loadSettings();
     void applySettings(obs_data_t *settings);
@@ -233,6 +265,7 @@ class BranchOutputStatusDock : public QFrame {
     static void onPauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onUnpauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onAddChapterToRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onSaveReplayBufferAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
 
 private slots:
     void onHeaderPressed(int index);
@@ -254,6 +287,7 @@ public slots:
     void pauseRecordingAll();
     void unpauseRecordingAll();
     void addChapterToRecordingAll();
+    void saveReplayBufferAll();
     void resetStatsAll();
     void sort();
 
