@@ -185,6 +185,7 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_bool(defaults, "suspend_recording_when_source_collapsed", false);
     obs_data_set_default_bool(defaults, "blank_when_not_visible", false);
     obs_data_set_default_bool(defaults, "mute_audio_when_blank", false);
+    obs_data_set_default_string(defaults, "video_source_type", "source");
     obs_data_set_default_string(defaults, "rec_muxer_custom", mux);
 
     auto path = getProfileRecordingPath(config);
@@ -693,6 +694,15 @@ void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
 void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 {
     auto videoEncoderGroup = obs_properties_create();
+
+    // Video source type selection
+    auto videoSourceType = obs_properties_add_list(
+        videoEncoderGroup, "video_source_type", obs_module_text("VideoSourceType"), OBS_COMBO_TYPE_LIST,
+        OBS_COMBO_FORMAT_STRING
+    );
+    obs_property_set_long_description(videoSourceType, obs_module_text("VideoSourceType.LongDescription"));
+    obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.Source"), "source");
+    obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.FilterInput"), "filter_input");
 
     // Resolution prop
     auto resolutionList = obs_properties_add_list(
