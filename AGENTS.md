@@ -192,6 +192,11 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - **Manual testing** is required: load the plugin in OBS Studio, add the "Branch Output" filter, and verify streaming/recording behavior.
 - Test on all supported platforms when possible (Windows x64, macOS, Linux).
 - Verify Studio Mode compatibility (Branch Output ignores studio mode's program and outputs from preview).
+- Verify that enabling and then disabling the Branch Output filter does not cause a crash.
+- Verify that shutting down OBS does not crash when the Branch Output filter is inactive or active, respectively.
+- Verify that switching scene collections does not crash when the Branch Output filter is inactive or active, respectively.
+- Verify that no memory leaks are logged on OBS shutdown.
+- Verify that mutex does not cause deadlocks.
 
 ---
 
