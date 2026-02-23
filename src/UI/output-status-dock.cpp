@@ -209,7 +209,11 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
 
     obs_frontend_remove_event_callback(onOBSFrontendEvent, this);
 
-    saveSettings();
+    // Note: saveSettings() is intentionally NOT called here.
+    // On OBS 32+, the frontend API is already torn down by the time
+    // the destructor runs (via obs_module_unload), so
+    // obs_frontend_get_current_profile_path() returns nullptr.
+    // Settings are saved in onOBSFrontendEvent(OBS_FRONTEND_EVENT_EXIT) instead.
 
     // Unregister hotkeys
     obs_hotkey_unregister(enableAllHotkey);
@@ -240,6 +244,8 @@ void BranchOutputStatusDock::loadSettings()
     }
 
     applySettings(settings);
+
+    obs_log(LOG_DEBUG, "BranchOutputStatusDock settings loaded.");
 }
 
 void BranchOutputStatusDock::applySettings(obs_data_t *settings)
@@ -298,8 +304,12 @@ void BranchOutputStatusDock::saveSettings()
 
     // Save to profile-specific settings
     OBSString profilePath = obs_frontend_get_current_profile_path();
-    auto profileSettingsPath = QString("%1/%2").arg(QString(profilePath)).arg(SETTINGS_JSON_NAME);
-    obs_data_save_json_safe(settings, qUtf8Printable(profileSettingsPath), "tmp", "bak");
+    if (profilePath) {
+        auto profileSettingsPath = QString("%1/%2").arg(QString(profilePath)).arg(SETTINGS_JSON_NAME);
+        obs_data_save_json_safe(settings, qUtf8Printable(profileSettingsPath), "tmp", "bak");
+    }
+
+    obs_log(LOG_DEBUG, "BranchOutputStatusDock settings saved.");
 }
 
 void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, void *param)
@@ -307,6 +317,9 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
     auto *dock = static_cast<BranchOutputStatusDock *>(param);
 
     switch (event) {
+    case OBS_FRONTEND_EVENT_EXIT:
+        dock->saveSettings();
+        break;
     case OBS_FRONTEND_EVENT_PROFILE_CHANGING:
         dock->saveSettings();
         break;
