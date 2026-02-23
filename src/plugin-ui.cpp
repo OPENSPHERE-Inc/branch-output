@@ -195,6 +195,15 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     auto filenameFormatting = QString("%1 %2 ") + QString(config_get_string(config, "Output", "FilenameFormatting"));
     obs_data_set_default_string(defaults, "filename_formatting", qUtf8Printable(filenameFormatting));
 
+    // Replay buffer defaults
+    obs_data_set_default_bool(defaults, "replay_buffer", false);
+    obs_data_set_default_int(defaults, "replay_buffer_duration", 20);
+    obs_data_set_default_bool(defaults, "replay_buffer_use_profile_path", false);
+    obs_data_set_default_string(defaults, "replay_buffer_path", path);
+    obs_data_set_default_string(defaults, "replay_buffer_filename_formatting", qUtf8Printable(filenameFormatting));
+    obs_data_set_default_bool(defaults, "replay_buffer_no_space_filename", fileNameWithoutSpace);
+    obs_data_set_default_string(defaults, "replay_buffer_format", recFormat);
+
     obs_log(LOG_INFO, "Default settings applied.");
 }
 
@@ -460,6 +469,68 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     );
 
     obs_properties_add_group(props, "stream", obs_module_text("Stream"), OBS_GROUP_NORMAL, streamGroup);
+}
+
+void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
+{
+    auto replayBufferGroup = obs_properties_create();
+
+    obs_properties_add_int(
+        replayBufferGroup, "replay_buffer_duration", obs_module_text("ReplayBufferDuration"), 1, 21600, 1
+    );
+
+    //--- Replay buffer path settings ---//
+    auto rbUseProfilePath = obs_properties_add_bool(
+        replayBufferGroup, "replay_buffer_use_profile_path", obs_module_text("UseProfileRecordingPath")
+    );
+    auto rbUseProfilePathChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+        auto _useProfilePath = obs_data_get_bool(settings, "replay_buffer_use_profile_path");
+        obs_property_set_enabled(obs_properties_get(_props, "replay_buffer_path"), !_useProfilePath);
+        return true;
+    };
+    obs_property_set_modified_callback2(rbUseProfilePath, rbUseProfilePathChangeHandler, nullptr);
+
+    obs_properties_add_path(
+        replayBufferGroup, "replay_buffer_path", obs_module_text("Path"), OBS_PATH_DIRECTORY, nullptr, nullptr
+    );
+    auto rbFilenameFormatting = obs_properties_add_text(
+        replayBufferGroup, "replay_buffer_filename_formatting", obs_module_text("FilenameFormatting"), OBS_TEXT_DEFAULT
+    );
+    obs_property_set_long_description(rbFilenameFormatting, qUtf8Printable(makeFormatToolTip()));
+    obs_properties_add_bool(replayBufferGroup, "replay_buffer_no_space_filename", obs_module_text("NoSpaceFileName"));
+
+    //--- Replay buffer format (replay_buffer output compatible formats only) ---//
+    auto rbFormatList = obs_properties_add_list(
+        replayBufferGroup, "replay_buffer_format", obs_module_text("VideoFormat"), OBS_COMBO_TYPE_LIST,
+        OBS_COMBO_FORMAT_STRING
+    );
+    obs_property_list_add_string(rbFormatList, obs_module_text("MKV"), "mkv");
+    obs_property_list_add_string(rbFormatList, obs_module_text("MP4"), "mp4");
+    obs_property_list_add_string(rbFormatList, obs_module_text("fMP4"), "fragmented_mp4");
+    obs_property_list_add_string(rbFormatList, obs_module_text("MOV"), "mov");
+    obs_property_list_add_string(rbFormatList, obs_module_text("fMOV"), "fragmented_mov");
+    obs_property_list_add_string(rbFormatList, obs_module_text("TS"), "mpegts");
+
+    // Group with checkable toggle
+    auto replayBufferProp = obs_properties_add_group(
+        props, "replay_buffer", obs_module_text("ReplayBuffer"), OBS_GROUP_CHECKABLE, replayBufferGroup
+    );
+
+    // Hide group contents when unchecked
+    obs_property_set_modified_callback2(
+        replayBufferProp,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            auto _replayBuffer = obs_data_get_bool(settings, "replay_buffer");
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_duration"), _replayBuffer);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_use_profile_path"), _replayBuffer);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_path"), _replayBuffer);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_filename_formatting"), _replayBuffer);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_no_space_filename"), _replayBuffer);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_format"), _replayBuffer);
+            return true;
+        },
+        nullptr
+    );
 }
 
 void BranchOutputFilter::createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible)
@@ -828,6 +899,9 @@ obs_properties_t *BranchOutputFilter::getProperties()
     addStreamGroup(props);
 
     addApplyButton(props, "apply1");
+
+    //--- "Replay Buffer" group ---//
+    addReplayBufferGroup(props);
 
     //--- "Audio" gorup ---//
     addAudioGroup(props);

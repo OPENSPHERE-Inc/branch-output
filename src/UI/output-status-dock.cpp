@@ -138,6 +138,12 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     addChapterToRecordingAllButton->setEnabled(false);
     connect(addChapterToRecordingAllButton, &QToolButton::clicked, this, [this]() { addChapterToRecordingAll(); });
 
+    saveReplayBufferAllButton = new QToolButton(this);
+    saveReplayBufferAllButton->setToolTip(QTStr("SaveAllReplayBuffers"));
+    saveReplayBufferAllButton->setIcon(QIcon(":/branch-output/images/replay-save.svg"));
+    saveReplayBufferAllButton->setEnabled(false);
+    connect(saveReplayBufferAllButton, &QToolButton::clicked, this, [this]() { saveReplayBufferAll(); });
+
     interlockLabel = new QLabel(QTStr("Interlock"), this);
     interlockComboBox = new QComboBox(this);
     interlockComboBox->addItem(QTStr("AlwaysOn"), BranchOutputFilter::INTERLOCK_TYPE_ALWAYS_ON);
@@ -155,6 +161,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     buttonsContainerLayout->addWidget(pauseRecordingAllButton);
     buttonsContainerLayout->addWidget(unpauseRecordingAllButton);
     buttonsContainerLayout->addWidget(addChapterToRecordingAllButton);
+    buttonsContainerLayout->addWidget(saveReplayBufferAllButton);
     buttonsContainerLayout->addStretch();
     buttonsContainerLayout->addWidget(interlockLabel);
     buttonsContainerLayout->addWidget(interlockComboBox);
@@ -187,6 +194,10 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
         "AddChapterToRecordingAllBranchOutputsHotkey", obs_module_text("AddChapterToRecordingAllHotkey"),
         onAddChapterToRecordingAllHotkeyPressed, this
     );
+    saveReplayBufferAllHotkey = obs_hotkey_register_frontend(
+        "SaveReplayBufferAllBranchOutputsHotkey", obs_module_text("SaveReplayBufferAllHotkey"),
+        onSaveReplayBufferAllHotkeyPressed, this
+    );
 
     loadSettings();
     loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
@@ -195,6 +206,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     loadHotkey(pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
     loadHotkey(unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
     loadHotkey(addChapterToRecordingAllHotkey, "AddChapterToRecordingAllBranchOutputsHotkey");
+    loadHotkey(saveReplayBufferAllHotkey, "SaveReplayBufferAllBranchOutputsHotkey");
 
     sort();
 
@@ -222,6 +234,7 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
     obs_hotkey_unregister(pauseRecordingAllHotkey);
     obs_hotkey_unregister(unpauseRecordingAllHotkey);
     obs_hotkey_unregister(addChapterToRecordingAllHotkey);
+    obs_hotkey_unregister(saveReplayBufferAllHotkey);
 
     obs_log(LOG_DEBUG, "BranchOutputStatusDock destroyed");
 }
@@ -364,6 +377,11 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
         addRow(filter, 0, ROW_OUTPUT_RECORDING, groupIndex++);
     }
 
+    // Replay buffer row
+    if (filter->isReplayBufferEnabled(settings)) {
+        addRow(filter, 0, ROW_OUTPUT_REPLAY_BUFFER, groupIndex++);
+    }
+
     // Streaming rows
     auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
     for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
@@ -411,6 +429,7 @@ void BranchOutputStatusDock::update()
     applyPauseRecordingAllButtonEnabled();
     applyUnpauseRecordingAllButtonEnabled();
     applyAddChapterToRecordingAllButtonEnabled();
+    applySaveReplayBufferAllButtonEnabled();
     sort();
 }
 
@@ -480,6 +499,17 @@ void BranchOutputStatusDock::applyAddChapterToRecordingAllButtonEnabled()
     addChapterToRecordingAllButton->setEnabled(false);
 }
 
+void BranchOutputStatusDock::applySaveReplayBufferAllButtonEnabled()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->status->isSaveReplayBufferButtonShow()) {
+            saveReplayBufferAllButton->setEnabled(true);
+            return;
+        }
+    }
+    saveReplayBufferAllButton->setEnabled(false);
+}
+
 void BranchOutputStatusDock::showEvent(QShowEvent *)
 {
     timer.start(TIMER_INTERVAL);
@@ -535,6 +565,15 @@ void BranchOutputStatusDock::addChapterToRecordingAll()
     foreach (auto row, outputTableRows) {
         if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isAddChapterToRecordingButtonShow()) {
             row->filter->addChapterToRecording();
+        }
+    }
+}
+
+void BranchOutputStatusDock::saveReplayBufferAll()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->outputType == ROW_OUTPUT_REPLAY_BUFFER && row->status->isSaveReplayBufferButtonShow()) {
+            row->filter->saveReplayBuffer();
         }
     }
 }
@@ -637,6 +676,14 @@ void BranchOutputStatusDock::onAddChapterToRecordingAllHotkeyPressed(
     }
 }
 
+void BranchOutputStatusDock::onSaveReplayBufferAllHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    auto dock = static_cast<BranchOutputStatusDock *>(data);
+    if (pressed) {
+        dock->saveReplayBufferAll();
+    }
+}
+
 void BranchOutputStatusDock::onHeaderPressed(int index)
 {
     if (index == resetColumnIndex) {
@@ -678,6 +725,9 @@ OutputTableRow::OutputTableRow(
         break;
     case ROW_OUTPUT_RECORDING:
         outputName = new RecordingOutputCell(rowId, QTStr("Recording"), filter->filterSource, parent);
+        break;
+    case ROW_OUTPUT_REPLAY_BUFFER:
+        outputName = new ReplayBufferOutputCell(rowId, QTStr("ReplayBuffer"), filter->filterSource, parent);
         break;
     default:
         outputName = new LabelCell(rowId, QTStr("None"), parent);
@@ -726,6 +776,7 @@ OutputTableRow::OutputTableRow(
     connect(status, &StatusCell::pauseRecordingButtonClicked, this, [this]() { pauseRecording(); });
     connect(status, &StatusCell::unpauseRecordingButtonClicked, this, [this]() { unpauseRecording(); });
     connect(status, &StatusCell::addChapterToRecordingButtonClicked, this, [this]() { addChapterToRecording(); });
+    connect(status, &StatusCell::saveReplayBufferButtonClicked, this, [this]() { filter->saveReplayBuffer(); });
 
     // Setup rename event
     connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &) {
@@ -754,6 +805,9 @@ void OutputTableRow::update()
         break;
     case ROW_OUTPUT_RECORDING:
         output = filter->recordingOutput.Get();
+        break;
+    case ROW_OUTPUT_REPLAY_BUFFER:
+        output = filter->replayBufferOutput.Get();
         break;
     default:
         output = nullptr;
@@ -787,6 +841,7 @@ void OutputTableRow::update()
             status->setUnpauseRecordingButtonShow(false);
             status->setAddChapterToRecordingButtonShow(false);
             status->setAddChapterToRecordingButtonShow(false);
+            status->setSaveReplayBufferButtonShow(false);
         } else {
             // Blanking suffix for status text
             QString blankSuffix;
@@ -812,6 +867,7 @@ void OutputTableRow::update()
                 status->setPauseRecordingButtonShow(false);
                 status->setUnpauseRecordingButtonShow(false);
                 status->setAddChapterToRecordingButtonShow(false);
+                status->setSaveReplayBufferButtonShow(false);
                 break;
             case ROW_OUTPUT_RECORDING:
                 if (paused) {
@@ -827,6 +883,17 @@ void OutputTableRow::update()
                 status->setPauseRecordingButtonShow(!paused && filter->canPauseRecording());
                 status->setUnpauseRecordingButtonShow(paused && filter->canPauseRecording());
                 status->setAddChapterToRecordingButtonShow(filter->canAddChapterToRecording());
+                status->setSaveReplayBufferButtonShow(false);
+                break;
+            case ROW_OUTPUT_REPLAY_BUFFER:
+                status->setTextValue(QTStr("Status.ReplayBuffer") + blankSuffix);
+                status->setTheme("good", "text-success");
+                status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_REPLAY_BUFFER);
+                status->setSplitRecordingButtonShow(false);
+                status->setPauseRecordingButtonShow(false);
+                status->setUnpauseRecordingButtonShow(false);
+                status->setAddChapterToRecordingButtonShow(false);
+                status->setSaveReplayBufferButtonShow(filter->replayBufferActive);
                 break;
             default:
                 status->setTextValue(QTStr("Status.Inactive"));
@@ -836,9 +903,21 @@ void OutputTableRow::update()
                 status->setPauseRecordingButtonShow(false);
                 status->setUnpauseRecordingButtonShow(false);
                 status->setAddChapterToRecordingButtonShow(false);
+                status->setSaveReplayBufferButtonShow(false);
             }
         }
     } else {
+        if (outputType == ROW_OUTPUT_REPLAY_BUFFER && filter->replayBufferActive) {
+            status->setTextValue(QTStr("Status.ReplayBuffer"));
+            status->setTheme("good", "text-success");
+            status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_REPLAY_BUFFER);
+            status->setSaveReplayBufferButtonShow(true);
+            status->setSplitRecordingButtonShow(false);
+            status->setPauseRecordingButtonShow(false);
+            status->setUnpauseRecordingButtonShow(false);
+            status->setAddChapterToRecordingButtonShow(false);
+            return;
+        }
         if (outputType == ROW_OUTPUT_RECORDING && filter->recordingPending) {
             status->setTextValue(QTStr("Status.Pending"));
         } else {
@@ -850,6 +929,7 @@ void OutputTableRow::update()
         status->setPauseRecordingButtonShow(false);
         status->setUnpauseRecordingButtonShow(false);
         status->setAddChapterToRecordingButtonShow(false);
+        status->setSaveReplayBufferButtonShow(false);
         droppedFrames->setTextValue("");
         megabytesSent->setTextValue("");
         bitrate->setTextValue("");
@@ -882,7 +962,9 @@ void OutputTableRow::update()
         unit = "GiB";
     }
     megabytesSent->setTextValue(
-        outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 1).arg(unit) : ""
+        outputType != ROW_OUTPUT_NONE && outputType != ROW_OUTPUT_REPLAY_BUFFER
+            ? QString("%1 %2").arg((double)num, 0, 'f', 1).arg(unit)
+            : ""
     );
 
     num = kbps;
@@ -891,7 +973,11 @@ void OutputTableRow::update()
         num /= 1000;
         unit = "Mb/s";
     }
-    bitrate->setTextValue(outputType != ROW_OUTPUT_NONE ? QString("%1 %2").arg((double)num, 0, 'f', 0).arg(unit) : "");
+    bitrate->setTextValue(
+        outputType != ROW_OUTPUT_NONE && outputType != ROW_OUTPUT_REPLAY_BUFFER
+            ? QString("%1 %2").arg((double)num, 0, 'f', 0).arg(unit)
+            : ""
+    );
 
     // Calculate statistics
     int total = output ? obs_output_get_total_frames(output) : 0;
@@ -935,6 +1021,9 @@ void OutputTableRow::reset()
     case ROW_OUTPUT_RECORDING:
         output = filter->recordingOutput.Get();
         break;
+    case ROW_OUTPUT_REPLAY_BUFFER:
+        output = filter->replayBufferOutput.Get();
+        break;
     default:
         output = nullptr;
     }
@@ -949,8 +1038,13 @@ void OutputTableRow::reset()
     first_total = obs_output_get_total_frames(output);
     first_dropped = obs_output_get_frames_dropped(output);
     droppedFrames->setTextValue(QString("0 / 0 (0)"));
-    megabytesSent->setTextValue(QString("0 MiB"));
-    bitrate->setTextValue(QString("0 kb/s"));
+    if (outputType != ROW_OUTPUT_REPLAY_BUFFER) {
+        megabytesSent->setTextValue(QString("0 MiB"));
+        bitrate->setTextValue(QString("0 kb/s"));
+    } else {
+        megabytesSent->setTextValue("");
+        bitrate->setTextValue("");
+    }
 }
 
 void OutputTableRow::splitRecording()
@@ -1183,6 +1277,43 @@ void RecordingOutputCell::mousePressEvent(QMouseEvent *event)
     }
 }
 
+//--- ReplayBufferOutputCell class ---//
+
+ReplayBufferOutputCell::ReplayBufferOutputCell(
+    const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent
+)
+    : LabelCell(rowId, parent),
+      source(_source)
+{
+    // Markup as link
+    setTextFormat(Qt::RichText);
+    setCursor(Qt::PointingHandCursor);
+
+    setTextValue(textValue);
+}
+
+ReplayBufferOutputCell::~ReplayBufferOutputCell() {}
+
+void ReplayBufferOutputCell::setTextValue(const QString &textValue)
+{
+    // Markup as link
+    LabelCell::setValue(textValue);
+    LabelCell::setText(QString("<u>%1</u>").arg(textValue));
+}
+
+void ReplayBufferOutputCell::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+        // Open OS file browser
+        OBSDataAutoRelease settings = obs_source_get_settings(source);
+        auto path = obs_data_get_bool(settings, "replay_buffer_use_profile_path")
+                        ? getProfileRecordingPath(obs_frontend_get_profile_config())
+                        : obs_data_get_string(settings, "replay_buffer_path");
+        obs_log(LOG_DEBUG, "path=%s", path);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    }
+}
+
 //--- StatusCell class ---//
 
 StatusCell::StatusCell(const QString &rowId, const QString &textValue, QWidget *parent)
@@ -1192,11 +1323,13 @@ StatusCell::StatusCell(const QString &rowId, const QString &textValue, QWidget *
     streamingIcon = new QLabel(this);
     recordingIcon = new QLabel(this);
     recordingPausedIcon = new QLabel(this);
+    replayBufferIcon = new QLabel(this);
     statusText = new QLabel(this);
     splitRecordingButton = new QToolButton(this);
     pauseRecordingButton = new QToolButton(this);
     unpauseRecordingButton = new QToolButton(this);
     addChapterToRecordingButton = new QToolButton(this);
+    saveReplayBufferButton = new QToolButton(this);
 
     streamingIcon->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
     streamingIcon->setPixmap(QPixmap(":/branch-output/images/streaming.svg").scaled(16, 16));
@@ -1210,6 +1343,10 @@ StatusCell::StatusCell(const QString &rowId, const QString &textValue, QWidget *
     recordingPausedIcon->setPixmap(QPixmap(":/branch-output/images/recording-paused.svg").scaled(16, 16));
     recordingPausedIcon->setVisible(false);
 
+    replayBufferIcon->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+    replayBufferIcon->setPixmap(QPixmap(":/branch-output/images/replay-buffering.svg").scaled(16, 16));
+    replayBufferIcon->setVisible(false);
+
     splitRecordingButton->setIcon(QIcon(":/branch-output/images/scissors.svg"));
     splitRecordingButton->setVisible(false);
 
@@ -1222,23 +1359,29 @@ StatusCell::StatusCell(const QString &rowId, const QString &textValue, QWidget *
     addChapterToRecordingButton->setIcon(QIcon(":/branch-output/images/chapter.svg"));
     addChapterToRecordingButton->setVisible(false);
 
+    saveReplayBufferButton->setIcon(QIcon(":/branch-output/images/replay-save.svg"));
+    saveReplayBufferButton->setVisible(false);
+
     connect(splitRecordingButton, &QToolButton::clicked, this, [this]() { emit splitRecordingButtonClicked(); });
     connect(pauseRecordingButton, &QToolButton::clicked, this, [this]() { emit pauseRecordingButtonClicked(); });
     connect(unpauseRecordingButton, &QToolButton::clicked, this, [this]() { emit unpauseRecordingButtonClicked(); });
     connect(addChapterToRecordingButton, &QToolButton::clicked, this, [this]() {
         emit addChapterToRecordingButtonClicked();
     });
+    connect(saveReplayBufferButton, &QToolButton::clicked, this, [this]() { emit saveReplayBufferButtonClicked(); });
 
     auto layout = new QHBoxLayout();
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(streamingIcon);
     layout->addWidget(recordingIcon);
     layout->addWidget(recordingPausedIcon);
+    layout->addWidget(replayBufferIcon);
     layout->addWidget(statusText);
     layout->addWidget(pauseRecordingButton);
     layout->addWidget(unpauseRecordingButton);
     layout->addWidget(splitRecordingButton);
     layout->addWidget(addChapterToRecordingButton);
+    layout->addWidget(saveReplayBufferButton);
     layout->addSpacing(5);
     setLayout(layout);
 
@@ -1257,21 +1400,31 @@ void StatusCell::setIconShow(StatusIcon show)
         streamingIcon->setVisible(false);
         recordingIcon->setVisible(false);
         recordingPausedIcon->setVisible(false);
+        replayBufferIcon->setVisible(false);
         break;
     case STATUS_ICON_STREAMING:
         streamingIcon->setVisible(true);
         recordingIcon->setVisible(false);
         recordingPausedIcon->setVisible(false);
+        replayBufferIcon->setVisible(false);
         break;
     case STATUS_ICON_RECORDING:
         streamingIcon->setVisible(false);
         recordingIcon->setVisible(true);
         recordingPausedIcon->setVisible(false);
+        replayBufferIcon->setVisible(false);
         break;
     case STATUS_ICON_RECORDING_PAUSED:
         streamingIcon->setVisible(false);
         recordingIcon->setVisible(false);
         recordingPausedIcon->setVisible(true);
+        replayBufferIcon->setVisible(false);
+        break;
+    case STATUS_ICON_REPLAY_BUFFER:
+        streamingIcon->setVisible(false);
+        recordingIcon->setVisible(false);
+        recordingPausedIcon->setVisible(false);
+        replayBufferIcon->setVisible(true);
         break;
     }
 }

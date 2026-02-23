@@ -37,6 +37,7 @@ endif()
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE src/plugin-main.cpp
+          src/plugin-replay-buffer.cpp
           src/plugin-ui.cpp
           src/utils.cpp
           src/audio/audio-capture.cpp

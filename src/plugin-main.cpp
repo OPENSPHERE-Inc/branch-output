@@ -71,7 +71,9 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       height(0),
       toggleEnableHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
       splitRecordingHotkeyId(OBS_INVALID_HOTKEY_ID),
-      splitRecordingEnabled(false)
+      splitRecordingEnabled(false),
+      replayBufferActive(false),
+      saveReplayBufferHotkeyId(OBS_INVALID_HOTKEY_ID)
 {
     // DO NOT use obs_filter_get_parent() in this function (It'll return nullptr)
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", qUtf8Printable(name));
@@ -109,8 +111,9 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
         obs_data_set_int(settings, "audio_track", trackNo);
     }
 
-    // Fiter activate immediately when "server" or "stream_recording" is exists.
-    initialized = countEnabledStreamings(settings) > 0 || obs_data_get_bool(settings, "stream_recording");
+    // Fiter activate immediately when "server" or "stream_recording" or "replay_buffer" is exists.
+    initialized = countEnabledStreamings(settings) > 0 || obs_data_get_bool(settings, "stream_recording") ||
+                  obs_data_get_bool(settings, "replay_buffer");
 
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
 }
@@ -240,6 +243,10 @@ void BranchOutputFilter::removeCallback()
         obs_hotkey_unregister(addChapterToRecordingHotkeyId);
         addChapterToRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
+    if (saveReplayBufferHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        obs_hotkey_unregister(saveReplayBufferHotkeyId);
+        saveReplayBufferHotkeyId = OBS_INVALID_HOTKEY_ID;
+    }
 
     obs_log(LOG_INFO, "%s: Filter removed", qUtf8Printable(name));
 }
@@ -288,6 +295,7 @@ void BranchOutputFilter::stopRecordingOutput()
 void BranchOutputFilter::stopOutput()
 {
     stopRecordingOutput();
+    stopReplayBufferOutput();
 
     pthread_mutex_lock(&outputMutex);
     {
@@ -787,7 +795,8 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         OBSMutexAutoUnlock locked(&outputMutex);
 
         // Abort when obs initializing or filter disabled.
-        if (!obs_initialized() || !obs_source_enabled(filterSource) || countActiveStreamings() > 0 || recordingActive) {
+        if (!obs_initialized() || !obs_source_enabled(filterSource) || countActiveStreamings() > 0 || recordingActive ||
+            replayBufferActive) {
             obs_log(LOG_ERROR, "%s: Ignore unavailable filter", qUtf8Printable(name));
             return;
         }
@@ -1089,6 +1098,11 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             }
         }
 
+        //--- Start replay buffer (if requested) ---//
+        if (isReplayBufferEnabled(settings)) {
+            createAndStartReplayBuffer(settings);
+        }
+
         //--- Start streaming output (if requested) ---//
         for (size_t i = 0; i < MAX_SERVICES; i++) {
             startStreamingOutput(i);
@@ -1213,12 +1227,12 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
 
 void BranchOutputFilter::restartOutput()
 {
-    if (countActiveStreamings() > 0 || recordingActive) {
+    if (countActiveStreamings() > 0 || recordingActive || replayBufferActive) {
         stopOutput();
     }
 
     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-    if (countEnabledStreamings(settings) > 0 || isRecordingEnabled(settings)) {
+    if (countEnabledStreamings(settings) > 0 || isRecordingEnabled(settings) || isReplayBufferEnabled(settings)) {
         startOutput(settings);
     }
 }
@@ -1335,7 +1349,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
     auto sourceEnabled = obs_source_enabled(filterSource);
     auto streamingActive = countActiveStreamings() > 0;
 
-    if (!streamingActive && !recordingActive && !recordingPending) {
+    if (!streamingActive && !recordingActive && !recordingPending && !replayBufferActive) {
         // Evaluate start condition
         auto parent = obs_filter_get_parent(filterSource);
         if (!parent || !sourceInFrontend(parent)) {
@@ -1420,7 +1434,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 return;
             }
 
-            if (streamingAlive || recordingAlive || recordingPending) {
+            if (streamingAlive || recordingAlive || recordingPending || replayBufferActive) {
                 // Monitoring source
                 auto parent = obs_filter_get_parent(filterSource);
 
@@ -1528,7 +1542,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             }
 
         } else {
-            if (streamingActive || recordingActive || recordingPending) {
+            if (streamingActive || recordingActive || recordingPending || replayBufferActive) {
                 // Clicked filter's "Eye" icon (Hide)
                 onStopOutputGracefully();
                 return;
@@ -1539,8 +1553,9 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
 void BranchOutputFilter::onStopOutputGracefully()
 {
-    // Stop recording immediately first
+    // Stop recording and replay buffer immediately first
     stopRecordingOutput();
+    stopReplayBufferOutput();
 
     // Lock out other output thread to prevent crash
     pthread_mutex_lock(&pluginMutex);
@@ -1846,6 +1861,10 @@ void BranchOutputFilter::registerHotkey()
         // Unregsiter previous
         obs_hotkey_unregister(addChapterToRecordingHotkeyId);
     }
+    if (saveReplayBufferHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        // Unregsiter previous
+        obs_hotkey_unregister(saveReplayBufferHotkeyId);
+    }
 
     // Register enable/disable hotkeys
     auto enableFilterName = QString("EnableFilter.%1").arg(obs_source_get_uuid(filterSource));
@@ -1887,6 +1906,14 @@ void BranchOutputFilter::registerHotkey()
     addChapterToRecordingHotkeyId = obs_hotkey_register_source(
         obs_filter_get_parent(filterSource), qUtf8Printable(addChapterName), qUtf8Printable(addChapterDescription),
         onAddChapterToRecordingFileHotkeyPressed, this
+    );
+
+    // Register save replay buffer hotkey
+    auto saveReplayName = QString("SaveReplayBuffer.%1").arg(obs_source_get_uuid(filterSource));
+    auto saveReplayDescription = QString(obs_module_text("SaveReplayBufferHotkey")).arg(name);
+    saveReplayBufferHotkeyId = obs_hotkey_register_source(
+        obs_filter_get_parent(filterSource), qUtf8Printable(saveReplayName), qUtf8Printable(saveReplayDescription),
+        onSaveReplayBufferHotkeyPressed, this
     );
 }
 
