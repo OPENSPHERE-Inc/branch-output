@@ -27,6 +27,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QDateTime>
 
 #include "audio/audio-capture.hpp"
+#include "video/filter-video-capture.hpp"
 #include "plugin-support.h"
 #include "plugin-main.hpp"
 #include "utils.hpp"
@@ -64,6 +65,8 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       videoEncoder(nullptr),
       videoOutput(nullptr),
       view(nullptr),
+      useFilterInput(false),
+      filterVideoCapture(nullptr),
       width(0),
       height(0),
       toggleEnableHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
@@ -194,6 +197,12 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
 
 void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
 {
+    // Capture filter input when in filter input mode
+    if (useFilterInput && filterVideoCapture) {
+        filterVideoCapture->captureFilterInput();
+    }
+
+    // Always pass through the filter chain
     obs_source_skip_video_filter(filterSource);
 }
 
@@ -254,11 +263,12 @@ void BranchOutputFilter::stopRecordingOutput()
     {
         OBSMutexAutoUnlock locked(&outputMutex);
 
-        obs_source_t *parent = obs_filter_get_parent(filterSource);
-
         if (recordingOutput) {
             if (recordingActive) {
-                obs_source_dec_showing(parent);
+                obs_source_t *parent = obs_filter_get_parent(filterSource);
+                if (parent) {
+                    obs_source_dec_showing(parent);
+                }
                 obs_output_stop(recordingOutput);
             }
         }
@@ -299,12 +309,20 @@ void BranchOutputFilter::stopOutput()
 
         videoEncoder = nullptr;
 
+        if (filterVideoCapture) {
+            filterVideoCapture->setActive(false);
+            delete filterVideoCapture;
+            filterVideoCapture = nullptr;
+        }
+
         if (view) {
             obs_view_set_source(view, 0, nullptr);
             obs_view_remove(view);
         }
 
         view = nullptr;
+        videoOutput = nullptr;
+        useFilterInput = false;
         blankSource = nullptr;
     }
 
@@ -434,6 +452,27 @@ obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, si
     }
 
     return streamingSettings;
+}
+
+void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHeight)
+{
+    if (useFilterInput) {
+        obs_source_t *target = obs_filter_get_target(filterSource);
+        if (target) {
+            outWidth = obs_source_get_base_width(target);
+            outHeight = obs_source_get_base_height(target);
+        } else {
+            outWidth = 0;
+            outHeight = 0;
+        }
+    } else {
+        obs_source_t *parent = obs_filter_get_parent(filterSource);
+        outWidth = obs_source_get_width(parent);
+        outHeight = obs_source_get_height(parent);
+    }
+    // Round up to a multiple of 2
+    outWidth += (outWidth & 1);
+    outHeight += (outHeight & 1);
 }
 
 void BranchOutputFilter::determineOutputResolution(obs_data_t *settings, obs_video_info *ovi)
@@ -633,7 +672,10 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
     // Start streaming output
     if (obs_output_start(streamings[index].output)) {
         streamings[index].active = true;
-        obs_source_inc_showing(obs_filter_get_parent(filterSource));
+        auto parent = obs_filter_get_parent(filterSource);
+        if (parent) {
+            obs_source_inc_showing(parent);
+        }
         obs_log(LOG_INFO, "%s (%zu): Starting streaming output succeeded", qUtf8Printable(name), index);
     } else {
         obs_log(LOG_ERROR, "%s (%zu): Starting streaming output failed", qUtf8Printable(name), index);
@@ -643,7 +685,10 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
 void BranchOutputFilter::stopStreamingOutput(size_t index)
 {
     if (streamings[index].output && streamings[index].active) {
-        obs_source_dec_showing(obs_filter_get_parent(filterSource));
+        obs_source_t *parent = obs_filter_get_parent(filterSource);
+        if (parent) {
+            obs_source_dec_showing(parent);
+        }
         obs_output_stop(streamings[index].output);
         obs_log(LOG_INFO, "%s (%zu): Stopping streaming output succeeded", qUtf8Printable(name), index);
     }
@@ -722,7 +767,10 @@ void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
     if (obs_output_start(recordingOutput)) {
         recordingActive = true;
         recordingPending = false;
-        obs_source_inc_showing(obs_filter_get_parent(filterSource));
+        auto parent = obs_filter_get_parent(filterSource);
+        if (parent) {
+            obs_source_inc_showing(parent);
+        }
         obs_log(LOG_INFO, "%s: Starting recording output succeeded", qUtf8Printable(name));
     } else {
         obs_log(LOG_ERROR, "%s: Starting recording output failed", qUtf8Printable(name));
@@ -773,12 +821,19 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             return;
         }
 
-        // Round up to a multiple of 2
-        uint32_t sourceWidth = obs_source_get_width(parent);
-        width = sourceWidth += (sourceWidth & 1);
-        // Round up to a multiple of 2
-        uint32_t sourceHeight = obs_source_get_height(parent);
-        height = sourceHeight += (sourceHeight & 1);
+        // Determine video source type first to choose correct resolution source
+        auto videoSourceType = obs_data_get_string(settings, "video_source_type");
+        useFilterInput = videoSourceType && !strcmp(videoSourceType, "filter_input");
+
+        // Resolve input resolution based on video source type
+        // sourceWidth/sourceHeight represent the actual input resolution for this filter,
+        // used both for video capture and for collapsed-source detection (recording pending).
+        uint32_t sourceWidth;
+        uint32_t sourceHeight;
+        getSourceResolution(sourceWidth, sourceHeight);
+
+        width = sourceWidth;
+        height = sourceHeight;
 
         if (width == 0 || height == 0) {
             // Default to canvas size
@@ -804,14 +859,40 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         }
 
         //--- Open video output ---//
-        // Create view and associate it with filter source
-        view = obs_view_create();
+        if (useFilterInput) {
+            // Filter input mode: capture via texrender + proxy source + obs_view.
+            // The proxy source renders the captured texrender texture on the GPU.
+            // obs_view creates a video_t* registered in OBS's mix list, allowing
+            // GPU encoders (NVENC, QSV, AMF, etc.) to work directly.
+            filterVideoCapture = new FilterVideoCapture(filterSource, width, height);
+            if (!filterVideoCapture->getProxySource()) {
+                obs_log(LOG_ERROR, "%s: Filter video capture creation failed", qUtf8Printable(name));
+                delete filterVideoCapture;
+                filterVideoCapture = nullptr;
+                return;
+            }
 
-        obs_view_set_source(view, 0, parent);
-        videoOutput = obs_view_add2(view, &ovi);
-        if (!videoOutput) {
-            obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
-            return;
+            view = obs_view_create();
+            obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
+
+            videoOutput = obs_view_add2(view, &ovi);
+            if (!videoOutput) {
+                obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
+                delete filterVideoCapture;
+                filterVideoCapture = nullptr;
+                return;
+            }
+            filterVideoCapture->setActive(true);
+        } else {
+            // Source output mode (default): use obs_view for the parent source
+            view = obs_view_create();
+            obs_view_set_source(view, 0, parent);
+
+            videoOutput = obs_view_add2(view, &ovi);
+            if (!videoOutput) {
+                obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
+                return;
+            }
         }
 
         //--- Open audio output(s) ---//
@@ -943,6 +1024,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
 
         //--- Setup video encoder ---//
         auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
+
         videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), settings, nullptr);
         if (!videoEncoder) {
             obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));
@@ -1341,10 +1423,11 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             if (streamingAlive || recordingAlive || recordingPending) {
                 // Monitoring source
                 auto parent = obs_filter_get_parent(filterSource);
-                auto sourceWidth = obs_source_get_width(parent);
-                sourceWidth += (sourceWidth & 1);
-                uint32_t sourceHeight = obs_source_get_height(parent);
-                sourceHeight += (sourceHeight & 1);
+
+                // Resolve input resolution based on video source type
+                uint32_t sourceWidth;
+                uint32_t sourceHeight;
+                getSourceResolution(sourceWidth, sourceHeight);
 
                 if (!sourceInFrontend(parent)) {
                     // Stop output when source had been removed
@@ -1652,7 +1735,9 @@ void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_sour
         }
     } else {
         if (blankingOutputActive) {
-            if (parent) {
+            if (useFilterInput && filterVideoCapture) {
+                obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
+            } else if (parent) {
                 obs_view_set_source(view, 0, parent);
             }
             blankingOutputActive = false;
@@ -1870,11 +1955,15 @@ obs_source_info BranchOutputFilter::createFilterInfo()
 //--- OBS Plugin Callbacks ---//
 
 obs_source_info filterInfo;
+obs_source_info proxySourceInfo;
 
 bool obs_module_load()
 {
     filterInfo = BranchOutputFilter::createFilterInfo();
     obs_register_source(&filterInfo);
+
+    proxySourceInfo = FilterVideoCapture::createProxySourceInfo();
+    obs_register_source(&proxySourceInfo);
 
     pthread_mutex_init(&pluginMutex, nullptr);
 

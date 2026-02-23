@@ -35,7 +35,13 @@ if(ENABLE_QT)
 endif()
 
 target_sources(
-  ${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.cpp src/plugin-ui.cpp src/utils.cpp src/audio/audio-capture.cpp
-                                src/UI/output-status-dock.cpp src/UI/resources.qrc)
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE src/plugin-main.cpp
+          src/plugin-ui.cpp
+          src/utils.cpp
+          src/audio/audio-capture.cpp
+          src/video/filter-video-capture.cpp
+          src/UI/output-status-dock.cpp
+          src/UI/resources.qrc)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

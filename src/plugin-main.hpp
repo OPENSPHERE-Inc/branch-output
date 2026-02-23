@@ -29,6 +29,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
+#include "video/filter-video-capture.hpp"
 
 #define MAX_SERVICES 8
 
@@ -93,6 +94,12 @@ class BranchOutputFilter : public QObject {
     uint32_t width;
     uint32_t height;
 
+    // Filter input mode flag
+    bool useFilterInput;
+
+    // Filter input video capture (captures filter input and provides proxy source for obs_view)
+    FilterVideoCapture *filterVideoCapture;
+
     // Audio context
     BranchOutputAudioContext audios[MAX_AUDIO_MIXES];
 
@@ -119,6 +126,7 @@ class BranchOutputFilter : public QObject {
     void stopOutput();
     obs_data_t *createRecordingSettings(obs_data_t *settings, bool createFolder = false);
     obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
+    void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi);
     BranchOutputStreamingContext createSreamingOutput(obs_data_t *settings, size_t index = 0);
     void startStreamingOutput(size_t index = 0);
