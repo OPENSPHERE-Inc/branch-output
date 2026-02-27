@@ -198,6 +198,17 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
     obs_log(LOG_INFO, "%s: Filter updated", qUtf8Printable(name));
 }
 
+void BranchOutputFilter::videoTickCallback(float)
+{
+    // Reset capture flag at the start of each frame so that renderTexture()
+    // can detect whether captureFilterInput() was already called by the
+    // normal rendering path (scene active).  video_tick runs before
+    // output_frames in the graphics thread loop, guaranteeing correct ordering.
+    if (useFilterInput && filterVideoCapture) {
+        filterVideoCapture->resetCapturedFlag();
+    }
+}
+
 void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
 {
     if (useFilterInput && filterVideoCapture) {
@@ -882,7 +893,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             // The proxy source renders the captured texrender texture on the GPU.
             // obs_view creates a video_t* registered in OBS's mix list, allowing
             // GPU encoders (NVENC, QSV, AMF, etc.) to work directly.
-            filterVideoCapture = new FilterVideoCapture(filterSource, width, height);
+            filterVideoCapture = new FilterVideoCapture(filterSource, parent, width, height);
             if (!filterVideoCapture->getProxySource()) {
                 obs_log(LOG_ERROR, "%s: Filter video capture creation failed", qUtf8Printable(name));
                 delete filterVideoCapture;
@@ -1967,6 +1978,10 @@ obs_source_info BranchOutputFilter::createFilterInfo()
     info.video_render = [](void *data, gs_effect_t *effect) {
         auto filter = static_cast<BranchOutputFilter *>(data);
         filter->videoRenderCallback(effect);
+    };
+    info.video_tick = [](void *data, float seconds) {
+        auto filter = static_cast<BranchOutputFilter *>(data);
+        filter->videoTickCallback(seconds);
     };
     info.filter_remove = [](void *data, obs_source_t *) {
         auto filter = static_cast<BranchOutputFilter *>(data);

@@ -80,21 +80,26 @@ obs_source_info FilterVideoCapture::createProxySourceInfo()
 
 //--- FilterVideoCapture implementation ---//
 
-FilterVideoCapture::FilterVideoCapture(obs_source_t *_filterSource, uint32_t _width, uint32_t _height)
+FilterVideoCapture::FilterVideoCapture(obs_source_t *_filterSource, obs_source_t *_parentSource, uint32_t _width,
+                                       uint32_t _height)
     : filterSource(_filterSource),
+      parentSource(_parentSource),
       proxySource(nullptr),
       texrender(nullptr),
+      triggerTexrender(nullptr),
       captureWidth(_width),
       captureHeight(_height),
       active(false),
-      textureReady(false)
+      textureReady(false),
+      capturedThisFrame(false)
 {
     // Create texrender on graphics thread
     obs_enter_graphics();
     texrender = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
+    triggerTexrender = gs_texrender_create(GS_BGRA, GS_ZS_NONE);
     obs_leave_graphics();
 
-    if (!texrender) {
+    if (!texrender || !triggerTexrender) {
         obs_log(LOG_ERROR, "FilterVideoCapture: gs_texrender_create failed");
         return;
     }
@@ -122,6 +127,10 @@ FilterVideoCapture::~FilterVideoCapture()
     if (texrender) {
         gs_texrender_destroy(texrender);
         texrender = nullptr;
+    }
+    if (triggerTexrender) {
+        gs_texrender_destroy(triggerTexrender);
+        triggerTexrender = nullptr;
     }
     obs_leave_graphics();
 }
@@ -169,6 +178,7 @@ bool FilterVideoCapture::captureFilterInput()
     gs_texrender_end(texrender);
 
     textureReady.store(true);
+    capturedThisFrame.store(true);
     return true;
 }
 
@@ -196,7 +206,39 @@ void FilterVideoCapture::drawCapturedTexture()
 
 void FilterVideoCapture::renderTexture()
 {
-    if (!textureReady.load() || !texrender) {
+    if (!active.load() || !texrender) {
+        return;
+    }
+
+    // When the scene is not being rendered by the main mix (scene inactive),
+    // the filter's video_render callback is never called, so captureFilterInput()
+    // is never invoked and the texrender is never updated.  We detect this via
+    // capturedThisFrame (reset each frame from video_tick) and trigger-render
+    // the parent scene ourselves to drive the filter chain.
+    if (!capturedThisFrame.load() && parentSource && triggerTexrender) {
+        // Use triggerTexrender as a disposable render target.
+        // Rendering the parent scene drives its filter chain, which calls
+        // BranchOutputFilter::videoRenderCallback() → captureFilterInput(),
+        // updating `texrender` with fresh content.  The output written to
+        // triggerTexrender (via drawCapturedTexture()) is discarded.
+        gs_texrender_reset(triggerTexrender);
+        if (gs_texrender_begin(triggerTexrender, captureWidth, captureHeight)) {
+            struct vec4 clear_color;
+            vec4_zero(&clear_color);
+            gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
+            gs_ortho(0.0f, (float)captureWidth, 0.0f, (float)captureHeight, -100.0f, 100.0f);
+
+            gs_blend_state_push();
+            gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+
+            obs_source_video_render(parentSource);
+
+            gs_blend_state_pop();
+            gs_texrender_end(triggerTexrender);
+        }
+    }
+
+    if (!textureReady.load()) {
         return;
     }
 

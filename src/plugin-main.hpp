@@ -194,6 +194,7 @@ class BranchOutputFilter : public QObject {
 
     void addCallback(obs_source_t *source);
     void updateCallback(obs_data_t *settings);
+    void videoTickCallback(float seconds);
     void videoRenderCallback(gs_effect_t *effect);
     void destroyCallback();
     obs_properties_t *getProperties();
