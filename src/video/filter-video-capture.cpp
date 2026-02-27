@@ -80,8 +80,9 @@ obs_source_info FilterVideoCapture::createProxySourceInfo()
 
 //--- FilterVideoCapture implementation ---//
 
-FilterVideoCapture::FilterVideoCapture(obs_source_t *_filterSource, obs_source_t *_parentSource, uint32_t _width,
-                                       uint32_t _height)
+FilterVideoCapture::FilterVideoCapture(
+    obs_source_t *_filterSource, obs_source_t *_parentSource, uint32_t _width, uint32_t _height
+)
     : filterSource(_filterSource),
       parentSource(_parentSource),
       proxySource(nullptr),
