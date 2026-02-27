@@ -41,11 +41,22 @@ class FilterVideoCapture {
     // Filter source reference (non-owning)
     obs_source_t *filterSource;
 
+    // Parent source reference for trigger rendering (non-owning)
+    // When the scene is inactive, renderTexture() uses this to drive
+    // the scene's render pipeline and update the texrender.
+    obs_source_t *parentSource;
+
     // Private proxy source for obs_view binding
     OBSSourceAutoRelease proxySource;
 
     // GPU texrender for capturing filter input
     gs_texrender_t *texrender;
+
+    // Disposable texrender used as a render target when trigger-rendering
+    // the parent scene from within renderTexture().  The filter chain writes
+    // into this texrender (via drawCapturedTexture()), but the result is
+    // discarded — the real capture goes into `texrender` above.
+    gs_texrender_t *triggerTexrender;
 
     // Capture dimensions (filter target resolution)
     uint32_t captureWidth;
@@ -55,12 +66,24 @@ class FilterVideoCapture {
     std::atomic_bool active;
     std::atomic_bool textureReady;
 
+    // Per-frame flag: set to true by captureFilterInput() when the filter's
+    // video_render is called from the normal rendering path (scene active).
+    // renderTexture() checks this to decide whether trigger rendering is needed.
+    // Reset each frame via resetCapturedFlag() from video_tick.
+    std::atomic_bool capturedThisFrame;
+
 public:
-    explicit FilterVideoCapture(obs_source_t *_filterSource, uint32_t _width, uint32_t _height);
+    explicit FilterVideoCapture(obs_source_t *_filterSource, obs_source_t *_parentSource, uint32_t _width,
+                                uint32_t _height);
     ~FilterVideoCapture();
 
     // Called from video_render callback (graphics thread) to capture filter input
-    void captureFilterInput();
+    // Returns true if capture succeeded, false if capture was skipped/failed
+    bool captureFilterInput();
+
+    // Called from video_render callback to draw captured texture to current render target
+    // (replaces obs_source_skip_video_filter for the main output passthrough)
+    void drawCapturedTexture();
 
     // Called from proxy source's video_render (graphics thread) to render the captured texture
     void renderTexture();
@@ -71,6 +94,9 @@ public:
     // Enable/disable capture
     inline void setActive(bool enable) { active.store(enable); }
     inline bool isActive() const { return active.load(); }
+
+    // Reset the per-frame capture flag (called from video_tick before rendering)
+    inline void resetCapturedFlag() { capturedThisFrame.store(false); }
 
     // Get capture dimensions
     inline uint32_t getCaptureWidth() const { return captureWidth; }

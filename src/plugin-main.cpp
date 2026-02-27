@@ -198,15 +198,35 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
     obs_log(LOG_INFO, "%s: Filter updated", qUtf8Printable(name));
 }
 
+void BranchOutputFilter::videoTickCallback(float)
+{
+    // Reset capture flag at the start of each frame so that renderTexture()
+    // can detect whether captureFilterInput() was already called by the
+    // normal rendering path (scene active).  video_tick runs before
+    // output_frames in the graphics thread loop, guaranteeing correct ordering.
+    if (useFilterInput && filterVideoCapture) {
+        filterVideoCapture->resetCapturedFlag();
+    }
+}
+
 void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
 {
-    // Capture filter input when in filter input mode
     if (useFilterInput && filterVideoCapture) {
-        filterVideoCapture->captureFilterInput();
+        // Optimized filter input mode:
+        // 1. Capture upstream rendering to texrender (one render of the source tree)
+        // 2. Draw captured texture to current render target (main output passthrough)
+        //    This replaces obs_source_skip_video_filter to avoid rendering the
+        //    source tree a second time.
+        if (filterVideoCapture->captureFilterInput()) {
+            filterVideoCapture->drawCapturedTexture();
+        } else {
+            // Fallback: capture failed, pass through normally
+            obs_source_skip_video_filter(filterSource);
+        }
+    } else {
+        // Source output mode: pass through the filter chain as usual
+        obs_source_skip_video_filter(filterSource);
     }
-
-    // Always pass through the filter chain
-    obs_source_skip_video_filter(filterSource);
 }
 
 // This method possibly called in different thread from UI thread
@@ -873,7 +893,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             // The proxy source renders the captured texrender texture on the GPU.
             // obs_view creates a video_t* registered in OBS's mix list, allowing
             // GPU encoders (NVENC, QSV, AMF, etc.) to work directly.
-            filterVideoCapture = new FilterVideoCapture(filterSource, width, height);
+            filterVideoCapture = new FilterVideoCapture(filterSource, parent, width, height);
             if (!filterVideoCapture->getProxySource()) {
                 obs_log(LOG_ERROR, "%s: Filter video capture creation failed", qUtf8Printable(name));
                 delete filterVideoCapture;
@@ -1958,6 +1978,10 @@ obs_source_info BranchOutputFilter::createFilterInfo()
     info.video_render = [](void *data, gs_effect_t *effect) {
         auto filter = static_cast<BranchOutputFilter *>(data);
         filter->videoRenderCallback(effect);
+    };
+    info.video_tick = [](void *data, float seconds) {
+        auto filter = static_cast<BranchOutputFilter *>(data);
+        filter->videoTickCallback(seconds);
     };
     info.filter_remove = [](void *data, obs_source_t *) {
         auto filter = static_cast<BranchOutputFilter *>(data);
