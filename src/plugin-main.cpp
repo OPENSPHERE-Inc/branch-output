@@ -200,13 +200,22 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
 
 void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
 {
-    // Capture filter input when in filter input mode
     if (useFilterInput && filterVideoCapture) {
-        filterVideoCapture->captureFilterInput();
+        // Optimized filter input mode:
+        // 1. Capture upstream rendering to texrender (one render of the source tree)
+        // 2. Draw captured texture to current render target (main output passthrough)
+        //    This replaces obs_source_skip_video_filter to avoid rendering the
+        //    source tree a second time.
+        if (filterVideoCapture->captureFilterInput()) {
+            filterVideoCapture->drawCapturedTexture();
+        } else {
+            // Fallback: capture failed, pass through normally
+            obs_source_skip_video_filter(filterSource);
+        }
+    } else {
+        // Source output mode: pass through the filter chain as usual
+        obs_source_skip_video_filter(filterSource);
     }
-
-    // Always pass through the filter chain
-    obs_source_skip_video_filter(filterSource);
 }
 
 // This method possibly called in different thread from UI thread

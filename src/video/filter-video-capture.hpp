@@ -60,7 +60,12 @@ public:
     ~FilterVideoCapture();
 
     // Called from video_render callback (graphics thread) to capture filter input
-    void captureFilterInput();
+    // Returns true if capture succeeded, false if capture was skipped/failed
+    bool captureFilterInput();
+
+    // Called from video_render callback to draw captured texture to current render target
+    // (replaces obs_source_skip_video_filter for the main output passthrough)
+    void drawCapturedTexture();
 
     // Called from proxy source's video_render (graphics thread) to render the captured texture
     void renderTexture();

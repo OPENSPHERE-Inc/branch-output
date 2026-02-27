@@ -126,33 +126,33 @@ FilterVideoCapture::~FilterVideoCapture()
     obs_leave_graphics();
 }
 
-void FilterVideoCapture::captureFilterInput()
+bool FilterVideoCapture::captureFilterInput()
 {
     if (!active.load() || !texrender) {
-        return;
+        return false;
     }
 
     obs_source_t *target = obs_filter_get_target(filterSource);
     if (!target) {
-        return;
+        return false;
     }
 
     uint32_t cx = obs_source_get_base_width(target);
     uint32_t cy = obs_source_get_base_height(target);
 
     if (cx == 0 || cy == 0) {
-        return;
+        return false;
     }
 
     // Detect resolution change — BranchOutputFilter will restart output
     if (cx != captureWidth || cy != captureHeight) {
-        return;
+        return false;
     }
 
     // Render filter input to texrender
     gs_texrender_reset(texrender);
     if (!gs_texrender_begin(texrender, cx, cy)) {
-        return;
+        return false;
     }
 
     struct vec4 clear_color;
@@ -169,6 +169,29 @@ void FilterVideoCapture::captureFilterInput()
     gs_texrender_end(texrender);
 
     textureReady.store(true);
+    return true;
+}
+
+void FilterVideoCapture::drawCapturedTexture()
+{
+    if (!textureReady.load() || !texrender) {
+        return;
+    }
+
+    gs_texture_t *tex = gs_texrender_get_texture(texrender);
+    if (!tex) {
+        return;
+    }
+
+    // Draw the captured texrender content to the current render target
+    // using OBS default effect (replaces obs_source_skip_video_filter)
+    gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+    gs_eparam_t *image = gs_effect_get_param_by_name(effect, "image");
+    gs_effect_set_texture(image, tex);
+
+    while (gs_effect_loop(effect, "Draw")) {
+        gs_draw_sprite(tex, 0, captureWidth, captureHeight);
+    }
 }
 
 void FilterVideoCapture::renderTexture()
