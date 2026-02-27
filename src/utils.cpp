@@ -24,6 +24,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QWidget>
 
 #include "utils.hpp"
+#include "plugin-support.h"
 
 // Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1871
 QString getFormatExt(const char *container)
@@ -186,6 +187,19 @@ static bool sourceVisibleInSceneSource(obs_source_t *sceneSource, obs_source_t *
         return true;
     }
 
+    // In Studio Mode with scene duplication enabled (the default), the Program
+    // output uses a duplicated (private) scene whose obs_source_t pointer
+    // differs from the original.  When the target itself is a scene, compare
+    // by name so that we correctly detect the duplicate as a match.
+    if (obs_source_get_type(sceneSource) == OBS_SOURCE_TYPE_SCENE &&
+        obs_source_get_type(target) == OBS_SOURCE_TYPE_SCENE) {
+        const char *sceneName = obs_source_get_name(sceneSource);
+        const char *targetName = obs_source_get_name(target);
+        if (sceneName && targetName && strcmp(sceneName, targetName) == 0) {
+            return true;
+        }
+    }
+
     obs_scene_t *scene = obs_scene_from_source(sceneSource);
     if (!scene) {
         return false;
@@ -200,29 +214,41 @@ bool sourceVisibleInProgram(obs_source_t *source)
         return false;
     }
 
-    // Prefer using OBS' actual program output source (transition), because in Studio Mode the
-    // Program display may use duplicated/private scenes that differ from the "current scene".
-    //
-    // During transitions, the Program output can contain both Source A and Source B. Consider
-    // the source visible if it's visible in either one, so we don't blank incorrectly mid-transition.
+    // Check via the actual program output transition first.  During transitions the
+    // program output can contain both Source A and Source B — consider the source
+    // visible if it appears in either, so we don't blank incorrectly mid-transition.
     OBSSourceAutoRelease output = obs_get_output_source(0);
     if (output) {
         OBSSourceAutoRelease a = obs_transition_get_source(output, OBS_TRANSITION_SOURCE_A);
         OBSSourceAutoRelease b = obs_transition_get_source(output, OBS_TRANSITION_SOURCE_B);
 
         if (a || b) {
-            return sourceVisibleInSceneSource(a, source) || sourceVisibleInSceneSource(b, source);
+            if (sourceVisibleInSceneSource(a, source) || sourceVisibleInSceneSource(b, source)) {
+                return true;
+            }
+        } else {
+            OBSSourceAutoRelease active = obs_transition_get_active_source(output);
+            if (active) {
+                if (sourceVisibleInSceneSource(active, source)) {
+                    return true;
+                }
+            } else {
+                if (sourceVisibleInSceneSource(output, source)) {
+                    return true;
+                }
+            }
         }
-
-        OBSSourceAutoRelease active = obs_transition_get_active_source(output);
-        if (active) {
-            return sourceVisibleInSceneSource(active, source);
-        }
-
-        return sourceVisibleInSceneSource(output, source);
     }
 
-    // Fallback: frontend API scene pointer.
+    // Secondary check via the frontend API.
+    //
+    // In Studio Mode with scene-duplication enabled (the default), the Program
+    // output contains a *private clone* of the scene whose obs_source_t pointer
+    // differs from the original.  The transition-based check above therefore
+    // fails for filters attached directly to a scene source.
+    //
+    // obs_frontend_get_current_scene() returns the *original* scene source even
+    // in Studio Mode, so it correctly matches the filter's parent pointer.
     OBSSourceAutoRelease program = obs_frontend_get_current_scene();
     return sourceVisibleInSceneSource(program, source);
 }
