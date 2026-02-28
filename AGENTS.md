@@ -33,12 +33,15 @@ branch-output/
 ├── src/
 │   ├── plugin-main.cpp      # Plugin entry point, BranchOutputFilter implementation
 │   ├── plugin-main.hpp      # BranchOutputFilter class declaration
+│   ├── plugin-replay-buffer.cpp  # Replay buffer output logic
 │   ├── plugin-ui.cpp        # OBS properties UI, filter settings UI
 │   ├── plugin-support.h     # Auto-generated plugin support header
 │   ├── plugin-support.c.in  # Template for plugin-support.c
 │   ├── utils.cpp / .hpp     # Utility functions, encoder helpers, profile helpers
 │   ├── audio/
-│   │   ├── audio-capture.cpp / .hpp  # Audio capture abstraction
+│   │   └── audio-capture.cpp / .hpp  # Audio capture abstraction
+│   ├── video/
+│   │   └── filter-video-capture.cpp / .hpp  # Filter input video capture (GPU texrender proxy)
 │   └── UI/
 │       ├── output-status-dock.cpp / .hpp  # Status dock widget
 │       ├── resources.qrc    # Qt resource file
@@ -55,8 +58,10 @@ branch-output/
 | Platform | Toolchain |
 |----------|-----------|
 | Windows  | Visual Studio 17 2022, CMake ≥ 3.16, Qt 6 |
-| macOS    | Xcode 15+, CMake ≥ 3.16, Qt 6 |
+| macOS    | Xcode ≤ 16.4.0 (macOS SDK ≤ 15.5), CMake ≥ 3.16, Qt 6 |
 | Linux    | GCC / Clang, CMake ≥ 3.16, Qt 6 |
+
+> **Note (macOS):** This project requires **Xcode 16.4.0 (macOS 15.5 SDK) or below**. Xcode 26 / macOS SDK 26 and later are currently unsupported due to compatibility constraints with OBS Studio's build dependencies.
 
 OBS Studio sources and pre-built dependencies are fetched automatically via `buildspec.json`
 (obs-studio 30.1.2, obs-deps, Qt6).
@@ -101,11 +106,12 @@ The main class is `BranchOutputFilter` (declared in `plugin-main.hpp`), which is
 |------|-------------|
 | **Streaming** | Creates up to `MAX_SERVICES` (8) independent streaming outputs with dedicated services, encoders, and reconnect logic. |
 | **Recording** | Supports file recording with various container formats, time/size-based splitting, pause/unpause, and chapter markers. |
+| **Replay Buffer** | Supports replay buffer output (implemented in `plugin-replay-buffer.cpp`). Allows saving the last N seconds of encoded output to file on demand via hotkey or UI button. |
 | **Audio** | Manages up to `MAX_AUDIO_MIXES` audio contexts via `AudioCapture` class. Supports filter audio, per-source audio, and audio track selection. |
-| **Video** | Creates an OBS view (`obs_view_t`) with a private video output for per-filter encoding and resolution control. |
-| **UI** | Properties panel built via OBS properties API (`plugin-ui.cpp`). Status dock (`BranchOutputStatusDock`) shows live statistics for all filters. |
-| **Hotkeys** | Registers hotkey pairs for enable/disable, split recording, pause/unpause, and chapter markers. |
-| **Interlock** | Can link filter activation to OBS streaming, recording, or virtual camera states. |
+| **Video** | Creates an OBS view (`obs_view_t`) with a private video output for per-filter encoding and resolution control. Supports **filter input mode** via `FilterVideoCapture` class, which captures the filter's input using GPU `gs_texrender` and provides a private proxy source for the `obs_view`, avoiding CPU roundtrips and enabling GPU encoder compatibility (NVENC, QSV, AMF, etc.). |
+| **UI** | Properties panel built via OBS properties API (`plugin-ui.cpp`). Status dock (`BranchOutputStatusDock`) shows live statistics for all filters, including replay buffer save buttons. |
+| **Hotkeys** | Registers hotkey pairs for enable/disable, split recording, pause/unpause, chapter markers, and save replay buffer. |
+| **Interlock** | Can link filter activation to OBS streaming, recording, virtual camera, or replay buffer states. |
 | **Blanking** | Uses a private solid-color source to blank output when the parent source is inactive. |
 
 ### Threading Model
@@ -162,7 +168,7 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 
 ### Naming Conventions
 
-- **Classes**: PascalCase (`BranchOutputFilter`, `AudioCapture`, `OutputTableRow`)
+- **Classes**: PascalCase (`BranchOutputFilter`, `AudioCapture`, `FilterVideoCapture`, `OutputTableRow`)
 - **Methods**: camelCase (`startOutput`, `stopRecordingOutput`, `onIntervalTimerTimeout`)
 - **Constants/Macros**: UPPER_SNAKE_CASE (`MAX_SERVICES`, `FILTER_ID`, `OUTPUT_MAX_RETRIES`)
 - **Member variables**: camelCase, no prefix (`filterSource`, `videoEncoder`, `recordingActive`)
@@ -197,6 +203,7 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - Verify that switching scene collections does not crash when the Branch Output filter is inactive or active, respectively.
 - Verify that no memory leaks are logged on OBS shutdown.
 - Verify that mutex does not cause deadlocks.
+- Verify that blanking mode does not leak video or audio unintentionally — when the source is not visible in the main output (Program) and blanking is enabled, the Branch Output must emit a black frame (no source imagery). If audio muting is also enabled, all audio tracks (including master track) must be silenced.
 
 ---
 
@@ -239,8 +246,24 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 ### Modifying the Status Dock
 
 - `BranchOutputStatusDock` in `src/UI/` is a `QFrame`-based dock widget.
-- It uses a `QTableWidget` with custom cell classes (`OutputTableCellItem`, `LabelCell`, `FilterCell`).
+- It uses a `QTableWidget` with custom cell classes (`OutputTableCellItem`, `LabelCell`, `FilterCell`, `ReplayBufferOutputCell`).
 - Thread-safe updates via `QMetaObject::invokeMethod`.
+
+### Modifying Replay Buffer
+
+- Replay buffer logic is implemented in `src/plugin-replay-buffer.cpp`.
+- `BranchOutputFilter` manages replay buffer lifecycle (`createAndStartReplayBuffer`, `stopReplayBufferOutput`, `saveReplayBuffer`).
+- Settings creation is handled by `createReplayBufferSettings()`.
+- The status dock includes `ReplayBufferOutputCell` with a save button and a global "Save All Replay Buffers" button.
+- Replay buffer can be linked to filter activation via `INTERLOCK_TYPE_REPLAY_BUFFER`.
+
+### Modifying Filter Video Capture
+
+- `FilterVideoCapture` in `src/video/` captures the filter's input via GPU `gs_texrender`.
+- It provides a private proxy source (`PROXY_SOURCE_ID: osi_branch_output_proxy`) for `obs_view` binding.
+- The proxy source renders the captured texrender texture directly on the GPU, avoiding CPU roundtrips and enabling GPU encoder compatibility.
+- Lifecycle: created/destroyed in `startOutput()` / `stopOutput()` when filter input mode (`useFilterInput`) is enabled.
+- Key methods: `captureFilterInput()` (called from `video_render`), `renderTexture()` (called from proxy source's `video_render`), `drawCapturedTexture()` (passthrough to main output).
 
 ---
 
@@ -252,3 +275,4 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - **Encoder compatibility** — The plugin maps "simple" encoder names to actual encoder IDs, with version-specific fallbacks (OBS 30 vs OBS 31). See `getSimpleVideoEncoder()` in `utils.hpp`.
 - **Memory management** — Use OBS RAII wrappers. Raw `bfree()` / `obs_data_release()` calls are error-prone.
 - **`.gitignore` uses allowlist pattern** — New top-level files/directories must be explicitly un-ignored with `!` prefix.
+- **FilterVideoCapture proxy source** — The proxy source type (`osi_branch_output_proxy`) must be registered at module load via `FilterVideoCapture::createProxySourceInfo()`. The proxy source is private and intentionally not visible in the OBS frontend.
