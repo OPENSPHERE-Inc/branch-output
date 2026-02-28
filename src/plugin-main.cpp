@@ -357,7 +357,6 @@ void BranchOutputFilter::stopOutput()
         view = nullptr;
         videoOutput = nullptr;
         useFilterInput = false;
-        blankSource = nullptr;
         blankingOutputActive = false;
         blankingAudioMuted = false;
     }
@@ -1103,22 +1102,6 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         }
 
         if (blankWhenHidden) {
-            // Pre-create blank source so that setBlankingActive() never has to
-            // allocate during a live stream.  The color_source is lightweight and
-            // cleaned up in stopOutput().
-            if (!blankSource) {
-                OBSDataAutoRelease blankSettings = obs_data_create();
-                obs_data_set_int(blankSettings, "color", 0xFF000000);
-                if (width > 0 && height > 0) {
-                    obs_data_set_int(blankSettings, "width", width);
-                    obs_data_set_int(blankSettings, "height", height);
-                }
-                blankSource = obs_source_create_private("color_source", "Branch Output Blank", blankSettings);
-                if (!blankSource) {
-                    obs_log(LOG_WARNING, "%s: Failed to pre-create blank color source", qUtf8Printable(name));
-                }
-            }
-
             bool visibleInProgram = sourceVisibleInProgram(parent);
             setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
         }
@@ -1782,14 +1765,7 @@ void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_sour
 
     if (active) {
         if (!blankingOutputActive) {
-            // blankSource is pre-created in startOutput().
-            if (blankSource) {
-                obs_view_set_source(view, 0, blankSource);
-            } else {
-                obs_log(
-                    LOG_WARNING, "%s: Blank source not available; leaving original source active", qUtf8Printable(name)
-                );
-            }
+            obs_view_set_source(view, 0, nullptr);
             if (muteAudio) {
                 setAudioCapturesActive(false);
                 blankingAudioMuted = true;
