@@ -111,8 +111,14 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
         obs_data_set_int(settings, "audio_track", trackNo);
     }
 
+    // Migrate streaming_enabled (for pre-existing filters without this key)
+    if (!obs_data_has_user_value(settings, "streaming_enabled")) {
+        bool hasAnyServer = countEnabledStreamings(settings) > 0;
+        obs_data_set_bool(settings, "streaming_enabled", hasAnyServer);
+    }
+
     // Fiter activate immediately when "server" or "stream_recording" or "replay_buffer" is exists.
-    initialized = countEnabledStreamings(settings) > 0 || obs_data_get_bool(settings, "stream_recording") ||
+    initialized = isStreamingGroupEnabled(settings) || obs_data_get_bool(settings, "stream_recording") ||
                   obs_data_get_bool(settings, "replay_buffer");
 
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
@@ -835,7 +841,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         }
 
         // Mandatory paramters
-        if (countEnabledStreamings(settings) == 0 && !obs_data_get_string(settings, "stream_recording")) {
+        if (!isStreamingGroupEnabled(settings) && !isRecordingEnabled(settings) && !isReplayBufferEnabled(settings)) {
             obs_log(LOG_ERROR, "%s: Nothing to do", qUtf8Printable(name));
             return;
         }
@@ -882,9 +888,11 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         activeSettingsRev = storedSettingsRev;
 
         //--- Create service and open streaming output ---//
-        auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
-        for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
-            streamings[i] = createSreamingOutput(settings, i);
+        if (isStreamingGroupEnabled(settings)) {
+            auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
+            for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
+                streamings[i] = createSreamingOutput(settings, i);
+            }
         }
 
         //--- Open video output ---//
@@ -1225,6 +1233,7 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
         }
 
         obs_data_erase(recently_settings, "stream_recording");
+        obs_data_erase(recently_settings, "streaming_enabled");
         obs_data_erase(recently_settings, "custom_audio_source");
         obs_data_erase(recently_settings, "multitrack_audio");
 
@@ -1252,7 +1261,7 @@ void BranchOutputFilter::restartOutput()
     }
 
     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-    if (countEnabledStreamings(settings) > 0 || isRecordingEnabled(settings) || isReplayBufferEnabled(settings)) {
+    if (isStreamingGroupEnabled(settings) || isRecordingEnabled(settings) || isReplayBufferEnabled(settings)) {
         startOutput(settings);
     }
 }
@@ -1283,6 +1292,11 @@ int BranchOutputFilter::countEnabledStreamings(obs_data_t *settings)
         }
     }
     return count;
+}
+
+bool BranchOutputFilter::isStreamingGroupEnabled(obs_data_t *settings)
+{
+    return obs_data_get_bool(settings, "streaming_enabled") && countEnabledStreamings(settings) > 0;
 }
 
 int BranchOutputFilter::countAliveStreamings()

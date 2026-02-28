@@ -155,6 +155,7 @@ class BranchOutputFilter : public QObject {
     int countAliveStreamings();
     int countActiveStreamings();
     bool hasEnabledStreamings(obs_data_t *settings);
+    bool isStreamingGroupEnabled(obs_data_t *settings);
     bool isStreamingEnabled(obs_data_t *settings, size_t index = 0);
     bool isRecordingEnabled(obs_data_t *settings);
     bool isSplitRecordingEnabled(obs_data_t *settings);
@@ -172,13 +173,15 @@ class BranchOutputFilter : public QObject {
     // Implemented in plugin-ui.cpp
     void addApplyButton(obs_properties_t *props, const char *propName = "apply");
     void addPluginInfo(obs_properties_t *props);
-    void addStreamGroup(obs_properties_t *props);
+    void addStreamingGroup(obs_properties_t *props);
+    void addRecordingGroup(obs_properties_t *props);
     void addServices(obs_properties_t *props);
     void createServiceProperties(obs_properties_t *props, size_t index, bool visible = true);
     void createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible = true);
     void addAudioGroup(obs_properties_t *props);
     void addAudioEncoderGroup(obs_properties_t *props);
     void addVideoEncoderGroup(obs_properties_t *props);
+    void addAdvancedSettingsGroup(obs_properties_t *props);
     void addReplayBufferGroup(obs_properties_t *props);
 
     // Callbacks from obs core
