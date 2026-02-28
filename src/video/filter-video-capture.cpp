@@ -68,7 +68,7 @@ obs_source_info FilterVideoCapture::createProxySourceInfo()
     obs_source_info info = {};
     info.id = PROXY_SOURCE_ID;
     info.type = OBS_SOURCE_TYPE_INPUT;
-    info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW;
+    info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_CAP_DISABLED;
     info.get_name = proxy_source_get_name;
     info.create = proxy_source_create;
     info.destroy = proxy_source_destroy;
