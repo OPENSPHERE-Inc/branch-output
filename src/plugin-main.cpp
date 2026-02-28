@@ -993,9 +993,8 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
                     );
 
                     if (blankWhenHidden && muteWhenHidden) {
-                        audioContext->capture = new MasterAudioCapture(
-                            masterTrack - 1, ai.samples_per_sec, ai.speakers, this
-                        );
+                        audioContext->capture =
+                            new MasterAudioCapture(masterTrack - 1, ai.samples_per_sec, ai.speakers, this);
                         audioContext->audio = audioContext->capture->getAudio();
                         audioContext->mixIndex = 0;
                         audioContext->name = audioContext->capture->getName();
