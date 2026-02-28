@@ -1380,7 +1380,9 @@ void BranchOutputFilter::onIntervalTimerTimeout()
         if (sourceEnabled) {
             // Clicked filter's "Eye" icon (Show)
             // Check interlock condition
-            if (interlockType == INTERLOCK_TYPE_STREAMING) {
+            if (interlockType == INTERLOCK_TYPE_ALWAYS_OFF) {
+                // Never start output
+            } else if (interlockType == INTERLOCK_TYPE_STREAMING) {
                 if (obs_frontend_streaming_active()) {
                     restartOutput();
                     return;
@@ -1397,6 +1399,11 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 }
             } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
                 if (obs_frontend_virtualcam_active()) {
+                    restartOutput();
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_REPLAY_BUFFER) {
+                if (obs_frontend_replay_buffer_active()) {
                     restartOutput();
                     return;
                 }
@@ -1421,7 +1428,11 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
 
             // Check interlock condition
-            if (interlockType == INTERLOCK_TYPE_STREAMING) {
+            if (interlockType == INTERLOCK_TYPE_ALWAYS_OFF) {
+                // Always OFF: Stop output immediately
+                onStopOutputGracefully();
+                return;
+            } else if (interlockType == INTERLOCK_TYPE_STREAMING) {
                 if (!obs_frontend_streaming_active()) {
                     // Stop output when streaming is not active
                     onStopOutputGracefully();
@@ -1442,6 +1453,12 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
                 if (!obs_frontend_virtualcam_active()) {
                     // Stop output when virtual cam is not active
+                    onStopOutputGracefully();
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_REPLAY_BUFFER) {
+                if (!obs_frontend_replay_buffer_active()) {
+                    // Stop output when replay buffer is not active
                     onStopOutputGracefully();
                     return;
                 }

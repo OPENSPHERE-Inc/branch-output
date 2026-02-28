@@ -150,7 +150,9 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     interlockComboBox->addItem(QTStr("Streaming"), BranchOutputFilter::INTERLOCK_TYPE_STREAMING);
     interlockComboBox->addItem(QTStr("Recording"), BranchOutputFilter::INTERLOCK_TYPE_RECORDING);
     interlockComboBox->addItem(QTStr("StreamingOrRecording"), BranchOutputFilter::INTERLOCK_TYPE_STREAMING_RECORDING);
+    interlockComboBox->addItem(QTStr("ReplayBuffer"), BranchOutputFilter::INTERLOCK_TYPE_REPLAY_BUFFER);
     interlockComboBox->addItem(QTStr("VirtualCam"), BranchOutputFilter::INTERLOCK_TYPE_VIRTUAL_CAM);
+    interlockComboBox->addItem(QTStr("AlwaysOff"), BranchOutputFilter::INTERLOCK_TYPE_ALWAYS_OFF);
 
     auto buttonsContainerLayout = new QHBoxLayout();
     buttonsContainerLayout->addWidget(applyToAllLabel);
