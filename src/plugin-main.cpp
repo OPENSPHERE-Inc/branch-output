@@ -358,10 +358,9 @@ void BranchOutputFilter::stopOutput()
         videoOutput = nullptr;
         useFilterInput = false;
         blankSource = nullptr;
+        blankingOutputActive = false;
+        blankingAudioMuted = false;
     }
-
-    blankingOutputActive = false;
-    blankingAudioMuted = false;
 }
 
 obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bool createFolder)
