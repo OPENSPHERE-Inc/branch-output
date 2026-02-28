@@ -993,9 +993,18 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
                         masterTrack, track, audioDest
                     );
 
-                    audioContext->mixIndex = masterTrack - 1;
-                    audioContext->audio = obs_get_audio();
-                    audioContext->name = QTStr("MasterTrack%1").arg(masterTrack);
+                    if (blankWhenHidden && muteWhenHidden) {
+                        audioContext->capture = new MasterAudioCapture(
+                            masterTrack - 1, ai.samples_per_sec, ai.speakers, this
+                        );
+                        audioContext->audio = audioContext->capture->getAudio();
+                        audioContext->mixIndex = 0;
+                        audioContext->name = audioContext->capture->getName();
+                    } else {
+                        audioContext->mixIndex = masterTrack - 1;
+                        audioContext->audio = obs_get_audio();
+                        audioContext->name = QTStr("MasterTrack%1").arg(masterTrack);
+                    }
 
                 } else if (!strcmp(audioSourceUuid, "filter")) {
                     // Filter pipline's audio

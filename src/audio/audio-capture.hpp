@@ -108,3 +108,18 @@ public:
 
     bool hasSource() { return false; }
 };
+
+// Audio capture from OBS master audio track via raw audio callback
+class MasterAudioCapture : public AudioCapture {
+    Q_OBJECT
+
+    size_t masterMixIndex;
+
+    static void masterAudioCallback(void *param, size_t mix_idx, struct audio_data *audioData);
+
+public:
+    explicit MasterAudioCapture(
+        size_t _mixIndex, uint32_t _samplesPerSec, speaker_layout _speakers, QObject *parent = nullptr
+    );
+    ~MasterAudioCapture();
+};
