@@ -17,11 +17,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include <obs-module.h>
+#include <obs-frontend-api.h>
 #include <util/platform.h>
+#include <obs.hpp>
 
 #include <QWidget>
 
 #include "utils.hpp"
+#include "plugin-support.h"
 
 // Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1871
 QString getFormatExt(const char *container)
@@ -118,4 +121,134 @@ QString getOutputFilename(const char *path, const char *container, bool noSpace,
     }
 
     return strPath;
+}
+
+// Recursively check whether a source is visible inside a scene (including nested scenes and groups)
+static bool sceneHasVisibleSource(obs_scene_t *scene, obs_source_t *target)
+{
+    if (!scene || !target) {
+        return false;
+    }
+
+    struct FindContext {
+        obs_source_t *target;
+        bool found;
+    } context = {target, false};
+
+    obs_scene_enum_items(
+        scene,
+        [](obs_scene_t *, obs_sceneitem_t *item, void *param) {
+            auto ctx = static_cast<FindContext *>(param);
+            if (ctx->found) {
+                return false;
+            }
+
+            if (!obs_sceneitem_visible(item)) {
+                return true;
+            }
+
+            obs_source_t *itemSource = obs_sceneitem_get_source(item);
+            if (itemSource == ctx->target) {
+                ctx->found = true;
+                return false;
+            }
+
+            if (obs_sceneitem_is_group(item)) {
+                obs_scene_t *groupScene = obs_sceneitem_group_get_scene(item);
+                if (sceneHasVisibleSource(groupScene, ctx->target)) {
+                    ctx->found = true;
+                    return false;
+                }
+            }
+
+            if (obs_source_get_type(itemSource) == OBS_SOURCE_TYPE_SCENE) {
+                obs_scene_t *subScene = obs_scene_from_source(itemSource);
+                if (sceneHasVisibleSource(subScene, ctx->target)) {
+                    ctx->found = true;
+                    return false;
+                }
+            }
+
+            return true;
+        },
+        &context
+    );
+
+    return context.found;
+}
+
+static bool sourceVisibleInSceneSource(obs_source_t *sceneSource, obs_source_t *target)
+{
+    if (!sceneSource || !target) {
+        return false;
+    }
+
+    if (sceneSource == target) {
+        return true;
+    }
+
+    // In Studio Mode with scene duplication enabled (the default), the Program
+    // output uses a duplicated (private) scene whose obs_source_t pointer
+    // differs from the original.  When the target itself is a scene, compare
+    // by name so that we correctly detect the duplicate as a match.
+    if (obs_source_get_type(sceneSource) == OBS_SOURCE_TYPE_SCENE &&
+        obs_source_get_type(target) == OBS_SOURCE_TYPE_SCENE) {
+        const char *sceneName = obs_source_get_name(sceneSource);
+        const char *targetName = obs_source_get_name(target);
+        if (sceneName && targetName && strcmp(sceneName, targetName) == 0) {
+            return true;
+        }
+    }
+
+    obs_scene_t *scene = obs_scene_from_source(sceneSource);
+    if (!scene) {
+        return false;
+    }
+
+    return sceneHasVisibleSource(scene, target);
+}
+
+bool sourceVisibleInProgram(obs_source_t *source)
+{
+    if (!source) {
+        return false;
+    }
+
+    // Check via the actual program output transition first.  During transitions the
+    // program output can contain both Source A and Source B — consider the source
+    // visible if it appears in either, so we don't blank incorrectly mid-transition.
+    OBSSourceAutoRelease output = obs_get_output_source(0);
+    if (output) {
+        OBSSourceAutoRelease a = obs_transition_get_source(output, OBS_TRANSITION_SOURCE_A);
+        OBSSourceAutoRelease b = obs_transition_get_source(output, OBS_TRANSITION_SOURCE_B);
+
+        if (a || b) {
+            if (sourceVisibleInSceneSource(a, source) || sourceVisibleInSceneSource(b, source)) {
+                return true;
+            }
+        } else {
+            OBSSourceAutoRelease active = obs_transition_get_active_source(output);
+            if (active) {
+                if (sourceVisibleInSceneSource(active, source)) {
+                    return true;
+                }
+            } else {
+                if (sourceVisibleInSceneSource(output, source)) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Secondary check via the frontend API.
+    //
+    // In Studio Mode with scene-duplication enabled (the default), the Program
+    // output contains a *private clone* of the scene whose obs_source_t pointer
+    // differs from the original.  The transition-based check above therefore
+    // fails for filters attached directly to a scene source.
+    //
+    // obs_frontend_get_current_scene() returns the *original* scene source even
+    // in Studio Mode, so it correctly matches the filter's parent pointer.
+    OBSSourceAutoRelease program = obs_frontend_get_current_scene();
+    return sourceVisibleInSceneSource(program, source);
 }

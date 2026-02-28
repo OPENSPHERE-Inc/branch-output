@@ -155,6 +155,7 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_string(defaults, "audio_encoder", audioEncoderId);
     obs_data_set_default_string(defaults, "video_encoder", videoEncoderId);
     obs_data_set_default_int(defaults, "audio_bitrate", audioBitrate);
+    obs_data_set_default_bool(defaults, "streaming_enabled", false);
     obs_data_set_default_bool(defaults, "stream_recording", false);
     obs_data_set_default_bool(defaults, "use_profile_recording_path", false);
     obs_data_set_default_string(defaults, "audio_source", "master_track");
@@ -183,6 +184,9 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_int(defaults, "split_file_size_mb", recSplitFileSizeMb);
     obs_data_set_default_bool(defaults, "keep_output_base_resolution", false);
     obs_data_set_default_bool(defaults, "suspend_recording_when_source_collapsed", false);
+    obs_data_set_default_bool(defaults, "blank_when_not_visible", false);
+    obs_data_set_default_bool(defaults, "mute_audio_when_blank", false);
+    obs_data_set_default_string(defaults, "video_source_type", "source");
     obs_data_set_default_string(defaults, "rec_muxer_custom", mux);
 
     auto path = getProfileRecordingPath(config);
@@ -191,6 +195,15 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     // Override filename_formatting
     auto filenameFormatting = QString("%1 %2 ") + QString(config_get_string(config, "Output", "FilenameFormatting"));
     obs_data_set_default_string(defaults, "filename_formatting", qUtf8Printable(filenameFormatting));
+
+    // Replay buffer defaults
+    obs_data_set_default_bool(defaults, "replay_buffer", false);
+    obs_data_set_default_int(defaults, "replay_buffer_duration", 20);
+    obs_data_set_default_bool(defaults, "replay_buffer_use_profile_path", false);
+    obs_data_set_default_string(defaults, "replay_buffer_path", path);
+    obs_data_set_default_string(defaults, "replay_buffer_filename_formatting", qUtf8Printable(filenameFormatting));
+    obs_data_set_default_bool(defaults, "replay_buffer_no_space_filename", fileNameWithoutSpace);
+    obs_data_set_default_string(defaults, "replay_buffer_format", recFormat);
 
     obs_log(LOG_INFO, "Default settings applied.");
 }
@@ -287,6 +300,31 @@ void BranchOutputFilter::createServiceProperties(obs_properties_t *props, size_t
     );
 }
 
+static void updateServiceVisibility(obs_properties_t *props, obs_data_t *settings)
+{
+    auto streamingEnabled = obs_data_get_bool(settings, "streaming_enabled");
+    auto count = obs_data_get_int(settings, "service_count");
+
+    for (int i = 0; i < MAX_SERVICES; i++) {
+        QString propNameFormat = getIndexedPropNameFormat(i);
+        bool visible = streamingEnabled && i < count;
+        auto useAuth = obs_data_get_bool(settings, qUtf8Printable(propNameFormat.arg("use_auth")));
+
+        obs_property_set_visible(
+            obs_properties_get(props, qUtf8Printable(propNameFormat.arg("service_group"))), visible
+        );
+        obs_property_set_visible(obs_properties_get(props, qUtf8Printable(propNameFormat.arg("server"))), visible);
+        obs_property_set_visible(obs_properties_get(props, qUtf8Printable(propNameFormat.arg("key"))), visible);
+        obs_property_set_visible(obs_properties_get(props, qUtf8Printable(propNameFormat.arg("use_auth"))), visible);
+        obs_property_set_visible(
+            obs_properties_get(props, qUtf8Printable(propNameFormat.arg("username"))), visible && useAuth
+        );
+        obs_property_set_visible(
+            obs_properties_get(props, qUtf8Printable(propNameFormat.arg("password"))), visible && useAuth
+        );
+    }
+}
+
 void BranchOutputFilter::addServices(obs_properties_t *props)
 {
     auto serviceCountList = obs_properties_add_list(
@@ -305,77 +343,60 @@ void BranchOutputFilter::addServices(obs_properties_t *props)
     obs_property_set_modified_callback2(
         serviceCountList,
         [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto count = obs_data_get_int(settings, "service_count");
-
-            for (int i = 0; i < MAX_SERVICES; i++) {
-                QString propNameFormat = getIndexedPropNameFormat(i);
-                auto useAuth = obs_data_get_bool(settings, qUtf8Printable(propNameFormat.arg("use_auth")));
-
-                obs_property_set_visible(
-                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("service_group"))), i < count
-                );
-                obs_property_set_visible(
-                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("server"))), i < count
-                );
-                obs_property_set_visible(
-                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("key"))), i < count
-                );
-                obs_property_set_visible(
-                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("use_auth"))), i < count
-                );
-                obs_property_set_visible(
-                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("username"))), useAuth && i < count
-                );
-                obs_property_set_visible(
-                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("password"))), useAuth && i < count
-                );
-            }
-
+            updateServiceVisibility(_props, settings);
             return true;
         },
         nullptr
     );
 }
 
-void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
+void BranchOutputFilter::addStreamingGroup(obs_properties_t *props)
 {
-    auto streamGroup = obs_properties_create();
+    auto streamingGroup = obs_properties_create();
+
+    // Description text shown when group is unchecked
+    obs_properties_add_text(
+        streamingGroup, "streaming_description", obs_module_text("StreamingDescription"), OBS_TEXT_INFO
+    );
 
     // Add multi services properties
-    addServices(streamGroup);
+    addServices(streamingGroup);
 
-    // Add gap line
-    obs_properties_add_text(streamGroup, "stream_recording_group", "", OBS_TEXT_INFO);
+    // Group with checkable toggle
+    auto streamingProp = obs_properties_add_group(
+        props, "streaming_enabled", obs_module_text("Streaming"), OBS_GROUP_CHECKABLE, streamingGroup
+    );
 
-    auto streamRecording = obs_properties_add_bool(streamGroup, "stream_recording", obs_module_text("StreamRecording"));
+    // Hide group contents when unchecked
+    obs_property_set_modified_callback2(
+        streamingProp,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            auto _streamingEnabled = obs_data_get_bool(settings, "streaming_enabled");
+            obs_property_set_visible(obs_properties_get(_props, "streaming_description"), !_streamingEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "service_count"), _streamingEnabled);
+            updateServiceVisibility(_props, settings);
+            obs_property_set_visible(obs_properties_get(_props, "apply1"), _streamingEnabled);
+            return true;
+        },
+        nullptr
+    );
 
-    auto streamRecordingChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-        auto _streamRecording = obs_data_get_bool(settings, "stream_recording");
-        obs_property_set_visible(obs_properties_get(_props, "use_profile_recording_path"), _streamRecording);
-        obs_property_set_visible(obs_properties_get(_props, "path"), _streamRecording);
-        obs_property_set_visible(obs_properties_get(_props, "no_space_filename"), _streamRecording);
-        obs_property_set_visible(obs_properties_get(_props, "filename_formatting"), _streamRecording);
-        obs_property_set_visible(obs_properties_get(_props, "rec_format"), _streamRecording);
-        obs_property_set_visible(obs_properties_get(_props, "split_file"), _streamRecording);
-        obs_property_set_visible(obs_properties_get(_props, "rec_muxer_custom"), _streamRecording);
-        obs_property_set_visible(
-            obs_properties_get(_props, "suspend_recording_when_source_collapsed"), _streamRecording
-        );
+    addApplyButton(props, "apply1");
+}
 
-        auto splitFile = obs_data_get_string(settings, "split_file");
-        obs_property_set_visible(
-            obs_properties_get(_props, "split_file_time_mins"), _streamRecording && !strcmp(splitFile, "by_time")
-        );
-        obs_property_set_visible(
-            obs_properties_get(_props, "split_file_size_mb"), _streamRecording && !strcmp(splitFile, "by_size")
-        );
-        return true;
-    };
-    obs_property_set_modified_callback2(streamRecording, streamRecordingChangeHandler, nullptr);
+void BranchOutputFilter::addRecordingGroup(obs_properties_t *props)
+{
+    auto recordingGroup = obs_properties_create();
 
-    //--- Recording options (initially hidden) ---//
-    auto useProfilePath =
-        obs_properties_add_bool(streamGroup, "use_profile_recording_path", obs_module_text("UseProfileRecordingPath"));
+    // Description text shown when group is unchecked
+    obs_properties_add_text(
+        recordingGroup, "recording_description", obs_module_text("RecordingDescription"), OBS_TEXT_INFO
+    );
+
+    //--- Recording options ---//
+    auto useProfilePath = obs_properties_add_bool(
+        recordingGroup, "use_profile_recording_path", obs_module_text("UseProfileRecordingPath")
+    );
 
     auto useProfilePathChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
         auto _useProfilePath = obs_data_get_bool(settings, "use_profile_recording_path");
@@ -384,16 +405,16 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     };
     obs_property_set_modified_callback2(useProfilePath, useProfilePathChangeHandler, nullptr);
 
-    obs_properties_add_path(streamGroup, "path", obs_module_text("Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
+    obs_properties_add_path(recordingGroup, "path", obs_module_text("Path"), OBS_PATH_DIRECTORY, nullptr, nullptr);
     auto filenameFormatting = obs_properties_add_text(
-        streamGroup, "filename_formatting", obs_module_text("FilenameFormatting"), OBS_TEXT_DEFAULT
+        recordingGroup, "filename_formatting", obs_module_text("FilenameFormatting"), OBS_TEXT_DEFAULT
     );
     obs_property_set_long_description(filenameFormatting, qUtf8Printable(makeFormatToolTip()));
-    obs_properties_add_bool(streamGroup, "no_space_filename", obs_module_text("NoSpaceFileName"));
+    obs_properties_add_bool(recordingGroup, "no_space_filename", obs_module_text("NoSpaceFileName"));
 
     // Only support limited formats
     auto fileFormatList = obs_properties_add_list(
-        streamGroup, "rec_format", obs_module_text("VideoFormat"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+        recordingGroup, "rec_format", obs_module_text("VideoFormat"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
     );
     obs_property_list_add_string(fileFormatList, obs_module_text("MKV"), "mkv");
     obs_property_list_add_string(fileFormatList, obs_module_text("MP4"), "mp4");
@@ -405,36 +426,190 @@ void BranchOutputFilter::addStreamGroup(obs_properties_t *props)
     obs_property_set_long_description(fileFormatList, obs_module_text("VideoFormatNote"));
 
     auto splitFileList = obs_properties_add_list(
-        streamGroup, "split_file", obs_module_text("SplitFile"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+        recordingGroup, "split_file", obs_module_text("SplitFile"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
     );
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.NoSplit"), "");
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.ByTime"), "by_time");
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.BySize"), "by_size");
     obs_property_list_add_string(splitFileList, obs_module_text("SplitFile.Manual"), "manual");
 
-    obs_property_set_modified_callback2(splitFileList, streamRecordingChangeHandler, nullptr);
+    auto splitFileChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+        auto splitFile = obs_data_get_string(settings, "split_file");
+        obs_property_set_visible(obs_properties_get(_props, "split_file_time_mins"), !strcmp(splitFile, "by_time"));
+        obs_property_set_visible(obs_properties_get(_props, "split_file_size_mb"), !strcmp(splitFile, "by_size"));
+        return true;
+    };
+    obs_property_set_modified_callback2(splitFileList, splitFileChangeHandler, nullptr);
 
-    obs_properties_add_int(streamGroup, "split_file_time_mins", obs_module_text("SplitFile.Time"), 1, 525600, 1);
-    obs_properties_add_int(streamGroup, "split_file_size_mb", obs_module_text("SplitFile.Size"), 1, 1073741824, 1);
+    obs_properties_add_int(recordingGroup, "split_file_time_mins", obs_module_text("SplitFile.Time"), 1, 525600, 1);
+    obs_properties_add_int(recordingGroup, "split_file_size_mb", obs_module_text("SplitFile.Size"), 1, 1073741824, 1);
 
     // Mux custom setting
-    obs_properties_add_text(streamGroup, "rec_muxer_custom", obs_module_text("CustomMuxerSettings"), OBS_TEXT_DEFAULT);
+    obs_properties_add_text(
+        recordingGroup, "rec_muxer_custom", obs_module_text("CustomMuxerSettings"), OBS_TEXT_DEFAULT
+    );
 
     // Pausing settings
     auto suspendRecordingWhenSourceCollapsed = obs_properties_add_bool(
-        streamGroup, "suspend_recording_when_source_collapsed", obs_module_text("SuspendRecordingWhenSourceCollapsed")
+        recordingGroup, "suspend_recording_when_source_collapsed",
+        obs_module_text("SuspendRecordingWhenSourceCollapsed")
     );
     obs_property_set_long_description(
         suspendRecordingWhenSourceCollapsed, obs_module_text("SuspendRecordingWhenSourceCollapsedNote")
     );
 
+    // Group with checkable toggle (reuse stream_recording key for backward compat)
+    auto recordingProp = obs_properties_add_group(
+        props, "stream_recording", obs_module_text("StreamRecording"), OBS_GROUP_CHECKABLE, recordingGroup
+    );
+
+    // Hide group contents when unchecked
+    obs_property_set_modified_callback2(
+        recordingProp,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            auto _recordingEnabled = obs_data_get_bool(settings, "stream_recording");
+            obs_property_set_visible(obs_properties_get(_props, "recording_description"), !_recordingEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "use_profile_recording_path"), _recordingEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "path"), _recordingEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "filename_formatting"), _recordingEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "no_space_filename"), _recordingEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "rec_format"), _recordingEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "split_file"), _recordingEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "rec_muxer_custom"), _recordingEnabled);
+            obs_property_set_visible(
+                obs_properties_get(_props, "suspend_recording_when_source_collapsed"), _recordingEnabled
+            );
+
+            auto splitFile = obs_data_get_string(settings, "split_file");
+            obs_property_set_visible(
+                obs_properties_get(_props, "split_file_time_mins"), _recordingEnabled && !strcmp(splitFile, "by_time")
+            );
+            obs_property_set_visible(
+                obs_properties_get(_props, "split_file_size_mb"), _recordingEnabled && !strcmp(splitFile, "by_size")
+            );
+            obs_property_set_visible(obs_properties_get(_props, "apply2"), _recordingEnabled);
+            return true;
+        },
+        nullptr
+    );
+
+    addApplyButton(props, "apply2");
+}
+
+void BranchOutputFilter::addAdvancedSettingsGroup(obs_properties_t *props)
+{
+    auto advancedGroup = obs_properties_create();
+
     // Source resolution trackability
     auto keepOutputBaseResolution = obs_properties_add_bool(
-        streamGroup, "keep_output_base_resolution", obs_module_text("KeepOutputBaseResolution")
+        advancedGroup, "keep_output_base_resolution", obs_module_text("KeepOutputBaseResolution")
     );
     obs_property_set_long_description(keepOutputBaseResolution, obs_module_text("KeepOutputBaseResolutionNote"));
 
-    obs_properties_add_group(props, "stream", obs_module_text("Stream"), OBS_GROUP_NORMAL, streamGroup);
+    auto blankWhenNotVisible =
+        obs_properties_add_bool(advancedGroup, "blank_when_not_visible", obs_module_text("BlankWhenNotVisible"));
+    obs_property_set_long_description(blankWhenNotVisible, obs_module_text("BlankWhenNotVisibleNote"));
+
+    auto muteAudioWhenBlank =
+        obs_properties_add_bool(advancedGroup, "mute_audio_when_blank", obs_module_text("MuteAudioWhenBlank"));
+    obs_property_set_long_description(muteAudioWhenBlank, obs_module_text("MuteAudioWhenBlankNote"));
+    obs_property_set_enabled(muteAudioWhenBlank, false);
+
+    obs_property_set_modified_callback2(
+        blankWhenNotVisible,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            bool enabled = obs_data_get_bool(settings, "blank_when_not_visible");
+            obs_property_set_enabled(obs_properties_get(_props, "mute_audio_when_blank"), enabled);
+            return true;
+        },
+        nullptr
+    );
+
+    obs_properties_add_group(
+        props, "advanced_settings", obs_module_text("AdvancedSettings"), OBS_GROUP_NORMAL, advancedGroup
+    );
+}
+
+void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
+{
+    auto replayBufferGroup = obs_properties_create();
+
+    // Description text shown when group is unchecked
+    obs_properties_add_text(
+        replayBufferGroup, "replay_buffer_description", obs_module_text("ReplayBufferDescription"), OBS_TEXT_INFO
+    );
+
+    obs_properties_add_int(
+        replayBufferGroup, "replay_buffer_duration", obs_module_text("ReplayBufferDuration"), 1, 21600, 1
+    );
+
+    //--- Replay buffer path settings ---//
+    auto rbUseProfilePath = obs_properties_add_bool(
+        replayBufferGroup, "replay_buffer_use_profile_path", obs_module_text("UseProfileRecordingPath")
+    );
+    auto rbUseProfilePathChangeHandler = [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+        auto _useProfilePath = obs_data_get_bool(settings, "replay_buffer_use_profile_path");
+        obs_property_set_enabled(obs_properties_get(_props, "replay_buffer_path"), !_useProfilePath);
+        return true;
+    };
+    obs_property_set_modified_callback2(rbUseProfilePath, rbUseProfilePathChangeHandler, nullptr);
+
+    obs_properties_add_path(
+        replayBufferGroup, "replay_buffer_path", obs_module_text("Path"), OBS_PATH_DIRECTORY, nullptr, nullptr
+    );
+    auto rbFilenameFormatting = obs_properties_add_text(
+        replayBufferGroup, "replay_buffer_filename_formatting", obs_module_text("FilenameFormatting"), OBS_TEXT_DEFAULT
+    );
+    obs_property_set_long_description(rbFilenameFormatting, qUtf8Printable(makeFormatToolTip()));
+    obs_properties_add_bool(replayBufferGroup, "replay_buffer_no_space_filename", obs_module_text("NoSpaceFileName"));
+
+    //--- Replay buffer format (replay_buffer output compatible formats only) ---//
+    auto rbFormatList = obs_properties_add_list(
+        replayBufferGroup, "replay_buffer_format", obs_module_text("VideoFormat"), OBS_COMBO_TYPE_LIST,
+        OBS_COMBO_FORMAT_STRING
+    );
+    obs_property_list_add_string(rbFormatList, obs_module_text("MKV"), "mkv");
+    obs_property_list_add_string(rbFormatList, obs_module_text("MP4"), "mp4");
+    obs_property_list_add_string(rbFormatList, obs_module_text("fMP4"), "fragmented_mp4");
+    obs_property_list_add_string(rbFormatList, obs_module_text("MOV"), "mov");
+    obs_property_list_add_string(rbFormatList, obs_module_text("fMOV"), "fragmented_mov");
+    obs_property_list_add_string(rbFormatList, obs_module_text("TS"), "mpegts");
+
+    // Hotkey registration note (shown when replay buffer is enabled)
+    auto rbHotkeyNote = obs_properties_add_text(
+        replayBufferGroup, "replay_buffer_hotkey_note", obs_module_text("ReplayBufferHotkeyNote"), OBS_TEXT_INFO
+    );
+    obs_property_set_visible(rbHotkeyNote, false);
+
+    // Group with checkable toggle
+    auto replayBufferProp = obs_properties_add_group(
+        props, "replay_buffer", obs_module_text("ReplayBuffer"), OBS_GROUP_CHECKABLE, replayBufferGroup
+    );
+
+    // Hide group contents when unchecked
+    obs_property_set_modified_callback2(
+        replayBufferProp,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            auto _replayBufferEnabled = obs_data_get_bool(settings, "replay_buffer");
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_description"), !_replayBufferEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_duration"), _replayBufferEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_use_profile_path"), _replayBufferEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_path"), _replayBufferEnabled);
+            obs_property_set_visible(
+                obs_properties_get(_props, "replay_buffer_filename_formatting"), _replayBufferEnabled
+            );
+            obs_property_set_visible(
+                obs_properties_get(_props, "replay_buffer_no_space_filename"), _replayBufferEnabled
+            );
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_format"), _replayBufferEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_hotkey_note"), _replayBufferEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "apply3"), _replayBufferEnabled);
+            return true;
+        },
+        nullptr
+    );
+
+    addApplyButton(props, "apply3");
 }
 
 void BranchOutputFilter::createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible)
@@ -520,9 +695,49 @@ void BranchOutputFilter::createAudioTrackProperties(obs_properties_t *audioGroup
     obs_property_set_visible(audioDestList, visible);
 }
 
+static void updateAudioTrackVisibility(obs_properties_t *audioProps, bool customAudio, bool multitrackAudio)
+{
+    for (size_t track = 1; track <= MAX_AUDIO_MIXES; track++) {
+        auto propNameFormat = getIndexedPropNameFormat(track, 1);
+
+        if (track > 1) {
+            obs_property_set_visible(
+                obs_properties_get(audioProps, qUtf8Printable(propNameFormat.arg("multitrack_audio_group"))),
+                customAudio && multitrackAudio
+            );
+            obs_property_set_visible(
+                obs_properties_get(audioProps, qUtf8Printable(propNameFormat.arg("audio_source"))),
+                customAudio && multitrackAudio
+            );
+            obs_property_set_visible(
+                obs_properties_get(audioProps, qUtf8Printable(propNameFormat.arg("audio_track"))),
+                customAudio && multitrackAudio
+            );
+        } else {
+            obs_property_set_visible(
+                obs_properties_get(audioProps, qUtf8Printable(propNameFormat.arg("audio_source"))), customAudio
+            );
+            obs_property_set_visible(
+                obs_properties_get(audioProps, qUtf8Printable(propNameFormat.arg("audio_track"))), customAudio
+            );
+        }
+
+        obs_property_set_visible(
+            obs_properties_get(audioProps, qUtf8Printable(propNameFormat.arg("audio_dest"))),
+            customAudio && multitrackAudio
+        );
+    }
+}
+
 void BranchOutputFilter::addAudioGroup(obs_properties_t *props)
 {
     auto audioGroup = obs_properties_create();
+
+    // Description text shown when group is unchecked
+    obs_properties_add_text(
+        audioGroup, "custom_audio_description", obs_module_text("CustomAudioSourceDescription"), OBS_TEXT_INFO
+    );
+
     createAudioTrackProperties(audioGroup, 1);
 
     auto multitrackAudio = obs_properties_add_bool(audioGroup, "multitrack_audio", obs_module_text("MultitrackAudio"));
@@ -534,29 +749,9 @@ void BranchOutputFilter::addAudioGroup(obs_properties_t *props)
     obs_property_set_modified_callback2(
         multitrackAudio,
         [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            auto customAudio = obs_data_get_bool(settings, "custom_audio_source");
             auto _multitrackAudio = obs_data_get_bool(settings, "multitrack_audio");
-
-            for (size_t track = 1; track <= MAX_AUDIO_MIXES; track++) {
-                auto propNameFormat = getIndexedPropNameFormat(track, 1);
-
-                if (track > 1) {
-                    obs_property_set_visible(
-                        obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("multitrack_audio_group"))),
-                        _multitrackAudio
-                    );
-                    obs_property_set_visible(
-                        obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("audio_source"))), _multitrackAudio
-                    );
-                    obs_property_set_visible(
-                        obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("audio_track"))), _multitrackAudio
-                    );
-                }
-
-                obs_property_set_visible(
-                    obs_properties_get(_props, qUtf8Printable(propNameFormat.arg("audio_dest"))), _multitrackAudio
-                );
-            }
-
+            updateAudioTrackVisibility(_props, customAudio, _multitrackAudio);
             return true;
         },
         nullptr
@@ -564,6 +759,36 @@ void BranchOutputFilter::addAudioGroup(obs_properties_t *props)
 
     obs_properties_add_group(
         props, "custom_audio_source", obs_module_text("CustomAudioSource"), OBS_GROUP_CHECKABLE, audioGroup
+    );
+
+    addApplyButton(props, "apply4");
+
+    // Control visibility of AudioGroup contents and apply4 based on custom_audio_source
+    auto customAudioSourceProp = obs_properties_get(props, "custom_audio_source");
+    obs_property_set_modified_callback2(
+        customAudioSourceProp,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            auto customAudio = obs_data_get_bool(settings, "custom_audio_source");
+            auto _multitrackAudio = obs_data_get_bool(settings, "multitrack_audio");
+
+            // Get group content properties
+            auto groupProp = obs_properties_get(_props, "custom_audio_source");
+            auto groupContent = obs_property_group_content(groupProp);
+
+            // Show/hide description text (inverse of customAudio)
+            obs_property_set_visible(obs_properties_get(groupContent, "custom_audio_description"), !customAudio);
+
+            // Show/hide multitrack_audio checkbox
+            obs_property_set_visible(obs_properties_get(groupContent, "multitrack_audio"), customAudio);
+
+            updateAudioTrackVisibility(groupContent, customAudio, _multitrackAudio);
+
+            // Show/hide apply4
+            obs_property_set_visible(obs_properties_get(_props, "apply4"), customAudio);
+
+            return true;
+        },
+        nullptr
     );
 }
 
@@ -669,6 +894,15 @@ void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
 void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 {
     auto videoEncoderGroup = obs_properties_create();
+
+    // Video source type selection
+    auto videoSourceType = obs_properties_add_list(
+        videoEncoderGroup, "video_source_type", obs_module_text("VideoSourceType"), OBS_COMBO_TYPE_LIST,
+        OBS_COMBO_FORMAT_STRING
+    );
+    obs_property_set_long_description(videoSourceType, obs_module_text("VideoSourceType.LongDescription"));
+    obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.Source"), "source");
+    obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.FilterInput"), "filter_input");
 
     // Resolution prop
     auto resolutionList = obs_properties_add_list(
@@ -790,10 +1024,14 @@ obs_properties_t *BranchOutputFilter::getProperties()
     auto props = obs_properties_create();
     obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
 
-    //--- "Stream" group ---//
-    addStreamGroup(props);
+    //--- "Streaming" group ---//
+    addStreamingGroup(props);
 
-    addApplyButton(props, "apply1");
+    //--- "Recording" group ---//
+    addRecordingGroup(props);
+
+    //--- "Replay Buffer" group ---//
+    addReplayBufferGroup(props);
 
     //--- "Audio" gorup ---//
     addAudioGroup(props);
@@ -804,7 +1042,10 @@ obs_properties_t *BranchOutputFilter::getProperties()
     //--- "Video Encoder" group ---//
     addVideoEncoderGroup(props);
 
-    addApplyButton(props, "apply2");
+    //--- "Advanced Settings" group ---//
+    addAdvancedSettingsGroup(props);
+
+    addApplyButton(props, "applyLast");
     addPluginInfo(props);
 
     return props;

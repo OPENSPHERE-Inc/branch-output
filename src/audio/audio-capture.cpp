@@ -18,8 +18,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs-module.h>
 
+#include <QMutexLocker>
+
 #include "audio-capture.hpp"
 #include "../plugin-support.h"
+#include "../utils.hpp"
 
 #define MAX_AUDIO_BUFFER_FRAMES 131071
 
@@ -37,7 +40,8 @@ AudioCapture::AudioCapture(
       audioBuffer({0}),
       audioBufferFrames(0),
       audioConvBuffer(nullptr),
-      audioConvBufferSize(0)
+      audioConvBufferSize(0),
+      active(true)
 {
     audio_output_info aoi = {0};
     aoi.name = _name;
@@ -51,13 +55,11 @@ AudioCapture::AudioCapture(
         audio = nullptr;
         return;
     }
-
-    active = true;
 }
 
 AudioCapture::~AudioCapture()
 {
-    active = false;
+    active.store(false);
 
     if (audio) {
         audio_output_close(audio);
@@ -69,7 +71,7 @@ AudioCapture::~AudioCapture()
 
 uint64_t AudioCapture::popAudio(uint64_t startTsIn, uint32_t mixers, audio_output_data *audioData)
 {
-    if (!active) {
+    if (!active.load()) {
         return startTsIn;
     }
 
@@ -141,7 +143,7 @@ uint64_t AudioCapture::popAudio(uint64_t startTsIn, uint32_t mixers, audio_outpu
 
 void AudioCapture::pushAudio(const audio_data *audioData)
 {
-    if (!active) {
+    if (!active.load()) {
         return;
     }
 
@@ -206,6 +208,20 @@ void AudioCapture::pushAudio(const obs_audio_data *audioData)
     pushAudio(&ad);
 }
 
+void AudioCapture::setActive(bool enable)
+{
+    active.store(enable);
+    if (!enable) {
+        QMutexLocker locker(&audioBufferMutex);
+        {
+            deque_free(&audioBuffer);
+            deque_init(&audioBuffer);
+            audioBufferFrames = 0;
+        }
+        locker.unlock();
+    }
+}
+
 // Callback from audio_output_open
 bool AudioCapture::audioCapture(
     void *param, uint64_t start_ts_in, uint64_t, uint64_t *out_ts, uint32_t mixers, audio_output_data *mixes
@@ -254,4 +270,32 @@ void SourceAudioCapture::sourceAudioCallback(void *param, obs_source_t *, const 
 
     auto sourceCapture = (SourceAudioCapture *)param;
     sourceCapture->pushAudio(audioData);
+}
+
+//--- MasterAudioCapture class ---//
+
+MasterAudioCapture::MasterAudioCapture(
+    size_t _mixIndex, uint32_t _samplesPerSec, speaker_layout _speakers, QObject *parent
+)
+    : AudioCapture(
+          qUtf8Printable(QTStr("MasterTrack%1").arg(_mixIndex + 1)), _samplesPerSec, _speakers,
+          AudioCapture::audioCapture, parent
+      ),
+      masterMixIndex(_mixIndex)
+{
+    obs_add_raw_audio_callback(masterMixIndex, nullptr, masterAudioCallback, this);
+    obs_log(LOG_INFO, "%s: Master audio capture created (mix %zu)", qUtf8Printable(getName()), masterMixIndex);
+}
+
+MasterAudioCapture::~MasterAudioCapture()
+{
+    obs_remove_raw_audio_callback(masterMixIndex, masterAudioCallback, this);
+    obs_log(LOG_DEBUG, "%s: Master audio capture destroyed.", qUtf8Printable(getName()));
+}
+
+// Callback from obs_add_raw_audio_callback
+void MasterAudioCapture::masterAudioCallback(void *param, size_t, struct audio_data *audioData)
+{
+    auto *masterCapture = static_cast<MasterAudioCapture *>(param);
+    masterCapture->pushAudio(audioData);
 }

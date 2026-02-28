@@ -29,6 +29,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
+#include "video/filter-video-capture.hpp"
 
 #define MAX_SERVICES 8
 
@@ -44,6 +45,8 @@ class BranchOutputFilter : public QObject {
         INTERLOCK_TYPE_RECORDING,
         INTERLOCK_TYPE_STREAMING_RECORDING,
         INTERLOCK_TYPE_VIRTUAL_CAM,
+        INTERLOCK_TYPE_REPLAY_BUFFER,
+        INTERLOCK_TYPE_ALWAYS_OFF = 9999,
     };
 
     struct BranchOutputAudioContext {
@@ -75,6 +78,8 @@ class BranchOutputFilter : public QObject {
     uint32_t activeSettingsRev;
     QTimer *intervalTimer;
     bool streamingStopping;
+    bool blankingOutputActive;
+    bool blankingAudioMuted;
 
     // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
@@ -88,6 +93,12 @@ class BranchOutputFilter : public QObject {
     uint32_t width;
     uint32_t height;
 
+    // Filter input mode flag
+    bool useFilterInput;
+
+    // Filter input video capture (captures filter input and provides proxy source for obs_view)
+    FilterVideoCapture *filterVideoCapture;
+
     // Audio context
     BranchOutputAudioContext audios[MAX_AUDIO_MIXES];
 
@@ -98,6 +109,11 @@ class BranchOutputFilter : public QObject {
     bool splitRecordingEnabled;
     bool addChapterToRecordingEnabled;
 
+    // Replay buffer context
+    bool replayBufferActive;
+    OBSOutputAutoRelease replayBufferOutput;
+    OBSSignal replayBufferSavedSignal;
+
     // Streaming context
     pthread_mutex_t outputMutex;
     BranchOutputStreamingContext streamings[MAX_SERVICES];
@@ -107,6 +123,7 @@ class BranchOutputFilter : public QObject {
     obs_hotkey_id splitRecordingHotkeyId;
     obs_hotkey_pair_id togglePauseRecordingHotkeyPairId;
     obs_hotkey_id addChapterToRecordingHotkeyId;
+    obs_hotkey_id saveReplayBufferHotkeyId;
 
     OBSSignal filterRenamedSignal;
 
@@ -114,12 +131,18 @@ class BranchOutputFilter : public QObject {
     void stopOutput();
     obs_data_t *createRecordingSettings(obs_data_t *settings, bool createFolder = false);
     obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
+    void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi);
     BranchOutputStreamingContext createSreamingOutput(obs_data_t *settings, size_t index = 0);
     void startStreamingOutput(size_t index = 0);
     void stopStreamingOutput(size_t index = 0);
     void createAndStartRecordingOutput(obs_data_t *settings);
     void stopRecordingOutput();
+    void createAndStartReplayBuffer(obs_data_t *settings);
+    void stopReplayBufferOutput();
+    obs_data_t *createReplayBufferSettings(obs_data_t *settings);
+    bool isReplayBufferEnabled(obs_data_t *settings);
+    bool saveReplayBuffer();
     void reconnectStreamingOutput(size_t index = 0);
     void restartRecordingOutput();
     void loadProfile(obs_data_t *settings);
@@ -131,6 +154,7 @@ class BranchOutputFilter : public QObject {
     int countAliveStreamings();
     int countActiveStreamings();
     bool hasEnabledStreamings(obs_data_t *settings);
+    bool isStreamingGroupEnabled(obs_data_t *settings);
     bool isStreamingEnabled(obs_data_t *settings, size_t index = 0);
     bool isRecordingEnabled(obs_data_t *settings);
     bool isSplitRecordingEnabled(obs_data_t *settings);
@@ -142,17 +166,22 @@ class BranchOutputFilter : public QObject {
     bool pauseRecording();
     bool unpauseRecording();
     bool addChapterToRecording(QString chapterName = QString());
+    void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
+    void setAudioCapturesActive(bool active);
 
     // Implemented in plugin-ui.cpp
     void addApplyButton(obs_properties_t *props, const char *propName = "apply");
     void addPluginInfo(obs_properties_t *props);
-    void addStreamGroup(obs_properties_t *props);
+    void addStreamingGroup(obs_properties_t *props);
+    void addRecordingGroup(obs_properties_t *props);
     void addServices(obs_properties_t *props);
     void createServiceProperties(obs_properties_t *props, size_t index, bool visible = true);
     void createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible = true);
     void addAudioGroup(obs_properties_t *props);
     void addAudioEncoderGroup(obs_properties_t *props);
     void addVideoEncoderGroup(obs_properties_t *props);
+    void addAdvancedSettingsGroup(obs_properties_t *props);
+    void addReplayBufferGroup(obs_properties_t *props);
 
     // Callbacks from obs core
     static bool onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
@@ -162,9 +191,12 @@ class BranchOutputFilter : public QObject {
     static bool onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
     static void
     onAddChapterToRecordingFileHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onReplayBufferSaved(void *data, calldata_t *cd);
 
     void addCallback(obs_source_t *source);
     void updateCallback(obs_data_t *settings);
+    void videoTickCallback(float seconds);
     void videoRenderCallback(gs_effect_t *effect);
     void destroyCallback();
     obs_properties_t *getProperties();
