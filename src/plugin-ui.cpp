@@ -476,7 +476,9 @@ void BranchOutputFilter::addRecordingGroup(obs_properties_t *props)
             obs_property_set_visible(obs_properties_get(_props, "rec_format"), _recordingEnabled);
             obs_property_set_visible(obs_properties_get(_props, "split_file"), _recordingEnabled);
             obs_property_set_visible(obs_properties_get(_props, "rec_muxer_custom"), _recordingEnabled);
-            obs_property_set_visible(obs_properties_get(_props, "suspend_recording_when_source_collapsed"), _recordingEnabled);
+            obs_property_set_visible(
+                obs_properties_get(_props, "suspend_recording_when_source_collapsed"), _recordingEnabled
+            );
 
             auto splitFile = obs_data_get_string(settings, "split_file");
             obs_property_set_visible(
@@ -593,8 +595,12 @@ void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_duration"), _replayBufferEnabled);
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_use_profile_path"), _replayBufferEnabled);
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_path"), _replayBufferEnabled);
-            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_filename_formatting"), _replayBufferEnabled);
-            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_no_space_filename"), _replayBufferEnabled);
+            obs_property_set_visible(
+                obs_properties_get(_props, "replay_buffer_filename_formatting"), _replayBufferEnabled
+            );
+            obs_property_set_visible(
+                obs_properties_get(_props, "replay_buffer_no_space_filename"), _replayBufferEnabled
+            );
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_format"), _replayBufferEnabled);
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_hotkey_note"), _replayBufferEnabled);
             obs_property_set_visible(obs_properties_get(_props, "apply3"), _replayBufferEnabled);
