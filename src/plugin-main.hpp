@@ -45,6 +45,8 @@ class BranchOutputFilter : public QObject {
         INTERLOCK_TYPE_RECORDING,
         INTERLOCK_TYPE_STREAMING_RECORDING,
         INTERLOCK_TYPE_VIRTUAL_CAM,
+        INTERLOCK_TYPE_REPLAY_BUFFER,
+        INTERLOCK_TYPE_ALWAYS_OFF = 9999,
     };
 
     struct BranchOutputAudioContext {
