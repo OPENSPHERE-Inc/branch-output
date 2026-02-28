@@ -385,10 +385,12 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     }
 
     // Streaming rows
-    auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
-    for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
-        if (filter->isStreamingEnabled(settings, i)) {
-            addRow(filter, i, ROW_OUTPUT_STREAMING, groupIndex++);
+    if (filter->isStreamingGroupEnabled(settings)) {
+        auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
+        for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
+            if (filter->isStreamingEnabled(settings, i)) {
+                addRow(filter, i, ROW_OUTPUT_STREAMING, groupIndex++);
+            }
         }
     }
 
