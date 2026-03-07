@@ -29,31 +29,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "plugin-main.hpp"
 #include "utils.hpp"
 
-void BranchOutputFilter::stopReplayBufferOutput()
-{
-    pthread_mutex_lock(&outputMutex);
-    {
-        OBSMutexAutoUnlock locked(&outputMutex);
-
-        if (replayBufferOutput) {
-            if (replayBufferActive) {
-                obs_source_t *parent = obs_filter_get_parent(filterSource);
-                if (parent) {
-                    obs_source_dec_showing(parent);
-                }
-                obs_output_stop(replayBufferOutput);
-            }
-        }
-        replayBufferSavedSignal.Disconnect();
-        replayBufferOutput = nullptr;
-
-        if (replayBufferActive) {
-            replayBufferActive = false;
-            obs_log(LOG_INFO, "%s: Stopping replay buffer succeeded", qUtf8Printable(name));
-        }
-    }
-}
-
 obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
 {
     auto replaySettings = obs_data_create();
@@ -182,6 +157,31 @@ void BranchOutputFilter::createAndStartReplayBuffer(obs_data_t *settings)
         obs_log(LOG_INFO, "%s: Starting replay buffer succeeded", qUtf8Printable(name));
     } else {
         obs_log(LOG_ERROR, "%s: Starting replay buffer failed", qUtf8Printable(name));
+    }
+}
+
+void BranchOutputFilter::stopReplayBufferOutput()
+{
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        if (replayBufferOutput) {
+            if (replayBufferActive) {
+                obs_source_t *parent = obs_filter_get_parent(filterSource);
+                if (parent) {
+                    obs_source_dec_showing(parent);
+                }
+                obs_output_stop(replayBufferOutput);
+            }
+        }
+        replayBufferSavedSignal.Disconnect();
+        replayBufferOutput = nullptr;
+
+        if (replayBufferActive) {
+            replayBufferActive = false;
+            obs_log(LOG_INFO, "%s: Stopping replay buffer succeeded", qUtf8Printable(name));
+        }
     }
 }
 
