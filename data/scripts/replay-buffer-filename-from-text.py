@@ -75,54 +75,49 @@ def update_replay_buffer_format():
     if not source_uuid or not filter_uuid:
         return
 
-    # Get text from the text source
-    text_source = obs.obs_get_source_by_uuid(text_source_uuid)
-    if not text_source:
-        return
-
-    settings = obs.obs_source_get_settings(text_source)
-    current_text = obs.obs_data_get_string(settings, "text")
-    obs.obs_data_release(settings)
-    obs.obs_source_release(text_source)
-
-    # Skip if text hasn't changed
-    if current_text == last_text:
-        return
-    last_text = current_text
-
-    # Sanitize the text for use in filenames
-    sanitized = current_text.strip()
-    for ch in ['<', '>', ':', '"', '|', '?', '*', '/', '\\']:
-        sanitized = sanitized.replace(ch, '-')
-
-    # Build the new format string
-    if sanitized:
-        new_format = f"{sanitized} {base_format}"
-    else:
-        new_format = base_format
-
-    # Get the Branch Output filter by UUID
-    video_source = obs.obs_get_source_by_uuid(source_uuid)
-    if not video_source:
-        obs.script_log(obs.LOG_WARNING, f"Video source (uuid: {source_uuid}) not found")
-        return
-
+    # Get the Branch Output filter by UUID first
     bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
     if not bo_filter:
         obs.script_log(obs.LOG_WARNING, f"Filter (uuid: {filter_uuid}) not found")
-        obs.obs_source_release(video_source)
         return
 
-    ph = obs.obs_source_get_proc_handler(bo_filter)
-    cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", new_format)
-    obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
-    obs.calldata_free(cd)
+    try:
+        # Get text from the text source
+        text_source = obs.obs_get_source_by_uuid(text_source_uuid)
+        if not text_source:
+            clear_override()
+            return
 
-    obs.obs_source_release(bo_filter)
-    obs.obs_source_release(video_source)
+        settings = obs.obs_source_get_settings(text_source)
+        current_text = obs.obs_data_get_string(settings, "text")
+        obs.obs_data_release(settings)
+        obs.obs_source_release(text_source)
 
-    obs.script_log(obs.LOG_INFO, f"Replay buffer filename format updated: {new_format}")
+        # Skip if text hasn't changed
+        if current_text == last_text:
+            return
+        last_text = current_text
+
+        # Sanitize the text for use in filenames
+        sanitized = current_text.strip()
+        for ch in ['<', '>', ':', '"', '|', '?', '*', '/', '\\']:
+            sanitized = sanitized.replace(ch, '-')
+
+        # Build the new format string
+        if sanitized:
+            new_format = f"{sanitized} {base_format}"
+        else:
+            new_format = base_format
+
+        ph = obs.obs_source_get_proc_handler(bo_filter)
+        cd = obs.calldata_create()
+        obs.calldata_set_string(cd, "format", new_format)
+        obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
+        obs.calldata_free(cd)
+
+        obs.script_log(obs.LOG_INFO, f"Replay buffer filename format updated: {new_format}")
+    finally:
+        obs.obs_source_release(bo_filter)
 
 
 def timer_callback():
