@@ -121,6 +121,12 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     initialized = isStreamingGroupEnabled(settings) || obs_data_get_bool(settings, "stream_recording") ||
                   obs_data_get_bool(settings, "replay_buffer");
 
+    // Register proc handlers for external script access
+    proc_handler_t *ph = obs_source_get_proc_handler(filterSource);
+    proc_handler_add(
+        ph, "void override_replay_buffer_filename_format(in string format)", onSetReplayBufferFilenameFormat, this
+    );
+
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
 }
 
@@ -362,6 +368,14 @@ void BranchOutputFilter::stopOutput()
     }
 }
 
+QString BranchOutputFilter::applyFilenameFormatArgs(const QString &format, bool noSpace)
+{
+    QString sourceName = obs_source_get_name(obs_filter_get_parent(filterSource));
+    QString filterName = qUtf8Printable(name);
+    auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
+    return QString(format).arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
+}
+
 obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bool createFolder)
 {
     auto recordingSettings = obs_data_create();
@@ -402,11 +416,8 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
     }
 
     // Add filter name to filename format
-    QString sourceName = obs_source_get_name(obs_filter_get_parent(filterSource));
-    QString filterName = qUtf8Printable(name);
     bool noSpace = obs_data_get_bool(settings, "no_space_filename");
-    auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
-    filenameFormat = filenameFormat.arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
+    filenameFormat = applyFilenameFormatArgs(filenameFormat, noSpace);
     auto compositePath = getOutputFilename(path, recFormat, noSpace, false, qUtf8Printable(filenameFormat));
 
     if (compositePath.isEmpty()) {
@@ -2036,11 +2047,36 @@ bool obs_module_load()
     return true;
 }
 
+static void onGetFilterList(void *, calldata_t *cd)
+{
+    OBSDataAutoRelease wrapper = obs_data_create();
+    OBSDataArrayAutoRelease array = obs_data_array_create();
+
+    if (statusDock) {
+        for (const auto &info : statusDock->getFilterList()) {
+            OBSDataAutoRelease entry = obs_data_create();
+            obs_data_set_string(entry, "source_name", qUtf8Printable(info.sourceName));
+            obs_data_set_string(entry, "source_uuid", qUtf8Printable(info.sourceUuid));
+            obs_data_set_string(entry, "filter_name", qUtf8Printable(info.filterName));
+            obs_data_set_string(entry, "filter_uuid", qUtf8Printable(info.filterUuid));
+            obs_data_array_push_back(array, entry);
+        }
+    }
+
+    obs_data_set_array(wrapper, "filters", array);
+
+    calldata_set_string(cd, "json", obs_data_get_json(wrapper));
+}
+
 void obs_module_post_load()
 {
     qRegisterMetaType<BranchOutputFilter *>();
 
     statusDock = BranchOutputFilter::createOutputStatusDock();
+
+    // Register global proc handler for script access (obs-websocket style)
+    proc_handler_t *ph = obs_get_proc_handler();
+    proc_handler_add(ph, "void osi_branch_output_get_filter_list(out string json)", onGetFilterList, nullptr);
 }
 
 void obs_module_unload()

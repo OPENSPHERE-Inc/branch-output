@@ -113,6 +113,7 @@ class BranchOutputFilter : public QObject {
     bool replayBufferActive;
     OBSOutputAutoRelease replayBufferOutput;
     OBSSignal replayBufferSavedSignal;
+    QString replayBufferFilenameFormatOverride;
 
     // Streaming context
     pthread_mutex_t outputMutex;
@@ -168,6 +169,7 @@ class BranchOutputFilter : public QObject {
     bool addChapterToRecording(QString chapterName = QString());
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
     void setAudioCapturesActive(bool active);
+    QString applyFilenameFormatArgs(const QString &format, bool noSpace);
 
     // Implemented in plugin-ui.cpp
     void addApplyButton(obs_properties_t *props, const char *propName = "apply");
@@ -193,6 +195,7 @@ class BranchOutputFilter : public QObject {
     onAddChapterToRecordingFileHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onReplayBufferSaved(void *data, calldata_t *cd);
+    static void onSetReplayBufferFilenameFormat(void *data, calldata_t *cd);
 
     void addCallback(obs_source_t *source);
     void updateCallback(obs_data_t *settings);
