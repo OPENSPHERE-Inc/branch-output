@@ -234,8 +234,7 @@ void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, callda
             // Store the override for next output start
             filter->replayBufferFilenameFormatOverride = QString(format);
             obs_log(
-                LOG_INFO, "%s: Replay buffer filename format override stored: %s", qUtf8Printable(filter->name),
-                format
+                LOG_INFO, "%s: Replay buffer filename format override stored: %s", qUtf8Printable(filter->name), format
             );
         }
 
