@@ -273,7 +273,7 @@ bool BranchOutputFilter::canAddChapterToRecording()
 
 bool BranchOutputFilter::canSplitRecording()
 {
-    return recordingActive && recordingOutput && splitRecordingEnabled && !obs_output_paused(recordingOutput);
+    return recordingActive && recordingOutput && splitRecordingEnabled;
 }
 
 bool BranchOutputFilter::splitRecording()
