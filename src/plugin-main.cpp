@@ -72,6 +72,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       toggleEnableHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
       splitRecordingHotkeyId(OBS_INVALID_HOTKEY_ID),
       splitRecordingEnabled(false),
+      recordingSettingsOverridden(false),
       replayBufferActive(false),
       saveReplayBufferHotkeyId(OBS_INVALID_HOTKEY_ID)
 {
@@ -124,10 +125,10 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     // Register proc handlers for external script access
     proc_handler_t *ph = obs_source_get_proc_handler(filterSource);
     proc_handler_add(
-        ph, "void override_replay_buffer_filename_format(in string format)", onSetReplayBufferFilenameFormat, this
+        ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat, this
     );
     proc_handler_add(
-        ph, "void override_recording_filename_format(in string format)", onSetRecordingFilenameFormat, this
+        ph, "void override_recording_filename_format(in string format)", onOverrideRecordingFilenameFormat, this
     );
 
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
@@ -299,7 +300,7 @@ void BranchOutputFilter::destroyCallback()
     obs_log(LOG_INFO, "%s: BranchOutputFilter destroyed", qUtf8Printable(name));
 }
 
-void BranchOutputFilter::stopRecordingOutput()
+void BranchOutputFilter::stopRecordingOutput(bool pending)
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -321,7 +322,8 @@ void BranchOutputFilter::stopRecordingOutput()
             obs_log(LOG_INFO, "%s: Stopping recording output succeeded", qUtf8Printable(name));
         }
 
-        recordingPending = false;
+        recordingPending = pending;
+        recordingSettingsOverridden = false;
         addChapterToRecordingEnabled = false;
         splitRecordingEnabled = false;
     }
@@ -1187,13 +1189,12 @@ void BranchOutputFilter::restartRecordingOutput()
     }
 }
 
-void BranchOutputFilter::onSetRecordingFilenameFormat(void *data, calldata_t *cd)
+void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_t *cd)
 {
     auto filter = static_cast<BranchOutputFilter *>(data);
 
     const char *format = calldata_string(cd, "format");
     bool needsSplit = false;
-    bool needsRestart = false;
 
     pthread_mutex_lock(&filter->outputMutex);
     {
@@ -1205,9 +1206,7 @@ void BranchOutputFilter::onSetRecordingFilenameFormat(void *data, calldata_t *cd
             obs_log(LOG_INFO, "%s: Recording filename format override cleared", qUtf8Printable(filter->name));
         } else {
             filter->recordingFilenameFormatOverride = QString(format);
-            obs_log(
-                LOG_INFO, "%s: Recording filename format override set to: %s", qUtf8Printable(filter->name), format
-            );
+            obs_log(LOG_INFO, "%s: Recording filename format override set to: %s", qUtf8Printable(filter->name), format);
         }
 
         // If recording is not active, just store the override for next start
@@ -1216,7 +1215,7 @@ void BranchOutputFilter::onSetRecordingFilenameFormat(void *data, calldata_t *cd
         }
 
         // Recording is active
-        if (filter->splitRecordingEnabled) {
+        if (filter->splitRecordingEnabled && !filter->recordingPending) {
             // Split file enabled: update format setting, then trigger split outside mutex
             OBSDataAutoRelease filterSettings = obs_source_get_settings(filter->filterSource);
             bool noSpace = obs_data_get_bool(filterSettings, "no_space_filename");
@@ -1233,20 +1232,18 @@ void BranchOutputFilter::onSetRecordingFilenameFormat(void *data, calldata_t *cd
 
             needsSplit = true;
             obs_log(
-                LOG_INFO, "%s: Recording output format updated: %s",
-                qUtf8Printable(filter->name), qUtf8Printable(appliedFormat)
+                LOG_INFO, "%s: Recording output format updated: %s", qUtf8Printable(filter->name),
+                qUtf8Printable(appliedFormat)
             );
         } else {
-            // No split file: restart recording with new settings (outside mutex)
-            needsRestart = true;
+            // Delegate to intervalTimer: stop (if pending) or restart
+            filter->recordingSettingsOverridden = true;
         }
     }
 
-    // Call outside mutex (both methods acquire their own lock)
+    // Split can be called directly (safe from any thread)
     if (needsSplit) {
         filter->splitRecording();
-    } else if (needsRestart) {
-        filter->restartRecordingOutput();
     }
 }
 
@@ -1627,8 +1624,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                                     "%s: The source resolution is corrupted, Attempting suspend the recording output",
                                     qUtf8Printable(name)
                                 );
-                                stopRecordingOutput();
-                                recordingPending = true;
+                                stopRecordingOutput(true);
                                 return;
                             }
                         } else {
@@ -1657,7 +1653,29 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 }
             }
 
-            if (recordingActive && !recordingAlive) {
+            if (recordingSettingsOverridden) {
+                if (recordingActive && recordingAlive && recordingOutput && obs_output_paused(recordingOutput)) {
+                    // Recording is paused and alive: keep flag, restart will be triggered on unpause
+                } else {
+                    recordingSettingsOverridden = false;
+                    if (recordingActive) {
+                        if (recordingPending) {
+                            // Recording is pending (source collapsed): stop output so it will be
+                            // re-created with new settings when the source is uncollapsed.
+                            obs_log(
+                                LOG_INFO, "%s: Stopping recording output for settings override (pending)",
+                                qUtf8Printable(name)
+                            );
+                            stopRecordingOutput(true);
+                        } else {
+                            obs_log(
+                                LOG_INFO, "%s: Restarting recording for filename format change", qUtf8Printable(name)
+                            );
+                            restartRecordingOutput();
+                        }
+                    }
+                }
+            } else if (recordingActive && !recordingAlive) {
                 // Restart recording
                 obs_log(LOG_INFO, "%s: Attempting reactivate the recording output", qUtf8Printable(name));
                 restartRecordingOutput();
@@ -1736,11 +1754,6 @@ bool BranchOutputFilter::splitRecording()
         OBSMutexAutoUnlock locked(&outputMutex);
 
         if (!splitRecordingEnabled || !recordingActive || !recordingOutput) {
-            return false;
-        }
-
-        if (obs_output_paused(recordingOutput)) {
-            // Can't split when recording was paused.
             return false;
         }
 

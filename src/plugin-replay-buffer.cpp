@@ -216,7 +216,7 @@ void BranchOutputFilter::onReplayBufferSaved(void *data, calldata_t *)
     obs_log(LOG_INFO, "%s: Replay buffer saved", qUtf8Printable(filter->name));
 }
 
-void BranchOutputFilter::onSetReplayBufferFilenameFormat(void *data, calldata_t *cd)
+void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd)
 {
     auto filter = static_cast<BranchOutputFilter *>(data);
 

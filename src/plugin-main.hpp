@@ -109,6 +109,7 @@ class BranchOutputFilter : public QObject {
     bool splitRecordingEnabled;
     bool addChapterToRecordingEnabled;
     QString recordingFilenameFormatOverride;
+    bool recordingSettingsOverridden;
 
     // Replay buffer context
     bool replayBufferActive;
@@ -139,7 +140,7 @@ class BranchOutputFilter : public QObject {
     void startStreamingOutput(size_t index = 0);
     void stopStreamingOutput(size_t index = 0);
     void createAndStartRecordingOutput(obs_data_t *settings);
-    void stopRecordingOutput();
+    void stopRecordingOutput(bool pending = false);
     void createAndStartReplayBuffer(obs_data_t *settings);
     void stopReplayBufferOutput();
     obs_data_t *createReplayBufferSettings(obs_data_t *settings);
@@ -196,8 +197,8 @@ class BranchOutputFilter : public QObject {
     onAddChapterToRecordingFileHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onReplayBufferSaved(void *data, calldata_t *cd);
-    static void onSetReplayBufferFilenameFormat(void *data, calldata_t *cd);
-    static void onSetRecordingFilenameFormat(void *data, calldata_t *cd);
+    static void onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd);
+    static void onOverrideRecordingFilenameFormat(void *data, calldata_t *cd);
 
     void addCallback(obs_source_t *source);
     void updateCallback(obs_data_t *settings);
