@@ -126,6 +126,9 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     proc_handler_add(
         ph, "void override_replay_buffer_filename_format(in string format)", onSetReplayBufferFilenameFormat, this
     );
+    proc_handler_add(
+        ph, "void override_recording_filename_format(in string format)", onSetRecordingFilenameFormat, this
+    );
 
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
 }
@@ -380,10 +383,16 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
 {
     auto recordingSettings = obs_data_create();
     auto config = obs_frontend_get_profile_config();
-    QString filenameFormat = obs_data_get_string(settings, "filename_formatting");
-    if (filenameFormat.isEmpty()) {
-        // Fallback to profile if empty
-        filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
+
+    // Recording filename format (override takes precedence)
+    QString filenameFormat;
+    if (!recordingFilenameFormatOverride.isEmpty()) {
+        filenameFormat = recordingFilenameFormatOverride;
+    } else {
+        filenameFormat = obs_data_get_string(settings, "filename_formatting");
+        if (filenameFormat.isEmpty()) {
+            filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
+        }
     }
 
     // Sanitize filename
@@ -1161,13 +1170,83 @@ void BranchOutputFilter::restartRecordingOutput()
     {
         OBSMutexAutoUnlock locked(&outputMutex);
 
-        if (recordingActive) {
+        if (recordingActive && recordingOutput) {
+            // Re-create recording settings with current override values
+            OBSDataAutoRelease filterSettings = obs_source_get_settings(filterSource);
+            OBSDataAutoRelease newSettings = createRecordingSettings(filterSettings);
+            if (newSettings) {
+                obs_output_update(recordingOutput, newSettings);
+            }
+
             obs_output_stop(recordingOutput);
 
             if (!obs_output_start(recordingOutput)) {
                 obs_log(LOG_ERROR, "%s: Restart recording output failed", qUtf8Printable(name));
             }
         }
+    }
+}
+
+void BranchOutputFilter::onSetRecordingFilenameFormat(void *data, calldata_t *cd)
+{
+    auto filter = static_cast<BranchOutputFilter *>(data);
+
+    const char *format = calldata_string(cd, "format");
+    bool needsSplit = false;
+    bool needsRestart = false;
+
+    pthread_mutex_lock(&filter->outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&filter->outputMutex);
+
+        if (!format || !format[0]) {
+            // Empty format -> clear override (revert to filter settings)
+            filter->recordingFilenameFormatOverride.clear();
+            obs_log(LOG_INFO, "%s: Recording filename format override cleared", qUtf8Printable(filter->name));
+        } else {
+            filter->recordingFilenameFormatOverride = QString(format);
+            obs_log(
+                LOG_INFO, "%s: Recording filename format override set to: %s", qUtf8Printable(filter->name), format
+            );
+        }
+
+        // If recording is not active, just store the override for next start
+        if (!filter->recordingActive || !filter->recordingOutput) {
+            return;
+        }
+
+        // Recording is active
+        if (filter->splitRecordingEnabled) {
+            // Split file enabled: update format setting, then trigger split outside mutex
+            OBSDataAutoRelease filterSettings = obs_source_get_settings(filter->filterSource);
+            bool noSpace = obs_data_get_bool(filterSettings, "no_space_filename");
+            QString appliedFormat = filter->applyFilenameFormatArgs(
+                filter->recordingFilenameFormatOverride.isEmpty()
+                    ? QString(obs_data_get_string(filterSettings, "filename_formatting"))
+                    : filter->recordingFilenameFormatOverride,
+                noSpace
+            );
+
+            OBSDataAutoRelease settings = obs_data_create();
+            obs_data_set_string(settings, "format", qUtf8Printable(appliedFormat));
+            obs_output_update(filter->recordingOutput, settings);
+
+            needsSplit = true;
+            obs_log(
+                LOG_INFO, "%s: Recording output format updated: %s",
+                qUtf8Printable(filter->name), qUtf8Printable(appliedFormat)
+            );
+        } else {
+            // No split file: restart recording with new settings (outside mutex)
+            needsRestart = true;
+        }
+    }
+
+    // Call outside mutex (both methods acquire their own lock)
+    if (needsSplit) {
+        filter->splitRecording();
+    } else if (needsRestart) {
+        filter->restartRecordingOutput();
     }
 }
 
