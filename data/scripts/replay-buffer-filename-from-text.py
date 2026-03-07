@@ -89,9 +89,25 @@ def update_replay_buffer_format():
             return
 
         settings = obs.obs_source_get_settings(text_source)
-        current_text = obs.obs_data_get_string(settings, "text")
-        obs.obs_data_release(settings)
-        obs.obs_source_release(text_source)
+        try:
+            read_from_file = obs.obs_data_get_bool(settings, "read_from_file")
+            if read_from_file:
+                file_path = obs.obs_data_get_string(settings, "file")
+                if not file_path:
+                    clear_override()
+                    return
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        current_text = f.read()
+                except (OSError, UnicodeDecodeError) as e:
+                    obs.script_log(obs.LOG_WARNING, f"Failed to read text file: {e}")
+                    clear_override()
+                    return
+            else:
+                current_text = obs.obs_data_get_string(settings, "text")
+        finally:
+            obs.obs_data_release(settings)
+            obs.obs_source_release(text_source)
 
         # Skip if text hasn't changed
         if current_text == last_text:
