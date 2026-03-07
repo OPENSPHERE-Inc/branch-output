@@ -40,6 +40,13 @@ class QPushButton;
 class BranchOutputFilter;
 class OutputTableRow;
 
+struct BranchOutputFilterInfo {
+    QString sourceName;
+    QString sourceUuid;
+    QString filterName;
+    QString filterUuid;
+};
+
 class OutputTableCellItem : public QTableWidgetItem {
     enum ItemRole {
         ValueRole = Qt::UserRole,
@@ -292,6 +299,7 @@ public slots:
     void sort();
 
     inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
+    QList<BranchOutputFilterInfo> getFilterList() const;
 };
 
 class OutputTableRow : public QObject {

@@ -31,6 +31,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHBoxLayout>
 #include <QMouseEvent>
 #include <QDesktopServices>
+#include <QSet>
 
 #include "../plugin-main.hpp"
 #include "output-status-dock.hpp"
@@ -1437,4 +1438,32 @@ void StatusCell::setTextValue(const QString &textValue)
 {
     statusText->setText(textValue);
     _item->setData(Qt::UserRole, textValue);
+}
+
+QList<BranchOutputFilterInfo> BranchOutputStatusDock::getFilterList() const
+{
+    QList<BranchOutputFilterInfo> list;
+    QSet<obs_source_t *> seen;
+
+    foreach (auto row, outputTableRows) {
+        auto filter = row->filter;
+        if (seen.contains(filter->filterSource)) {
+            continue;
+        }
+        seen.insert(filter->filterSource);
+
+        auto parent = obs_filter_get_parent(filter->filterSource);
+        if (!parent) {
+            continue;
+        }
+
+        list.append({
+            QString(obs_source_get_name(parent)),
+            QString(obs_source_get_uuid(parent)),
+            QString(obs_source_get_name(filter->filterSource)),
+            QString(obs_source_get_uuid(filter->filterSource)),
+        });
+    }
+
+    return list;
 }

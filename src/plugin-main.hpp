@@ -108,11 +108,14 @@ class BranchOutputFilter : public QObject {
     bool recordingPending; // Pending due to collapsed source resolution
     bool splitRecordingEnabled;
     bool addChapterToRecordingEnabled;
+    QString recordingFilenameFormatOverride;
+    bool recordingSettingsOverridden;
 
     // Replay buffer context
     bool replayBufferActive;
     OBSOutputAutoRelease replayBufferOutput;
     OBSSignal replayBufferSavedSignal;
+    QString replayBufferFilenameFormatOverride;
 
     // Streaming context
     pthread_mutex_t outputMutex;
@@ -129,25 +132,22 @@ class BranchOutputFilter : public QObject {
 
     void startOutput(obs_data_t *settings);
     void stopOutput();
-    obs_data_t *createRecordingSettings(obs_data_t *settings, bool createFolder = false);
-    obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
     void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi);
-    BranchOutputStreamingContext createSreamingOutput(obs_data_t *settings, size_t index = 0);
-    void startStreamingOutput(size_t index = 0);
-    void stopStreamingOutput(size_t index = 0);
-    void createAndStartRecordingOutput(obs_data_t *settings);
-    void stopRecordingOutput();
-    void createAndStartReplayBuffer(obs_data_t *settings);
-    void stopReplayBufferOutput();
-    obs_data_t *createReplayBufferSettings(obs_data_t *settings);
-    bool isReplayBufferEnabled(obs_data_t *settings);
-    bool saveReplayBuffer();
-    void reconnectStreamingOutput(size_t index = 0);
-    void restartRecordingOutput();
     void loadProfile(obs_data_t *settings);
     void loadRecently(obs_data_t *settings);
     void restartOutput();
+    void registerHotkey();
+    void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
+    void setAudioCapturesActive(bool active);
+    QString applyFilenameFormatArgs(const QString &format, bool noSpace);
+
+    // Implemented in plugin-streaming.cpp
+    obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
+    BranchOutputStreamingContext createSreamingOutput(obs_data_t *settings, size_t index = 0);
+    void startStreamingOutput(size_t index = 0);
+    void stopStreamingOutput(size_t index = 0);
+    void reconnectStreamingOutput(size_t index = 0);
     bool reconnectAttemptingTimedOut(size_t index = 0);
     bool someStreamingsStarting();
     int countEnabledStreamings(obs_data_t *settings);
@@ -156,18 +156,28 @@ class BranchOutputFilter : public QObject {
     bool hasEnabledStreamings(obs_data_t *settings);
     bool isStreamingGroupEnabled(obs_data_t *settings);
     bool isStreamingEnabled(obs_data_t *settings, size_t index = 0);
+
+    // Implemented in plugin-stream-recording.cpp
+    obs_data_t *createRecordingSettings(obs_data_t *settings, bool createFolder = false);
+    void createAndStartRecordingOutput(obs_data_t *settings);
+    void stopRecordingOutput(bool pending = false);
+    void restartRecordingOutput();
     bool isRecordingEnabled(obs_data_t *settings);
     bool isSplitRecordingEnabled(obs_data_t *settings);
     bool canPauseRecording();
     bool canAddChapterToRecording();
     bool canSplitRecording();
-    void registerHotkey();
     bool splitRecording();
     bool pauseRecording();
     bool unpauseRecording();
     bool addChapterToRecording(QString chapterName = QString());
-    void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
-    void setAudioCapturesActive(bool active);
+
+    // Implemented in plugin-replay-buffer.cpp
+    void createAndStartReplayBuffer(obs_data_t *settings);
+    void stopReplayBufferOutput();
+    obs_data_t *createReplayBufferSettings(obs_data_t *settings);
+    bool isReplayBufferEnabled(obs_data_t *settings);
+    bool saveReplayBuffer();
 
     // Implemented in plugin-ui.cpp
     void addApplyButton(obs_properties_t *props, const char *propName = "apply");
@@ -193,6 +203,8 @@ class BranchOutputFilter : public QObject {
     onAddChapterToRecordingFileHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onReplayBufferSaved(void *data, calldata_t *cd);
+    static void onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd);
+    static void onOverrideRecordingFilenameFormat(void *data, calldata_t *cd);
 
     void addCallback(obs_source_t *source);
     void updateCallback(obs_data_t *settings);
