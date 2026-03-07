@@ -276,11 +276,6 @@ int BranchOutputFilter::countEnabledStreamings(obs_data_t *settings)
     return count;
 }
 
-bool BranchOutputFilter::isStreamingGroupEnabled(obs_data_t *settings)
-{
-    return obs_data_get_bool(settings, "streaming_enabled") && countEnabledStreamings(settings) > 0;
-}
-
 int BranchOutputFilter::countAliveStreamings()
 {
     int count = 0;
@@ -311,6 +306,11 @@ bool BranchOutputFilter::hasEnabledStreamings(obs_data_t *settings)
         }
     }
     return false;
+}
+
+bool BranchOutputFilter::isStreamingGroupEnabled(obs_data_t *settings)
+{
+    return obs_data_get_bool(settings, "streaming_enabled") && countEnabledStreamings(settings) > 0;
 }
 
 bool BranchOutputFilter::isStreamingEnabled(obs_data_t *settings, size_t index)

@@ -136,295 +136,78 @@ BranchOutputFilter::~BranchOutputFilter()
     pthread_mutex_destroy(&outputMutex);
 }
 
-void BranchOutputFilter::addCallback(obs_source_t *source)
+void BranchOutputFilter::registerHotkey()
 {
-    // Do not start timer for private sources
-    // Do not register private sources to status dock
-    if (sourceIsPrivate(source)) {
-        obs_log(
-            LOG_DEBUG, "%s: Ignore adding to private source '%s'", qUtf8Printable(name), obs_source_get_name(source)
-        );
-        return;
-    }
-
-    obs_log(LOG_DEBUG, "%s: Filter adding to '%s'", qUtf8Printable(name), obs_source_get_name(source));
-
-    // Start interval timer here
-    intervalTimer = new QTimer(this);
-    intervalTimer->setInterval(TASK_INTERVAL_MS);
-    intervalTimer->start();
-    connect(intervalTimer, SIGNAL(timeout()), this, SLOT(onIntervalTimerTimeout()));
-
-    // Register to status dock
-    if (statusDock) {
-        // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
-    }
-
-    // Register hotkeys
-    registerHotkey();
-    // Track filter renames for name and hotkey settings
-    filterRenamedSignal.Connect(
-        obs_source_get_signal_handler(filterSource), "rename",
-        [](void *_data, calldata_t *cd) {
-            auto _filter = static_cast<BranchOutputFilter *>(_data);
-            _filter->name = calldata_string(cd, "new_name");
-            _filter->registerHotkey();
-        },
-        this
-    );
-
-    obs_log(LOG_INFO, "%s: Filter added to '%s'", qUtf8Printable(name), obs_source_get_name(source));
-}
-
-void BranchOutputFilter::updateCallback(obs_data_t *settings)
-{
-    auto source = obs_filter_get_parent(filterSource);
-
-    // Do not save settings for private sources
-    if (sourceIsPrivate(source)) {
-        obs_log(
-            LOG_DEBUG, "%s: Ignore updating in private source '%s'", qUtf8Printable(name), obs_source_get_name(source)
-        );
-        return;
-    }
-
-    obs_log(LOG_DEBUG, "%s: Filter updating", qUtf8Printable(name));
-
-    // It's unwelcome to do stopping output during attempting connect to service.
-    // So we just count up revision (Settings will be applied on videoTick())
-    storedSettingsRev++;
-
-    // Save settings as default
-    OBSString config_dir_path = obs_module_get_config_path(obs_current_module(), "");
-    os_mkdirs(config_dir_path);
-
-    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
-    obs_data_save_json_safe(settings, path, "tmp", "bak");
-
-    // Update status dock
-    if (statusDock) {
-        // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
-    }
-
-    obs_log(LOG_INFO, "%s: Filter updated", qUtf8Printable(name));
-}
-
-void BranchOutputFilter::videoTickCallback(float)
-{
-    // Reset capture flag at the start of each frame so that renderTexture()
-    // can detect whether captureFilterInput() was already called by the
-    // normal rendering path (scene active).  video_tick runs before
-    // output_frames in the graphics thread loop, guaranteeing correct ordering.
-    if (useFilterInput && filterVideoCapture) {
-        filterVideoCapture->resetCapturedFlag();
-    }
-}
-
-void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
-{
-    if (useFilterInput && filterVideoCapture) {
-        // Optimized filter input mode:
-        // 1. Capture upstream rendering to texrender (one render of the source tree)
-        // 2. Draw captured texture to current render target (main output passthrough)
-        //    This replaces obs_source_skip_video_filter to avoid rendering the
-        //    source tree a second time.
-        if (filterVideoCapture->captureFilterInput()) {
-            filterVideoCapture->drawCapturedTexture();
-        } else {
-            // Fallback: capture failed, pass through normally
-            obs_source_skip_video_filter(filterSource);
-        }
-    } else {
-        // Source output mode: pass through the filter chain as usual
-        obs_source_skip_video_filter(filterSource);
-    }
-}
-
-// This method possibly called in different thread from UI thread
-void BranchOutputFilter::removeCallback()
-{
-    obs_log(LOG_DEBUG, "%s: Filter removing", qUtf8Printable(name));
-
-    if (intervalTimer) {
-        // Stop interval timer (In proper thread)
-        QMetaObject::invokeMethod(intervalTimer, "stop", Qt::QueuedConnection);
-    }
-
-    // Do not call stopOutput() here as this will cause a crash.
-
-    if (statusDock) {
-        // Unregister from output status dock (In proper thread)
-        QMetaObject::invokeMethod(statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
-    }
-
-    // Unregsiter hotkeys
     if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        // Unregsiter previous
         obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
-        toggleEnableHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
     }
     if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        // Unregsiter previous
         obs_hotkey_unregister(splitRecordingHotkeyId);
-        splitRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
     if (togglePauseRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        // Unregsiter previous
         obs_hotkey_pair_unregister(togglePauseRecordingHotkeyPairId);
-        togglePauseRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
     }
     if (addChapterToRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        // Unregsiter previous
         obs_hotkey_unregister(addChapterToRecordingHotkeyId);
-        addChapterToRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
     if (saveReplayBufferHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        // Unregsiter previous
         obs_hotkey_unregister(saveReplayBufferHotkeyId);
-        saveReplayBufferHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
 
-    obs_log(LOG_INFO, "%s: Filter removed", qUtf8Printable(name));
-}
+    // Register enable/disable hotkeys
+    auto enableFilterName = QString("EnableFilter.%1").arg(obs_source_get_uuid(filterSource));
+    auto enableFilterDescription = QString(obs_module_text("EnableHotkey")).arg(name);
+    auto disableFilterName = QString("DisableFilter.%1").arg(obs_source_get_uuid(filterSource));
+    auto disableFilterDescription = QString(obs_module_text("DisableHotkey")).arg(name);
 
-void BranchOutputFilter::destroyCallback()
-{
-    obs_log(LOG_DEBUG, "%s: BranchOutputFilter destroying", qUtf8Printable(name));
+    toggleEnableHotkeyPairId = obs_hotkey_pair_register_source(
+        obs_filter_get_parent(filterSource), qUtf8Printable(enableFilterName), qUtf8Printable(enableFilterDescription),
+        qUtf8Printable(disableFilterName), qUtf8Printable(disableFilterDescription), onEnableFilterHotkeyPressed,
+        onDisableFilterHotkeyPressed, this, this
+    );
 
-    // Release all handles
-    stopOutput();
+    // Register split recording hotkey
+    auto splitName = QString("SplitRecordingFile.%1").arg(obs_source_get_uuid(filterSource));
+    auto splitDescription = QString(obs_module_text("SplitRecordingFileHotkey")).arg(name);
 
-    // Delete self in proper thread
-    deleteLater();
+    splitRecordingHotkeyId = obs_hotkey_register_source(
+        obs_filter_get_parent(filterSource), qUtf8Printable(splitName), qUtf8Printable(splitDescription),
+        onSplitRecordingFileHotkeyPressed, this
+    );
 
-    obs_log(LOG_INFO, "%s: BranchOutputFilter destroyed", qUtf8Printable(name));
-}
+    // Register pause/unpause recording hotkey
+    auto pauseRecordingName = QString("PauseRecording.%1").arg(obs_source_get_uuid(filterSource));
+    auto pauseRecordingDescription = QString(obs_module_text("PauseRecordingHotkey")).arg(name);
+    auto unpauseRecordingName = QString("UnpauseRecording.%1").arg(obs_source_get_uuid(filterSource));
+    auto unpauseRecordingDescription = QString(obs_module_text("UnpauseRecordingHotkey")).arg(name);
 
-void BranchOutputFilter::stopOutput()
-{
-    stopRecordingOutput();
-    stopReplayBufferOutput();
+    togglePauseRecordingHotkeyPairId = obs_hotkey_pair_register_source(
+        obs_filter_get_parent(filterSource), qUtf8Printable(pauseRecordingName),
+        qUtf8Printable(pauseRecordingDescription), qUtf8Printable(unpauseRecordingName),
+        qUtf8Printable(unpauseRecordingDescription), onPauseRecordingHotkeyPressed, onUnpauseRecordingHotkeyPressed,
+        this, this
+    );
 
-    pthread_mutex_lock(&outputMutex);
-    {
-        OBSMutexAutoUnlock locked(&outputMutex);
+    // Register add chapter to recording hotkey
+    auto addChapterName = QString("AddChapterToRecordingFile.%1").arg(obs_source_get_uuid(filterSource));
+    auto addChapterDescription = QString(obs_module_text("AddChapterToRecordingFileHotkey")).arg(name);
+    addChapterToRecordingHotkeyId = obs_hotkey_register_source(
+        obs_filter_get_parent(filterSource), qUtf8Printable(addChapterName), qUtf8Printable(addChapterDescription),
+        onAddChapterToRecordingFileHotkeyPressed, this
+    );
 
-        for (size_t i = 0; i < MAX_SERVICES; i++) {
-            stopStreamingOutput(i);
-        }
-
-        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-            auto audioContext = &audios[i];
-            audioContext->encoder = nullptr;
-
-            if (audioContext->capture) {
-                delete audioContext->capture;
-                audioContext->capture = nullptr;
-            }
-        }
-
-        videoEncoder = nullptr;
-
-        if (filterVideoCapture) {
-            filterVideoCapture->setActive(false);
-            delete filterVideoCapture;
-            filterVideoCapture = nullptr;
-        }
-
-        if (view) {
-            obs_view_set_source(view, 0, nullptr);
-            obs_view_remove(view);
-        }
-
-        view = nullptr;
-        videoOutput = nullptr;
-        useFilterInput = false;
-        blankingOutputActive = false;
-        blankingAudioMuted = false;
-    }
-}
-
-QString BranchOutputFilter::applyFilenameFormatArgs(const QString &format, bool noSpace)
-{
-    QString sourceName = obs_source_get_name(obs_filter_get_parent(filterSource));
-    QString filterName = qUtf8Printable(name);
-    auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
-    return QString(format).arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
-}
-
-void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHeight)
-{
-    if (useFilterInput) {
-        obs_source_t *target = obs_filter_get_target(filterSource);
-        if (target) {
-            outWidth = obs_source_get_base_width(target);
-            outHeight = obs_source_get_base_height(target);
-        } else {
-            outWidth = 0;
-            outHeight = 0;
-        }
-    } else {
-        obs_source_t *parent = obs_filter_get_parent(filterSource);
-        outWidth = obs_source_get_width(parent);
-        outHeight = obs_source_get_height(parent);
-    }
-    // Round up to a multiple of 2
-    outWidth += (outWidth & 1);
-    outHeight += (outHeight & 1);
-}
-
-void BranchOutputFilter::determineOutputResolution(obs_data_t *settings, obs_video_info *ovi)
-{
-    auto resolution = obs_data_get_string(settings, "resolution");
-    if (!strcmp(resolution, "custom")) {
-        // Custom resolution
-        ovi->output_width = (uint32_t)obs_data_get_int(settings, "custom_width");
-        ovi->output_height = (uint32_t)obs_data_get_int(settings, "custom_height");
-
-    } else if (!strcmp(resolution, "output")) {
-        // Nothing to do
-
-    } else if (!strcmp(resolution, "canvas")) {
-        // Copy canvas resolution
-        ovi->output_width = ovi->base_width;
-        ovi->output_height = ovi->base_height;
-
-    } else if (!strcmp(resolution, "three_quarters")) {
-        // Rescale source resolution
-        ovi->output_width = width * 3 / 4;
-        ovi->output_height = height * 3 / 4;
-
-    } else if (!strcmp(resolution, "half")) {
-        // Rescale source resolution
-        ovi->output_width = width / 2;
-        ovi->output_height = height / 2;
-
-    } else if (!strcmp(resolution, "quarter")) {
-        // Rescale source resolution
-        ovi->output_width = width / 4;
-        ovi->output_height = height / 4;
-
-    } else {
-        // Copy source resolution
-        ovi->output_width = width;
-        ovi->output_height = height;
-    }
-
-    // Round up to a multiple of 2
-    ovi->output_width += (ovi->output_width & 1);
-    ovi->output_height += (ovi->output_height & 1);
-
-    // Copy base resolution
-    ovi->base_width = width;
-    ovi->base_height = height;
-
-    auto downscaleFilter = obs_data_get_string(settings, "downscale_filter");
-    if (!strcmp(downscaleFilter, "bilinear")) {
-        ovi->scale_type = OBS_SCALE_BILINEAR;
-    } else if (!strcmp(downscaleFilter, "area")) {
-        ovi->scale_type = OBS_SCALE_AREA;
-    } else if (!strcmp(downscaleFilter, "bicubic")) {
-        ovi->scale_type = OBS_SCALE_BICUBIC;
-    } else if (!strcmp(downscaleFilter, "lanczos")) {
-        ovi->scale_type = OBS_SCALE_LANCZOS;
-    }
+    // Register save replay buffer hotkey
+    auto saveReplayName = QString("SaveReplayBuffer.%1").arg(obs_source_get_uuid(filterSource));
+    auto saveReplayDescription = QString(obs_module_text("SaveReplayBufferHotkey")).arg(name);
+    saveReplayBufferHotkeyId = obs_hotkey_register_source(
+        obs_filter_get_parent(filterSource), qUtf8Printable(saveReplayName), qUtf8Printable(saveReplayDescription),
+        onSaveReplayBufferHotkeyPressed, this
+    );
 }
 
 void BranchOutputFilter::startOutput(obs_data_t *settings)
@@ -830,6 +613,50 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
     obs_log(LOG_INFO, "Recently settings loaded");
 }
 
+void BranchOutputFilter::stopOutput()
+{
+    stopRecordingOutput();
+    stopReplayBufferOutput();
+
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        for (size_t i = 0; i < MAX_SERVICES; i++) {
+            stopStreamingOutput(i);
+        }
+
+        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
+            auto audioContext = &audios[i];
+            audioContext->encoder = nullptr;
+
+            if (audioContext->capture) {
+                delete audioContext->capture;
+                audioContext->capture = nullptr;
+            }
+        }
+
+        videoEncoder = nullptr;
+
+        if (filterVideoCapture) {
+            filterVideoCapture->setActive(false);
+            delete filterVideoCapture;
+            filterVideoCapture = nullptr;
+        }
+
+        if (view) {
+            obs_view_set_source(view, 0, nullptr);
+            obs_view_remove(view);
+        }
+
+        view = nullptr;
+        videoOutput = nullptr;
+        useFilterInput = false;
+        blankingOutputActive = false;
+        blankingAudioMuted = false;
+    }
+}
+
 void BranchOutputFilter::restartOutput()
 {
     if (countActiveStreamings() > 0 || recordingActive || replayBufferActive) {
@@ -839,6 +666,68 @@ void BranchOutputFilter::restartOutput()
     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
     if (isStreamingGroupEnabled(settings) || isRecordingEnabled(settings) || isReplayBufferEnabled(settings)) {
         startOutput(settings);
+    }
+}
+
+void BranchOutputFilter::setAudioCapturesActive(bool active)
+{
+    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
+        auto audioContext = &audios[i];
+        if (audioContext->capture) {
+            audioContext->capture->setActive(active);
+        }
+    }
+}
+
+void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_source_t *parent)
+{
+    if (!parent) {
+        parent = obs_filter_get_parent(filterSource);
+    }
+
+    if (!view) {
+        blankingOutputActive = false;
+        if (blankingAudioMuted) {
+            setAudioCapturesActive(true);
+            blankingAudioMuted = false;
+        }
+        return;
+    }
+
+    if (active) {
+        if (!blankingOutputActive) {
+            obs_view_set_source(view, 0, nullptr);
+            if (muteAudio) {
+                setAudioCapturesActive(false);
+                blankingAudioMuted = true;
+            } else {
+                blankingAudioMuted = false;
+            }
+            blankingOutputActive = true;
+            obs_log(LOG_INFO, "%s: Output blanked because source is not visible", qUtf8Printable(name));
+        } else {
+            if (muteAudio && !blankingAudioMuted) {
+                setAudioCapturesActive(false);
+                blankingAudioMuted = true;
+            } else if (!muteAudio && blankingAudioMuted) {
+                setAudioCapturesActive(true);
+                blankingAudioMuted = false;
+            }
+        }
+    } else {
+        if (blankingOutputActive) {
+            if (useFilterInput && filterVideoCapture) {
+                obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
+            } else if (parent) {
+                obs_view_set_source(view, 0, parent);
+            }
+            blankingOutputActive = false;
+            obs_log(LOG_INFO, "%s: Output resumed because source became visible", qUtf8Printable(name));
+        }
+        if (blankingAudioMuted) {
+            setAudioCapturesActive(true);
+            blankingAudioMuted = false;
+        }
     }
 }
 
@@ -1148,66 +1037,251 @@ void BranchOutputFilter::onStopOutputGracefully()
     stopOutput();
 }
 
-void BranchOutputFilter::setAudioCapturesActive(bool active)
+void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHeight)
 {
-    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-        auto audioContext = &audios[i];
-        if (audioContext->capture) {
-            audioContext->capture->setActive(active);
+    if (useFilterInput) {
+        obs_source_t *target = obs_filter_get_target(filterSource);
+        if (target) {
+            outWidth = obs_source_get_base_width(target);
+            outHeight = obs_source_get_base_height(target);
+        } else {
+            outWidth = 0;
+            outHeight = 0;
         }
+    } else {
+        obs_source_t *parent = obs_filter_get_parent(filterSource);
+        outWidth = obs_source_get_width(parent);
+        outHeight = obs_source_get_height(parent);
+    }
+    // Round up to a multiple of 2
+    outWidth += (outWidth & 1);
+    outHeight += (outHeight & 1);
+}
+
+void BranchOutputFilter::determineOutputResolution(obs_data_t *settings, obs_video_info *ovi)
+{
+    auto resolution = obs_data_get_string(settings, "resolution");
+    if (!strcmp(resolution, "custom")) {
+        // Custom resolution
+        ovi->output_width = (uint32_t)obs_data_get_int(settings, "custom_width");
+        ovi->output_height = (uint32_t)obs_data_get_int(settings, "custom_height");
+
+    } else if (!strcmp(resolution, "output")) {
+        // Nothing to do
+
+    } else if (!strcmp(resolution, "canvas")) {
+        // Copy canvas resolution
+        ovi->output_width = ovi->base_width;
+        ovi->output_height = ovi->base_height;
+
+    } else if (!strcmp(resolution, "three_quarters")) {
+        // Rescale source resolution
+        ovi->output_width = width * 3 / 4;
+        ovi->output_height = height * 3 / 4;
+
+    } else if (!strcmp(resolution, "half")) {
+        // Rescale source resolution
+        ovi->output_width = width / 2;
+        ovi->output_height = height / 2;
+
+    } else if (!strcmp(resolution, "quarter")) {
+        // Rescale source resolution
+        ovi->output_width = width / 4;
+        ovi->output_height = height / 4;
+
+    } else {
+        // Copy source resolution
+        ovi->output_width = width;
+        ovi->output_height = height;
+    }
+
+    // Round up to a multiple of 2
+    ovi->output_width += (ovi->output_width & 1);
+    ovi->output_height += (ovi->output_height & 1);
+
+    // Copy base resolution
+    ovi->base_width = width;
+    ovi->base_height = height;
+
+    auto downscaleFilter = obs_data_get_string(settings, "downscale_filter");
+    if (!strcmp(downscaleFilter, "bilinear")) {
+        ovi->scale_type = OBS_SCALE_BILINEAR;
+    } else if (!strcmp(downscaleFilter, "area")) {
+        ovi->scale_type = OBS_SCALE_AREA;
+    } else if (!strcmp(downscaleFilter, "bicubic")) {
+        ovi->scale_type = OBS_SCALE_BICUBIC;
+    } else if (!strcmp(downscaleFilter, "lanczos")) {
+        ovi->scale_type = OBS_SCALE_LANCZOS;
     }
 }
 
-void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_source_t *parent)
+QString BranchOutputFilter::applyFilenameFormatArgs(const QString &format, bool noSpace)
 {
-    if (!parent) {
-        parent = obs_filter_get_parent(filterSource);
-    }
+    QString sourceName = obs_source_get_name(obs_filter_get_parent(filterSource));
+    QString filterName = qUtf8Printable(name);
+    auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
+    return QString(format).arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
+}
 
-    if (!view) {
-        blankingOutputActive = false;
-        if (blankingAudioMuted) {
-            setAudioCapturesActive(true);
-            blankingAudioMuted = false;
-        }
+void BranchOutputFilter::addCallback(obs_source_t *source)
+{
+    // Do not start timer for private sources
+    // Do not register private sources to status dock
+    if (sourceIsPrivate(source)) {
+        obs_log(
+            LOG_DEBUG, "%s: Ignore adding to private source '%s'", qUtf8Printable(name), obs_source_get_name(source)
+        );
         return;
     }
 
-    if (active) {
-        if (!blankingOutputActive) {
-            obs_view_set_source(view, 0, nullptr);
-            if (muteAudio) {
-                setAudioCapturesActive(false);
-                blankingAudioMuted = true;
-            } else {
-                blankingAudioMuted = false;
-            }
-            blankingOutputActive = true;
-            obs_log(LOG_INFO, "%s: Output blanked because source is not visible", qUtf8Printable(name));
+    obs_log(LOG_DEBUG, "%s: Filter adding to '%s'", qUtf8Printable(name), obs_source_get_name(source));
+
+    // Start interval timer here
+    intervalTimer = new QTimer(this);
+    intervalTimer->setInterval(TASK_INTERVAL_MS);
+    intervalTimer->start();
+    connect(intervalTimer, SIGNAL(timeout()), this, SLOT(onIntervalTimerTimeout()));
+
+    // Register to status dock
+    if (statusDock) {
+        // Show in status dock (Thread-safe way)
+        QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+    }
+
+    // Register hotkeys
+    registerHotkey();
+    // Track filter renames for name and hotkey settings
+    filterRenamedSignal.Connect(
+        obs_source_get_signal_handler(filterSource), "rename",
+        [](void *_data, calldata_t *cd) {
+            auto _filter = static_cast<BranchOutputFilter *>(_data);
+            _filter->name = calldata_string(cd, "new_name");
+            _filter->registerHotkey();
+        },
+        this
+    );
+
+    obs_log(LOG_INFO, "%s: Filter added to '%s'", qUtf8Printable(name), obs_source_get_name(source));
+}
+
+void BranchOutputFilter::updateCallback(obs_data_t *settings)
+{
+    auto source = obs_filter_get_parent(filterSource);
+
+    // Do not save settings for private sources
+    if (sourceIsPrivate(source)) {
+        obs_log(
+            LOG_DEBUG, "%s: Ignore updating in private source '%s'", qUtf8Printable(name), obs_source_get_name(source)
+        );
+        return;
+    }
+
+    obs_log(LOG_DEBUG, "%s: Filter updating", qUtf8Printable(name));
+
+    // It's unwelcome to do stopping output during attempting connect to service.
+    // So we just count up revision (Settings will be applied on videoTick())
+    storedSettingsRev++;
+
+    // Save settings as default
+    OBSString config_dir_path = obs_module_get_config_path(obs_current_module(), "");
+    os_mkdirs(config_dir_path);
+
+    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
+    obs_data_save_json_safe(settings, path, "tmp", "bak");
+
+    // Update status dock
+    if (statusDock) {
+        // Show in status dock (Thread-safe way)
+        QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+    }
+
+    obs_log(LOG_INFO, "%s: Filter updated", qUtf8Printable(name));
+}
+
+void BranchOutputFilter::videoTickCallback(float)
+{
+    // Reset capture flag at the start of each frame so that renderTexture()
+    // can detect whether captureFilterInput() was already called by the
+    // normal rendering path (scene active).  video_tick runs before
+    // output_frames in the graphics thread loop, guaranteeing correct ordering.
+    if (useFilterInput && filterVideoCapture) {
+        filterVideoCapture->resetCapturedFlag();
+    }
+}
+
+void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
+{
+    if (useFilterInput && filterVideoCapture) {
+        // Optimized filter input mode:
+        // 1. Capture upstream rendering to texrender (one render of the source tree)
+        // 2. Draw captured texture to current render target (main output passthrough)
+        //    This replaces obs_source_skip_video_filter to avoid rendering the
+        //    source tree a second time.
+        if (filterVideoCapture->captureFilterInput()) {
+            filterVideoCapture->drawCapturedTexture();
         } else {
-            if (muteAudio && !blankingAudioMuted) {
-                setAudioCapturesActive(false);
-                blankingAudioMuted = true;
-            } else if (!muteAudio && blankingAudioMuted) {
-                setAudioCapturesActive(true);
-                blankingAudioMuted = false;
-            }
+            // Fallback: capture failed, pass through normally
+            obs_source_skip_video_filter(filterSource);
         }
     } else {
-        if (blankingOutputActive) {
-            if (useFilterInput && filterVideoCapture) {
-                obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
-            } else if (parent) {
-                obs_view_set_source(view, 0, parent);
-            }
-            blankingOutputActive = false;
-            obs_log(LOG_INFO, "%s: Output resumed because source became visible", qUtf8Printable(name));
-        }
-        if (blankingAudioMuted) {
-            setAudioCapturesActive(true);
-            blankingAudioMuted = false;
-        }
+        // Source output mode: pass through the filter chain as usual
+        obs_source_skip_video_filter(filterSource);
     }
+}
+
+// This method possibly called in different thread from UI thread
+void BranchOutputFilter::removeCallback()
+{
+    obs_log(LOG_DEBUG, "%s: Filter removing", qUtf8Printable(name));
+
+    if (intervalTimer) {
+        // Stop interval timer (In proper thread)
+        QMetaObject::invokeMethod(intervalTimer, "stop", Qt::QueuedConnection);
+    }
+
+    // Do not call stopOutput() here as this will cause a crash.
+
+    if (statusDock) {
+        // Unregister from output status dock (In proper thread)
+        QMetaObject::invokeMethod(statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+    }
+
+    // Unregsiter hotkeys
+    if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
+        toggleEnableHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
+    }
+    if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        obs_hotkey_unregister(splitRecordingHotkeyId);
+        splitRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
+    }
+    if (togglePauseRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        obs_hotkey_pair_unregister(togglePauseRecordingHotkeyPairId);
+        togglePauseRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
+    }
+    if (addChapterToRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        obs_hotkey_unregister(addChapterToRecordingHotkeyId);
+        addChapterToRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
+    }
+    if (saveReplayBufferHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        obs_hotkey_unregister(saveReplayBufferHotkeyId);
+        saveReplayBufferHotkeyId = OBS_INVALID_HOTKEY_ID;
+    }
+
+    obs_log(LOG_INFO, "%s: Filter removed", qUtf8Printable(name));
+}
+
+void BranchOutputFilter::destroyCallback()
+{
+    obs_log(LOG_DEBUG, "%s: BranchOutputFilter destroying", qUtf8Printable(name));
+
+    // Release all handles
+    stopOutput();
+
+    // Delete self in proper thread
+    deleteLater();
+
+    obs_log(LOG_INFO, "%s: BranchOutputFilter destroyed", qUtf8Printable(name));
 }
 
 bool BranchOutputFilter::onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
@@ -1286,80 +1360,6 @@ void BranchOutputFilter::onAddChapterToRecordingFileHotkeyPressed(void *data, ob
 
     BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
     filter->addChapterToRecording();
-}
-
-void BranchOutputFilter::registerHotkey()
-{
-    if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        // Unregsiter previous
-        obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
-    }
-    if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        // Unregsiter previous
-        obs_hotkey_unregister(splitRecordingHotkeyId);
-    }
-    if (togglePauseRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        // Unregsiter previous
-        obs_hotkey_pair_unregister(togglePauseRecordingHotkeyPairId);
-    }
-    if (addChapterToRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        // Unregsiter previous
-        obs_hotkey_unregister(addChapterToRecordingHotkeyId);
-    }
-    if (saveReplayBufferHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        // Unregsiter previous
-        obs_hotkey_unregister(saveReplayBufferHotkeyId);
-    }
-
-    // Register enable/disable hotkeys
-    auto enableFilterName = QString("EnableFilter.%1").arg(obs_source_get_uuid(filterSource));
-    auto enableFilterDescription = QString(obs_module_text("EnableHotkey")).arg(name);
-    auto disableFilterName = QString("DisableFilter.%1").arg(obs_source_get_uuid(filterSource));
-    auto disableFilterDescription = QString(obs_module_text("DisableHotkey")).arg(name);
-
-    toggleEnableHotkeyPairId = obs_hotkey_pair_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(enableFilterName), qUtf8Printable(enableFilterDescription),
-        qUtf8Printable(disableFilterName), qUtf8Printable(disableFilterDescription), onEnableFilterHotkeyPressed,
-        onDisableFilterHotkeyPressed, this, this
-    );
-
-    // Register split recording hotkey
-    auto splitName = QString("SplitRecordingFile.%1").arg(obs_source_get_uuid(filterSource));
-    auto splitDescription = QString(obs_module_text("SplitRecordingFileHotkey")).arg(name);
-
-    splitRecordingHotkeyId = obs_hotkey_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(splitName), qUtf8Printable(splitDescription),
-        onSplitRecordingFileHotkeyPressed, this
-    );
-
-    // Register pause/unpause recording hotkey
-    auto pauseRecordingName = QString("PauseRecording.%1").arg(obs_source_get_uuid(filterSource));
-    auto pauseRecordingDescription = QString(obs_module_text("PauseRecordingHotkey")).arg(name);
-    auto unpauseRecordingName = QString("UnpauseRecording.%1").arg(obs_source_get_uuid(filterSource));
-    auto unpauseRecordingDescription = QString(obs_module_text("UnpauseRecordingHotkey")).arg(name);
-
-    togglePauseRecordingHotkeyPairId = obs_hotkey_pair_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(pauseRecordingName),
-        qUtf8Printable(pauseRecordingDescription), qUtf8Printable(unpauseRecordingName),
-        qUtf8Printable(unpauseRecordingDescription), onPauseRecordingHotkeyPressed, onUnpauseRecordingHotkeyPressed,
-        this, this
-    );
-
-    // Register add chapter to recording hotkey
-    auto addChapterName = QString("AddChapterToRecordingFile.%1").arg(obs_source_get_uuid(filterSource));
-    auto addChapterDescription = QString(obs_module_text("AddChapterToRecordingFileHotkey")).arg(name);
-    addChapterToRecordingHotkeyId = obs_hotkey_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(addChapterName), qUtf8Printable(addChapterDescription),
-        onAddChapterToRecordingFileHotkeyPressed, this
-    );
-
-    // Register save replay buffer hotkey
-    auto saveReplayName = QString("SaveReplayBuffer.%1").arg(obs_source_get_uuid(filterSource));
-    auto saveReplayDescription = QString(obs_module_text("SaveReplayBufferHotkey")).arg(name);
-    saveReplayBufferHotkeyId = obs_hotkey_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(saveReplayName), qUtf8Printable(saveReplayDescription),
-        onSaveReplayBufferHotkeyPressed, this
-    );
 }
 
 // Callback from filter audio
