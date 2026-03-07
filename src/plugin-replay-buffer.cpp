@@ -79,10 +79,15 @@ obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
         return nullptr;
     }
 
-    // Replay buffer specific filename format
-    QString filenameFormat = obs_data_get_string(settings, "replay_buffer_filename_formatting");
-    if (filenameFormat.isEmpty()) {
-        filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
+    // Replay buffer specific filename format (override takes precedence)
+    QString filenameFormat;
+    if (!replayBufferFilenameFormatOverride.isEmpty()) {
+        filenameFormat = replayBufferFilenameFormatOverride;
+    } else {
+        filenameFormat = obs_data_get_string(settings, "replay_buffer_filename_formatting");
+        if (filenameFormat.isEmpty()) {
+            filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
+        }
     }
 
     // Sanitize filename
@@ -94,11 +99,8 @@ obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
     // TODO: Add filtering for other platforms
 #endif
 
-    QString sourceName = obs_source_get_name(obs_filter_get_parent(filterSource));
-    QString filterName = qUtf8Printable(name);
     bool noSpace = obs_data_get_bool(settings, "replay_buffer_no_space_filename");
-    auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
-    filenameFormat = filenameFormat.arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
+    filenameFormat = applyFilenameFormatArgs(filenameFormat, noSpace);
 
     obs_data_set_string(replaySettings, "directory", path);
     obs_data_set_string(replaySettings, "format", qUtf8Printable(filenameFormat));
@@ -212,6 +214,59 @@ void BranchOutputFilter::onReplayBufferSaved(void *data, calldata_t *)
 {
     auto filter = static_cast<BranchOutputFilter *>(data);
     obs_log(LOG_INFO, "%s: Replay buffer saved", qUtf8Printable(filter->name));
+}
+
+void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd)
+{
+    auto filter = static_cast<BranchOutputFilter *>(data);
+
+    const char *format = calldata_string(cd, "format");
+
+    pthread_mutex_lock(&filter->outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&filter->outputMutex);
+
+        if (!format || !format[0]) {
+            // Empty format -> clear override (revert to filter settings)
+            filter->replayBufferFilenameFormatOverride.clear();
+            obs_log(LOG_INFO, "%s: Replay buffer filename format override cleared", qUtf8Printable(filter->name));
+        } else {
+            // Store the override for next output start
+            filter->replayBufferFilenameFormatOverride = QString(format);
+            obs_log(
+                LOG_INFO, "%s: Replay buffer filename format override stored: %s", qUtf8Printable(filter->name), format
+            );
+        }
+
+        if (filter->replayBufferActive && filter->replayBufferOutput) {
+            // Apply immediately to active replay buffer
+            OBSDataAutoRelease filterSettings = obs_source_get_settings(filter->filterSource);
+
+            // Determine the effective format
+            QString effectiveFormat;
+            if (!filter->replayBufferFilenameFormatOverride.isEmpty()) {
+                effectiveFormat = filter->replayBufferFilenameFormatOverride;
+            } else {
+                effectiveFormat = obs_data_get_string(filterSettings, "replay_buffer_filename_formatting");
+                if (effectiveFormat.isEmpty()) {
+                    auto config = obs_frontend_get_profile_config();
+                    effectiveFormat = config_get_string(config, "Output", "FilenameFormatting");
+                }
+            }
+
+            bool noSpace = obs_data_get_bool(filterSettings, "replay_buffer_no_space_filename");
+            QString appliedFormat = filter->applyFilenameFormatArgs(effectiveFormat, noSpace);
+
+            OBSDataAutoRelease settings = obs_data_create();
+            obs_data_set_string(settings, "format", qUtf8Printable(appliedFormat));
+            obs_output_update(filter->replayBufferOutput, settings);
+
+            obs_log(
+                LOG_INFO, "%s: Replay buffer filename format changed to: %s", qUtf8Printable(filter->name),
+                qUtf8Printable(appliedFormat)
+            );
+        }
+    }
 }
 
 void BranchOutputFilter::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
