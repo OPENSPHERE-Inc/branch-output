@@ -36,6 +36,8 @@ More reliable and proper audio handling.
 - Filter input mode to capture and output video from the filter chain (Experimental, Since 1.0.8)
 - Blanking and muting when the source is not visible in the program output (Since 1.0.8)
 - Per-profile Status Dock settings (Since 1.0.8)
+- Proc handler to override recording save file name format from scripts (Since 1.0.9)
+- Proc handler to override replay buffer save file name format from scripts (Since 1.0.9)
 - Various hotkeys
   - Enable/Disable the filter
   - Manual recording splitting, Pause/Unpause, Adding chapters (Since 1.0.5)
