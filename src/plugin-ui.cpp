@@ -187,6 +187,7 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_bool(defaults, "blank_when_not_visible", false);
     obs_data_set_default_bool(defaults, "mute_audio_when_blank", false);
     obs_data_set_default_string(defaults, "video_source_type", "source");
+    obs_data_set_default_int(defaults, "fps_divider", 1);
     obs_data_set_default_string(defaults, "rec_muxer_custom", mux);
 
     auto path = getProfileRecordingPath(config);
@@ -951,6 +952,18 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Area"), "area");
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Bicubic"), "bicubic");
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Lanczos"), "lanczos");
+
+    // "Frame Rate Divider" prop
+    auto fpsDividerList = obs_properties_add_list(
+        videoEncoderGroup, "fps_divider", obs_module_text("FpsDiv"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT
+    );
+    obs_property_set_long_description(fpsDividerList, obs_module_text("FpsDiv.LongDescription"));
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.None"), 1);
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.Half"), 2);
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.Third"), 3);
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.Quarter"), 4);
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.Fifth"), 5);
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.Sixth"), 6);
 
     // "Video Encoder" prop
     auto videoEncoderList = obs_properties_add_list(
