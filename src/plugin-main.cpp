@@ -66,6 +66,11 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       filterVideoCapture(nullptr),
       width(0),
       height(0),
+      cropLeft(0),
+      cropTop(0),
+      cropWidth(0),
+      cropHeight(0),
+      cropScene(nullptr),
       toggleEnableHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
       splitRecordingHotkeyId(OBS_INVALID_HOTKEY_ID),
       splitRecordingEnabled(false),
@@ -275,6 +280,17 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             height = ovi.base_height;
         }
 
+        calculateCrop(settings);
+
+        // Treat 0x0 crop result as source collapse
+        if (cropWidth == 0 || cropHeight == 0) {
+            auto cropType = obs_data_get_string(settings, "crop_type");
+            if (cropType && strcmp(cropType, "none")) {
+                obs_log(LOG_WARNING, "%s: Crop result is 0x0, treating as collapsed", qUtf8Printable(name));
+                width = height = 0;
+            }
+        }
+
         determineOutputResolution(settings, &ovi);
 
         if (ovi.output_width == 0 || ovi.output_height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
@@ -308,6 +324,10 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
                 return;
             }
 
+            if (cropWidth > 0 && cropHeight > 0) {
+                filterVideoCapture->setCrop(cropLeft, cropTop, cropWidth, cropHeight);
+            }
+
             view = obs_view_create();
             obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
 
@@ -322,7 +342,22 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         } else {
             // Source output mode (default): use obs_view for the parent source
             view = obs_view_create();
-            obs_view_set_source(view, 0, parent);
+
+            if (cropWidth > 0 && cropHeight > 0) {
+                cropScene = obs_scene_create_private("branch_output_crop");
+                obs_sceneitem_t *item = obs_scene_add(cropScene, parent);
+
+                struct obs_sceneitem_crop itemCrop;
+                itemCrop.left = (int)cropLeft;
+                itemCrop.top = (int)cropTop;
+                itemCrop.right = (int)(width - cropLeft - cropWidth);
+                itemCrop.bottom = (int)(height - cropTop - cropHeight);
+                obs_sceneitem_set_crop(item, &itemCrop);
+
+                obs_view_set_source(view, 0, obs_scene_get_source(cropScene));
+            } else {
+                obs_view_set_source(view, 0, parent);
+            }
 
             videoOutput = obs_view_add2(view, &ovi);
             if (!videoOutput) {
@@ -678,6 +713,11 @@ void BranchOutputFilter::stopOutput()
             filterVideoCapture = nullptr;
         }
 
+        if (cropScene) {
+            obs_scene_release(cropScene);
+            cropScene = nullptr;
+        }
+
         if (view) {
             obs_view_set_source(view, 0, nullptr);
             obs_view_remove(view);
@@ -752,6 +792,8 @@ void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_sour
         if (blankingOutputActive) {
             if (useFilterInput && filterVideoCapture) {
                 obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
+            } else if (cropScene) {
+                obs_view_set_source(view, 0, obs_scene_get_source(cropScene));
             } else if (parent) {
                 obs_view_set_source(view, 0, parent);
             }
@@ -1071,6 +1113,61 @@ void BranchOutputFilter::onStopOutputGracefully()
     stopOutput();
 }
 
+void BranchOutputFilter::calculateCrop(obs_data_t *settings)
+{
+    auto cropType = obs_data_get_string(settings, "crop_type");
+
+    if (!cropType || !strcmp(cropType, "none")) {
+        cropLeft = cropTop = cropWidth = cropHeight = 0;
+        return;
+    }
+
+    if (!strcmp(cropType, "relative")) {
+        auto top = (uint32_t)obs_data_get_int(settings, "crop_rel_top");
+        auto right = (uint32_t)obs_data_get_int(settings, "crop_rel_right");
+        auto bottom = (uint32_t)obs_data_get_int(settings, "crop_rel_bottom");
+        auto left = (uint32_t)obs_data_get_int(settings, "crop_rel_left");
+
+        if (left + right >= width || top + bottom >= height) {
+            cropLeft = cropTop = 0;
+            cropWidth = cropHeight = 0;
+            return;
+        }
+
+        cropLeft = left;
+        cropTop = top;
+        cropWidth = width - left - right;
+        cropHeight = height - top - bottom;
+
+    } else if (!strcmp(cropType, "absolute")) {
+        auto x = (uint32_t)obs_data_get_int(settings, "crop_abs_x");
+        auto y = (uint32_t)obs_data_get_int(settings, "crop_abs_y");
+        auto w = (uint32_t)obs_data_get_int(settings, "crop_abs_width");
+        auto h = (uint32_t)obs_data_get_int(settings, "crop_abs_height");
+
+        if (x >= width || y >= height) {
+            cropLeft = cropTop = 0;
+            cropWidth = cropHeight = 0;
+            return;
+        }
+
+        cropLeft = x;
+        cropTop = y;
+        cropWidth = (x + w > width) ? (width - x) : w;
+        cropHeight = (y + h > height) ? (height - y) : h;
+
+    } else {
+        cropLeft = cropTop = cropWidth = cropHeight = 0;
+        return;
+    }
+
+    // Round to multiples of 2 (encoder requirement)
+    cropLeft += (cropLeft & 1);
+    cropTop += (cropTop & 1);
+    cropWidth &= ~1u;
+    cropHeight &= ~1u;
+}
+
 void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHeight)
 {
     if (useFilterInput) {
@@ -1094,6 +1191,10 @@ void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHe
 
 void BranchOutputFilter::determineOutputResolution(obs_data_t *settings, obs_video_info *ovi)
 {
+    // Use cropped dimensions if crop is active
+    uint32_t baseWidth = (cropWidth > 0) ? cropWidth : width;
+    uint32_t baseHeight = (cropHeight > 0) ? cropHeight : height;
+
     auto resolution = obs_data_get_string(settings, "resolution");
     if (!strcmp(resolution, "custom")) {
         // Custom resolution
@@ -1110,23 +1211,23 @@ void BranchOutputFilter::determineOutputResolution(obs_data_t *settings, obs_vid
 
     } else if (!strcmp(resolution, "three_quarters")) {
         // Rescale source resolution
-        ovi->output_width = width * 3 / 4;
-        ovi->output_height = height * 3 / 4;
+        ovi->output_width = baseWidth * 3 / 4;
+        ovi->output_height = baseHeight * 3 / 4;
 
     } else if (!strcmp(resolution, "half")) {
         // Rescale source resolution
-        ovi->output_width = width / 2;
-        ovi->output_height = height / 2;
+        ovi->output_width = baseWidth / 2;
+        ovi->output_height = baseHeight / 2;
 
     } else if (!strcmp(resolution, "quarter")) {
         // Rescale source resolution
-        ovi->output_width = width / 4;
-        ovi->output_height = height / 4;
+        ovi->output_width = baseWidth / 4;
+        ovi->output_height = baseHeight / 4;
 
     } else {
         // Copy source resolution
-        ovi->output_width = width;
-        ovi->output_height = height;
+        ovi->output_width = baseWidth;
+        ovi->output_height = baseHeight;
     }
 
     // Round up to a multiple of 2
@@ -1134,8 +1235,8 @@ void BranchOutputFilter::determineOutputResolution(obs_data_t *settings, obs_vid
     ovi->output_height += (ovi->output_height & 1);
 
     // Copy base resolution
-    ovi->base_width = width;
-    ovi->base_height = height;
+    ovi->base_width = baseWidth;
+    ovi->base_height = baseHeight;
 
     auto downscaleFilter = obs_data_get_string(settings, "downscale_filter");
     if (!strcmp(downscaleFilter, "bilinear")) {

@@ -187,6 +187,15 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_bool(defaults, "blank_when_not_visible", false);
     obs_data_set_default_bool(defaults, "mute_audio_when_blank", false);
     obs_data_set_default_string(defaults, "video_source_type", "source");
+    obs_data_set_default_string(defaults, "crop_type", "none");
+    obs_data_set_default_int(defaults, "crop_rel_top", 0);
+    obs_data_set_default_int(defaults, "crop_rel_right", 0);
+    obs_data_set_default_int(defaults, "crop_rel_bottom", 0);
+    obs_data_set_default_int(defaults, "crop_rel_left", 0);
+    obs_data_set_default_int(defaults, "crop_abs_x", 0);
+    obs_data_set_default_int(defaults, "crop_abs_y", 0);
+    obs_data_set_default_int(defaults, "crop_abs_width", 0);
+    obs_data_set_default_int(defaults, "crop_abs_height", 0);
     obs_data_set_default_int(defaults, "fps_divider", 1);
     obs_data_set_default_string(defaults, "rec_muxer_custom", mux);
 
@@ -904,6 +913,52 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_set_long_description(videoSourceType, obs_module_text("VideoSourceType.LongDescription"));
     obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.Source"), "source");
     obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.FilterInput"), "filter_input");
+
+    // Cropping prop
+    auto croppingList = obs_properties_add_list(
+        videoEncoderGroup, "crop_type", obs_module_text("Cropping"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+    );
+    obs_property_list_add_string(croppingList, obs_module_text("Cropping.None"), "none");
+    obs_property_list_add_string(croppingList, obs_module_text("Cropping.Relative"), "relative");
+    obs_property_list_add_string(croppingList, obs_module_text("Cropping.Absolute"), "absolute");
+
+    obs_property_set_modified_callback2(
+        croppingList,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            auto cropType = obs_data_get_string(settings, "crop_type");
+
+            auto _cropRelativeGroup = obs_properties_get(_props, "crop_relative_group");
+            obs_property_set_visible(_cropRelativeGroup, !strcmp(cropType, "relative"));
+
+            auto _cropAbsoluteGroup = obs_properties_get(_props, "crop_absolute_group");
+            obs_property_set_visible(_cropAbsoluteGroup, !strcmp(cropType, "absolute"));
+
+            return true;
+        },
+        nullptr
+    );
+
+    // Relative crop group
+    auto cropRelativeGroup = obs_properties_create();
+    obs_properties_add_int(cropRelativeGroup, "crop_rel_top", obs_module_text("CropRelative.Top"), 0, 8192, 2);
+    obs_properties_add_int(cropRelativeGroup, "crop_rel_right", obs_module_text("CropRelative.Right"), 0, 8192, 2);
+    obs_properties_add_int(cropRelativeGroup, "crop_rel_bottom", obs_module_text("CropRelative.Bottom"), 0, 8192, 2);
+    obs_properties_add_int(cropRelativeGroup, "crop_rel_left", obs_module_text("CropRelative.Left"), 0, 8192, 2);
+
+    obs_properties_add_group(
+        videoEncoderGroup, "crop_relative_group", obs_module_text("CropRelative"), OBS_GROUP_NORMAL, cropRelativeGroup
+    );
+
+    // Absolute crop group
+    auto cropAbsoluteGroup = obs_properties_create();
+    obs_properties_add_int(cropAbsoluteGroup, "crop_abs_x", obs_module_text("CropAbsolute.X"), 0, 8192, 2);
+    obs_properties_add_int(cropAbsoluteGroup, "crop_abs_y", obs_module_text("CropAbsolute.Y"), 0, 8192, 2);
+    obs_properties_add_int(cropAbsoluteGroup, "crop_abs_width", obs_module_text("CropAbsolute.Width"), 0, 8192, 2);
+    obs_properties_add_int(cropAbsoluteGroup, "crop_abs_height", obs_module_text("CropAbsolute.Height"), 0, 8192, 2);
+
+    obs_properties_add_group(
+        videoEncoderGroup, "crop_absolute_group", obs_module_text("CropAbsolute"), OBS_GROUP_NORMAL, cropAbsoluteGroup
+    );
 
     // Resolution prop
     auto resolutionList = obs_properties_add_list(
