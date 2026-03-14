@@ -93,6 +93,13 @@ class BranchOutputFilter : public QObject {
     uint32_t width;
     uint32_t height;
 
+    // Crop context
+    uint32_t cropLeft;
+    uint32_t cropTop;
+    uint32_t cropWidth;     // 0 = no crop
+    uint32_t cropHeight;    // 0 = no crop
+    obs_scene_t *cropScene; // Source output mode crop scene
+
     // Filter input mode flag
     bool useFilterInput;
 
@@ -140,6 +147,7 @@ class BranchOutputFilter : public QObject {
     void registerHotkey();
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
     void setAudioCapturesActive(bool active);
+    void calculateCrop(obs_data_t *settings);
     QString applyFilenameFormatArgs(const QString &format, bool noSpace);
 
     // Implemented in plugin-streaming.cpp

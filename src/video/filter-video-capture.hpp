@@ -62,6 +62,13 @@ class FilterVideoCapture {
     uint32_t captureWidth;
     uint32_t captureHeight;
 
+    // Crop parameters (0 = no crop)
+    uint32_t cropLeft;
+    uint32_t cropTop;
+    uint32_t cropWidth;
+    uint32_t cropHeight;
+    bool cropEnabled;
+
     // State
     std::atomic_bool active;
     std::atomic_bool textureReady;
@@ -99,9 +106,12 @@ public:
     // Reset the per-frame capture flag (called from video_tick before rendering)
     inline void resetCapturedFlag() { capturedThisFrame.store(false); }
 
+    // Set crop region for output rendering
+    void setCrop(uint32_t left, uint32_t top, uint32_t width, uint32_t height);
+
     // Get capture dimensions
-    inline uint32_t getCaptureWidth() const { return captureWidth; }
-    inline uint32_t getCaptureHeight() const { return captureHeight; }
+    inline uint32_t getCaptureWidth() const { return cropEnabled ? cropWidth : captureWidth; }
+    inline uint32_t getCaptureHeight() const { return cropEnabled ? cropHeight : captureHeight; }
 
     // Create obs_source_info for the proxy source type (register at module load)
     static obs_source_info createProxySourceInfo();
