@@ -152,7 +152,7 @@ The plugin heavily uses:
 ### CI Enforcement
 
 Format is checked in CI via `.github/workflows/check-format.yaml` using reusable actions
-(`run-clang-format`, `run-cmake-format`). PRs and pushes to `master` are validated.
+(`run-clang-format`, `run-cmake-format`). PRs to `master`/`main`/`dev` and pushes to `master`/`dev` are validated.
 
 ---
 
@@ -211,10 +211,10 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `push.yaml` | Push to `master`/`main`/`release/**`, tags | Format check + build + release creation |
+| `push.yaml` | Push to `master`/`main`/`dev`/`release/**`, tags | Format check + build + release creation |
 | `build-project.yaml` | Called by push/PR workflows | Multi-platform build (Windows, macOS, Linux) |
-| `check-format.yaml` | Called by push workflow | clang-format and cmake-format validation |
-| `pr-pull.yaml` | Pull requests | Build validation |
+| `check-format.yaml` | Called by push/PR workflows | clang-format and cmake-format validation |
+| `pr-pull.yaml` | Pull requests to `master`/`main`/`dev` | Format check + build validation |
 | `dispatch.yaml` | Manual dispatch | On-demand builds |
 
 Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-releases.
