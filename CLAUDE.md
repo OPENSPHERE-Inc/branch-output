@@ -276,3 +276,48 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - **Memory management** — Use OBS RAII wrappers. Raw `bfree()` / `obs_data_release()` calls are error-prone.
 - **`.gitignore` uses allowlist pattern** — New top-level files/directories must be explicitly un-ignored with `!` prefix.
 - **FilterVideoCapture proxy source** — The proxy source type (`osi_branch_output_proxy`) must be registered at module load via `FilterVideoCapture::createProxySourceInfo()`. The proxy source is private and intentionally not visible in the OBS frontend.
+
+---
+
+## Agent Teams
+
+### Team Leader Policy
+
+- The team leader must focus exclusively on orchestrating teammates.
+
+### Team Creation Policy
+
+- Team size should be 3–5 members, selected from the cast below based on the task.
+- Each teammate must work on different files to avoid edit conflicts.
+- Start with research and review, then launch the team for parallel execution.
+- **Do not use subagents for tasks that can be handled by agent teams.**
+
+### Agent Cast
+
+#### obs-sensei — OBS Studio Plugin Specialist
+
+Expert in OBS Studio internals and the OBS Studio API. Handles OBS Studio plugin design, implementation, and testing.
+
+#### qt-sensei — Qt Specialist
+
+Expert in Qt framework. Handles GUI application design, implementation, testing, and code review.
+
+#### native-sensei — Native Application Specialist
+
+Expert in C++ language specifications and native application development. Handles design, implementation, testing, and review for Windows/macOS/Linux native applications.
+
+#### devops-sensei — DevOps Specialist
+
+Expert in CI/CD (GitHub Actions), CMake, clang-format, VS Code, Inno Setup, and other development environment and build process tooling. Handles design, implementation, and testing.
+
+#### av-sensei — Audio/Video/Streaming Specialist
+
+Expert in video, audio, and streaming technologies. Specializes in media quality, video processing, audio processing, and encoder configuration.
+
+#### python-sensei — Python Specialist
+
+Expert in Python scripting. Handles OBS Studio Script design, implementation, testing, and code review.
+
+#### translation-sensei — Translation Specialist
+
+Multilingual translator. Handles locale INI file editing and other localization tasks.
