@@ -494,19 +494,16 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
                     }
                 }
                 obs_log(
-                    LOG_WARNING,
-                    "%s: Frame rate divider 1/%u invalid for %u/%u fps, falling back to 1/%u",
+                    LOG_WARNING, "%s: Frame rate divider 1/%u invalid for %u/%u fps, falling back to 1/%u",
                     qUtf8Printable(name), originalDivider, ovi.fps_num, ovi.fps_den, fpsDivider
                 );
             }
 
             if (fpsDivider > 1) {
                 if (!obs_encoder_set_frame_rate_divisor(videoEncoder, fpsDivider)) {
-                    obs_log(LOG_WARNING, "%s: Failed to set frame rate divisor to %u",
-                            qUtf8Printable(name), fpsDivider);
+                    obs_log(LOG_WARNING, "%s: Failed to set frame rate divisor to %u", qUtf8Printable(name), fpsDivider);
                 } else {
-                    obs_log(LOG_INFO, "%s: Frame rate divisor set to 1/%u",
-                            qUtf8Printable(name), fpsDivider);
+                    obs_log(LOG_INFO, "%s: Frame rate divisor set to 1/%u", qUtf8Printable(name), fpsDivider);
                 }
             }
         }

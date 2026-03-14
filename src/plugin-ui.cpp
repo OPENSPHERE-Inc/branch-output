@@ -955,8 +955,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 
     // "Frame Rate Divider" prop
     auto fpsDividerList = obs_properties_add_list(
-        videoEncoderGroup, "fps_divider", obs_module_text("FpsDiv"), OBS_COMBO_TYPE_LIST,
-        OBS_COMBO_FORMAT_INT
+        videoEncoderGroup, "fps_divider", obs_module_text("FpsDiv"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT
     );
     obs_property_set_long_description(fpsDividerList, obs_module_text("FpsDiv.LongDescription"));
     obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.None"), 1);
