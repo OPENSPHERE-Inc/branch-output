@@ -475,6 +475,39 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             return;
         }
 
+        // Apply frame rate divisor
+        auto fpsDivider = (uint32_t)obs_data_get_int(settings, "fps_divider");
+        if (fpsDivider > 1) {
+            // Validate: fps_num must be evenly divisible by the divisor
+            // This ensures clean frame rate for both integer (60, 30, 24) and
+            // NTSC (60000/1001, 30000/1001) source rates.
+            bool valid = (ovi.fps_num % fpsDivider) == 0;
+
+            if (!valid) {
+                // Fallback: search downward for nearest valid divisor
+                uint32_t originalDivider = fpsDivider;
+                fpsDivider = 1;
+                for (uint32_t d = originalDivider - 1; d > 1; d--) {
+                    if ((ovi.fps_num % d) == 0) {
+                        fpsDivider = d;
+                        break;
+                    }
+                }
+                obs_log(
+                    LOG_WARNING, "%s: Frame rate divider 1/%u invalid for %u/%u fps, falling back to 1/%u",
+                    qUtf8Printable(name), originalDivider, ovi.fps_num, ovi.fps_den, fpsDivider
+                );
+            }
+
+            if (fpsDivider > 1) {
+                if (!obs_encoder_set_frame_rate_divisor(videoEncoder, fpsDivider)) {
+                    obs_log(LOG_WARNING, "%s: Failed to set frame rate divisor to %u", qUtf8Printable(name), fpsDivider);
+                } else {
+                    obs_log(LOG_INFO, "%s: Frame rate divisor set to 1/%u", qUtf8Printable(name), fpsDivider);
+                }
+            }
+        }
+
         obs_encoder_set_scaled_size(videoEncoder, 0, 0); // No scaling
         obs_encoder_set_video(videoEncoder, videoOutput);
 
@@ -607,6 +640,7 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
         obs_data_erase(recently_settings, "custom_width");
         obs_data_erase(recently_settings, "custom_height");
         obs_data_erase(recently_settings, "downscale_filter");
+        obs_data_erase(recently_settings, "fps_divider");
         obs_data_apply(settings, recently_settings);
     }
 
