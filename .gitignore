@@ -33,3 +33,4 @@
 
 # Except for AI agent instructions
 !AGENTS.md
+!/.claude
