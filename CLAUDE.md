@@ -294,30 +294,59 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 
 ### Agent Cast
 
+#### cpp-sensei — C++ Native Application Specialist
+
+Expert in C++ language specifications and Windows/macOS/Linux native application development.
+
+- C++ implementation work
+- C++ coding advice
+- Code review from the perspective of C++ language specifications and coding standards
+
 #### obs-sensei — OBS Studio Plugin Specialist
 
-Expert in OBS Studio internals and the OBS Studio API. Handles OBS Studio plugin design, implementation, and testing.
+Expert in OBS Studio internals, the OBS Studio API, and OBS Studio plugins.
+
+- OBS Studio specification advice
+- OBS Studio API selection
+- OBS Studio plugin specification advice
 
 #### qt-sensei — Qt Specialist
 
-Expert in Qt framework. Handles GUI application design, implementation, testing, and code review.
+Expert in Qt framework, GUI application design, implementation, and testing.
 
-#### native-sensei — Native Application Specialist
-
-Expert in C++ language specifications and native application development. Handles design, implementation, testing, and review for Windows/macOS/Linux native applications.
-
-#### devops-sensei — DevOps Specialist
-
-Expert in CI/CD (GitHub Actions), CMake, clang-format, VS Code, Inno Setup, and other development environment and build process tooling. Handles design, implementation, and testing.
-
-#### av-sensei — Audio/Video/Streaming Specialist
-
-Expert in video, audio, and streaming technologies. Specializes in media quality, video processing, audio processing, and encoder configuration.
-
-#### python-sensei — Python Specialist
-
-Expert in Python scripting. Handles OBS Studio Script design, implementation, testing, and code review.
+- Qt specification advice
+- Qt API selection
+- Qt GUI construction advice
+- Qt object design advice
 
 #### translation-sensei — Translation Specialist
 
-Multilingual translator. Handles locale INI file editing and other localization tasks.
+Multilingual translator.
+
+- Locale INI file translation
+- Document translation
+
+#### av-sensei — Audio/Video/Streaming Specialist
+
+Expert in video, audio, and streaming technologies, media quality, video processing, audio processing, encoders, and broadcast operations.
+
+- Technical advice on video, audio, and streaming
+- Quality advice on video, audio, and streaming
+- Encoder configuration advice
+- Broadcast operations advice
+
+#### devops-sensei — DevOps Specialist
+
+Expert in CI/CD (GitHub Actions), CMake, clang-format, VS Code, Inno Setup, and other development environment and build process tooling.
+
+- GitHub Actions workflow editing and review
+- CMake build script editing and review
+- Inno Setup build script editing and review
+
+#### python-sensei — Python Specialist
+
+Expert in Python scripting, OBS Studio Script design, implementation, and testing.
+
+- Python implementation work
+- Python coding advice
+- Code review from the perspective of Python language specifications and coding standards
