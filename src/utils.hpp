@@ -25,9 +25,18 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/config-file.h>
 #include <util/dstr.h>
 
+#include <optional>
+
 #include <QString>
 #include <QWidget>
 #include <QVariant>
+
+struct CropRect {
+    uint32_t left;
+    uint32_t top;
+    uint32_t width;
+    uint32_t height;
+};
 
 QString getOutputFilename(const char *path, const char *container, bool noSpace, bool overwrite, const char *format);
 QString getFormatExt(const char *container);

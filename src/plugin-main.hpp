@@ -30,6 +30,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
 #include "video/filter-video-capture.hpp"
+#include "utils.hpp"
 
 #define MAX_SERVICES 8
 
@@ -94,11 +95,7 @@ class BranchOutputFilter : public QObject {
     uint32_t height;
 
     // Crop context
-    uint32_t cropLeft;
-    uint32_t cropTop;
-    uint32_t cropWidth;     // 0 = no crop
-    uint32_t cropHeight;    // 0 = no crop
-    obs_scene_t *cropScene; // Source output mode crop scene
+    OBSSceneAutoRelease cropScene; // Source output mode crop scene
 
     // Filter input mode flag
     bool useFilterInput;
@@ -140,14 +137,14 @@ class BranchOutputFilter : public QObject {
     void startOutput(obs_data_t *settings);
     void stopOutput();
     void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight);
-    void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi);
+    void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop);
     void loadProfile(obs_data_t *settings);
     void loadRecently(obs_data_t *settings);
     void restartOutput();
     void registerHotkey();
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
     void setAudioCapturesActive(bool active);
-    void calculateCrop(obs_data_t *settings);
+    std::optional<CropRect> calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings);
     QString applyFilenameFormatArgs(const QString &format, bool noSpace);
 
     // Implemented in plugin-streaming.cpp

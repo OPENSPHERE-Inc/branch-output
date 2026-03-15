@@ -92,12 +92,7 @@ FilterVideoCapture::FilterVideoCapture(
       captureHeight(_height),
       active(false),
       textureReady(false),
-      capturedThisFrame(false),
-      cropLeft(0),
-      cropTop(0),
-      cropWidth(0),
-      cropHeight(0),
-      cropEnabled(false)
+      capturedThisFrame(false)
 {
     // Create texrender on graphics thread
     obs_enter_graphics();
@@ -141,13 +136,9 @@ FilterVideoCapture::~FilterVideoCapture()
     obs_leave_graphics();
 }
 
-void FilterVideoCapture::setCrop(uint32_t left, uint32_t top, uint32_t width, uint32_t height)
+void FilterVideoCapture::setCrop(const std::optional<CropRect> &_crop)
 {
-    cropLeft = left;
-    cropTop = top;
-    cropWidth = width;
-    cropHeight = height;
-    cropEnabled = (width > 0 && height > 0);
+    crop = _crop;
 }
 
 bool FilterVideoCapture::captureFilterInput()
@@ -267,11 +258,11 @@ void FilterVideoCapture::renderTexture()
     gs_effect_set_texture(image, tex);
 
     // Apply crop: project only the crop region from the full texrender
-    if (cropEnabled) {
+    if (crop) {
         gs_projection_push();
         gs_ortho(
-            (float)cropLeft, (float)(cropLeft + cropWidth), (float)cropTop, (float)(cropTop + cropHeight), -100.0f,
-            100.0f
+            (float)crop->left, (float)(crop->left + crop->width), (float)crop->top, (float)(crop->top + crop->height),
+            -100.0f, 100.0f
         );
     }
 
@@ -279,7 +270,7 @@ void FilterVideoCapture::renderTexture()
         gs_draw_sprite(tex, 0, captureWidth, captureHeight);
     }
 
-    if (cropEnabled) {
+    if (crop) {
         gs_projection_pop();
     }
 }
