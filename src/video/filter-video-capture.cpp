@@ -136,6 +136,11 @@ FilterVideoCapture::~FilterVideoCapture()
     obs_leave_graphics();
 }
 
+void FilterVideoCapture::setCrop(const std::optional<CropRect> &_crop)
+{
+    crop = _crop;
+}
+
 bool FilterVideoCapture::captureFilterInput()
 {
     if (!active.load() || !texrender) {
@@ -252,7 +257,20 @@ void FilterVideoCapture::renderTexture()
     gs_eparam_t *image = gs_effect_get_param_by_name(effect, "image");
     gs_effect_set_texture(image, tex);
 
+    // Apply crop: project only the crop region from the full texrender
+    if (crop) {
+        gs_projection_push();
+        gs_ortho(
+            (float)crop->left, (float)(crop->left + crop->width), (float)crop->top, (float)(crop->top + crop->height),
+            -100.0f, 100.0f
+        );
+    }
+
     while (gs_effect_loop(effect, "Draw")) {
         gs_draw_sprite(tex, 0, captureWidth, captureHeight);
+    }
+
+    if (crop) {
+        gs_projection_pop();
     }
 }
