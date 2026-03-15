@@ -1144,13 +1144,10 @@ obs_properties_t *BranchOutputFilter::getProperties()
     obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
 
     // Reset crop preview when properties dialog is closed
-    obs_properties_set_param(
-        props, this,
-        [](void *param) {
-            auto filter = static_cast<BranchOutputFilter *>(param);
-            filter->previewCrop = std::nullopt;
-        }
-    );
+    obs_properties_set_param(props, this, [](void *param) {
+        auto filter = static_cast<BranchOutputFilter *>(param);
+        filter->previewCrop = std::nullopt;
+    });
 
     //--- "Streaming" group ---//
     addStreamingGroup(props);
