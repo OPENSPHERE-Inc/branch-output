@@ -30,6 +30,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
 #include "video/filter-video-capture.hpp"
+#include "video/crop-rect-preview-renderer.hpp"
 #include "utils.hpp"
 
 #define MAX_SERVICES 8
@@ -95,10 +96,8 @@ class BranchOutputFilter : public QObject {
     uint32_t height;
 
     // Crop context
-    OBSSceneAutoRelease cropScene;       // Source output mode crop scene
-    std::optional<CropRect> previewCrop; // Crop preview rectangle (nullopt = hidden)
-    uint32_t previewCropSrcWidth;
-    uint32_t previewCropSrcHeight;
+    OBSSceneAutoRelease cropScene; // Source output mode crop scene
+    CropRectPreviewRenderer cropPreview;
 
     // Filter input mode flag
     bool useFilterInput;

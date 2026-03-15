@@ -44,6 +44,7 @@ target_sources(
           src/utils.cpp
           src/audio/audio-capture.cpp
           src/video/filter-video-capture.cpp
+          src/video/crop-rect-preview-renderer.cpp
           src/UI/output-status-dock.cpp
           src/UI/resources.qrc)
 

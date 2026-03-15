@@ -229,7 +229,7 @@ void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char *pro
             filter->initialized = true;
 
             // Reset crop preview
-            filter->previewCrop = std::nullopt;
+            filter->cropPreview.hide();
 
             OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
             filter->updateCallback(settings);
@@ -939,7 +939,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
             obs_property_set_visible(_cropAbsoluteGroup, !strcmp(cropType, "absolute"));
 
             if (!cropEnabled) {
-                filter->previewCrop = std::nullopt;
+                filter->cropPreview.hide();
             }
 
             return true;
@@ -950,13 +950,11 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     // Crop value modified callback: updates preview rectangle in real-time
     auto cropValueModified = [](void *param, obs_properties_t *, obs_property_t *, obs_data_t *settings) {
         auto filter = static_cast<BranchOutputFilter *>(param);
-        if (filter->previewCrop) {
+        if (filter->cropPreview.isVisible()) {
             uint32_t srcWidth, srcHeight;
             filter->getSourceResolution(srcWidth, srcHeight);
             if (srcWidth > 0 && srcHeight > 0) {
-                filter->previewCropSrcWidth = srcWidth;
-                filter->previewCropSrcHeight = srcHeight;
-                filter->previewCrop = filter->calculateCrop(srcWidth, srcHeight, settings);
+                filter->cropPreview.show(filter->calculateCrop(srcWidth, srcHeight, settings), srcWidth, srcHeight);
             }
         }
         return false;
@@ -969,12 +967,10 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
             uint32_t srcWidth, srcHeight;
             filter->getSourceResolution(srcWidth, srcHeight);
             if (srcWidth > 0 && srcHeight > 0) {
-                filter->previewCropSrcWidth = srcWidth;
-                filter->previewCropSrcHeight = srcHeight;
-                filter->previewCrop = filter->calculateCrop(srcWidth, srcHeight, settings);
+                filter->cropPreview.show(filter->calculateCrop(srcWidth, srcHeight, settings), srcWidth, srcHeight);
             }
         } else {
-            filter->previewCrop = std::nullopt;
+            filter->cropPreview.hide();
         }
         return false;
     };
@@ -1146,7 +1142,7 @@ obs_properties_t *BranchOutputFilter::getProperties()
     // Reset crop preview when properties dialog is closed
     obs_properties_set_param(props, this, [](void *param) {
         auto filter = static_cast<BranchOutputFilter *>(param);
-        filter->previewCrop = std::nullopt;
+        filter->cropPreview.hide();
     });
 
     //--- "Streaming" group ---//
