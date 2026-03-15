@@ -1570,11 +1570,6 @@ obs_source_info BranchOutputFilter::createFilterInfo()
 
     info.filter_audio = BranchOutputFilter::audioFilterCallback;
 
-    info.save = [](void *, obs_data_t *settings) {
-        obs_data_erase(settings, "preview_crop_rect_rel");
-        obs_data_erase(settings, "preview_crop_rect_abs");
-    };
-
     return info;
 }
 

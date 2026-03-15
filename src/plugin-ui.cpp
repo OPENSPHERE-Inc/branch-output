@@ -228,9 +228,6 @@ void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char *pro
             // Force filter activation
             filter->initialized = true;
 
-            // Reset crop preview
-            filter->cropPreview.hide();
-
             OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
             filter->updateCallback(settings);
 
@@ -946,9 +943,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
                 uint32_t srcWidth, srcHeight;
                 filter->getSourceResolution(srcWidth, srcHeight);
                 if (srcWidth > 0 && srcHeight > 0) {
-                    filter->cropPreview.show(
-                        filter->calculateCrop(srcWidth, srcHeight, settings), srcWidth, srcHeight
-                    );
+                    filter->cropPreview.show(filter->calculateCrop(srcWidth, srcHeight, settings), srcWidth, srcHeight);
                 }
             } else {
                 filter->cropPreview.hide();
@@ -1012,6 +1007,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     }
     auto previewCropRel =
         obs_properties_add_bool(cropRelativeGroup, "preview_crop_rect_rel", obs_module_text("PreviewCropRect"));
+    obs_property_set_long_description(previewCropRel, obs_module_text("PreviewCropRect.LongDescription"));
     obs_property_set_modified_callback2(previewCropRel, previewCropModified, this);
 
     obs_properties_add_group(
@@ -1028,6 +1024,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     }
     auto previewCropAbs =
         obs_properties_add_bool(cropAbsoluteGroup, "preview_crop_rect_abs", obs_module_text("PreviewCropRect"));
+    obs_property_set_long_description(previewCropAbs, obs_module_text("PreviewCropRect.LongDescription"));
     obs_property_set_modified_callback2(previewCropAbs, previewCropModified, this);
 
     obs_properties_add_group(
@@ -1165,6 +1162,11 @@ obs_properties_t *BranchOutputFilter::getProperties()
 {
     auto props = obs_properties_create();
     obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
+
+    // Ensure crop preview checkboxes start unchecked
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+    obs_data_set_bool(settings, "preview_crop_rect_rel", false);
+    obs_data_set_bool(settings, "preview_crop_rect_abs", false);
 
     // Reset crop preview when properties dialog is closed
     obs_properties_set_param(props, this, [](void *param) {
