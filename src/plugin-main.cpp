@@ -1339,6 +1339,18 @@ void BranchOutputFilter::videoTickCallback(float)
     if (useFilterInput && filterVideoCapture) {
         filterVideoCapture->resetCapturedFlag();
     }
+
+    // Update crop preview when source resolution changes
+    if (previewCrop) {
+        uint32_t curW, curH;
+        getSourceResolution(curW, curH);
+        if (curW > 0 && curH > 0 && (curW != previewCropSrcWidth || curH != previewCropSrcHeight)) {
+            previewCropSrcWidth = curW;
+            previewCropSrcHeight = curH;
+            OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+            previewCrop = calculateCrop(curW, curH, settings);
+        }
+    }
 }
 
 void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
@@ -1358,6 +1370,29 @@ void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
     } else {
         // Source output mode: pass through the filter chain as usual
         obs_source_skip_video_filter(filterSource);
+    }
+
+    // Draw crop preview rectangle overlay (main mix only, not encoded in branch output)
+    if (previewCrop) {
+        // Offset by 0.5px inward to ensure edges at boundaries (top=0, left=0) are visible
+        float left = (float)previewCrop->left + 0.5f;
+        float top = (float)previewCrop->top + 0.5f;
+        float right = (float)(previewCrop->left + previewCrop->width) - 0.5f;
+        float bottom = (float)(previewCrop->top + previewCrop->height) - 0.5f;
+
+        gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+        gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+        gs_effect_set_color(colorParam, 0xFF00FF00); // Green
+
+        while (gs_effect_loop(solid, "Solid")) {
+            gs_render_start(true);
+            gs_vertex2f(left, top);
+            gs_vertex2f(right, top);
+            gs_vertex2f(right, bottom);
+            gs_vertex2f(left, bottom);
+            gs_vertex2f(left, top);
+            gs_render_stop(GS_LINESTRIP);
+        }
     }
 }
 
@@ -1556,6 +1591,10 @@ obs_source_info BranchOutputFilter::createFilterInfo()
     info.get_defaults = BranchOutputFilter::getDefaults;
 
     info.filter_audio = BranchOutputFilter::audioFilterCallback;
+
+    info.save = [](void *, obs_data_t *settings) {
+        obs_data_erase(settings, "preview_crop_rect");
+    };
 
     return info;
 }

@@ -95,7 +95,10 @@ class BranchOutputFilter : public QObject {
     uint32_t height;
 
     // Crop context
-    OBSSceneAutoRelease cropScene; // Source output mode crop scene
+    OBSSceneAutoRelease cropScene;       // Source output mode crop scene
+    std::optional<CropRect> previewCrop; // Crop preview rectangle (nullopt = hidden)
+    uint32_t previewCropSrcWidth;
+    uint32_t previewCropSrcHeight;
 
     // Filter input mode flag
     bool useFilterInput;

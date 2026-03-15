@@ -228,6 +228,9 @@ void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char *pro
             // Force filter activation
             filter->initialized = true;
 
+            // Reset crop preview
+            filter->previewCrop = std::nullopt;
+
             OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
             filter->updateCallback(settings);
 
@@ -924,8 +927,10 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 
     obs_property_set_modified_callback2(
         croppingList,
-        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+        [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            auto filter = static_cast<BranchOutputFilter *>(param);
             auto cropType = obs_data_get_string(settings, "crop_type");
+            bool cropEnabled = cropType && strcmp(cropType, "none");
 
             auto _cropRelativeGroup = obs_properties_get(_props, "crop_relative_group");
             obs_property_set_visible(_cropRelativeGroup, !strcmp(cropType, "relative"));
@@ -933,17 +938,58 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
             auto _cropAbsoluteGroup = obs_properties_get(_props, "crop_absolute_group");
             obs_property_set_visible(_cropAbsoluteGroup, !strcmp(cropType, "absolute"));
 
+            if (!cropEnabled) {
+                filter->previewCrop = std::nullopt;
+            }
+
             return true;
         },
-        nullptr
+        this
     );
+
+    // Crop value modified callback: updates preview rectangle in real-time
+    auto cropValueModified = [](void *param, obs_properties_t *, obs_property_t *, obs_data_t *settings) {
+        auto filter = static_cast<BranchOutputFilter *>(param);
+        if (filter->previewCrop) {
+            uint32_t srcWidth, srcHeight;
+            filter->getSourceResolution(srcWidth, srcHeight);
+            if (srcWidth > 0 && srcHeight > 0) {
+                filter->previewCropSrcWidth = srcWidth;
+                filter->previewCropSrcHeight = srcHeight;
+                filter->previewCrop = filter->calculateCrop(srcWidth, srcHeight, settings);
+            }
+        }
+        return false;
+    };
+
+    // Crop preview checkbox callback
+    auto previewCropModified = [](void *param, obs_properties_t *, obs_property_t *, obs_data_t *settings) {
+        auto filter = static_cast<BranchOutputFilter *>(param);
+        if (obs_data_get_bool(settings, "preview_crop_rect")) {
+            uint32_t srcWidth, srcHeight;
+            filter->getSourceResolution(srcWidth, srcHeight);
+            if (srcWidth > 0 && srcHeight > 0) {
+                filter->previewCropSrcWidth = srcWidth;
+                filter->previewCropSrcHeight = srcHeight;
+                filter->previewCrop = filter->calculateCrop(srcWidth, srcHeight, settings);
+            }
+        } else {
+            filter->previewCrop = std::nullopt;
+        }
+        return false;
+    };
 
     // Relative crop group
     auto cropRelativeGroup = obs_properties_create();
-    obs_properties_add_int(cropRelativeGroup, "crop_rel_top", obs_module_text("CropRelative.Top"), 0, 8192, 2);
-    obs_properties_add_int(cropRelativeGroup, "crop_rel_right", obs_module_text("CropRelative.Right"), 0, 8192, 2);
-    obs_properties_add_int(cropRelativeGroup, "crop_rel_bottom", obs_module_text("CropRelative.Bottom"), 0, 8192, 2);
-    obs_properties_add_int(cropRelativeGroup, "crop_rel_left", obs_module_text("CropRelative.Left"), 0, 8192, 2);
+    const char *relProps[] = {"crop_rel_top", "crop_rel_right", "crop_rel_bottom", "crop_rel_left"};
+    const char *relLabels[] = {"CropRelative.Top", "CropRelative.Right", "CropRelative.Bottom", "CropRelative.Left"};
+    for (int i = 0; i < 4; i++) {
+        auto prop = obs_properties_add_int(cropRelativeGroup, relProps[i], obs_module_text(relLabels[i]), 0, 8192, 2);
+        obs_property_set_modified_callback2(prop, cropValueModified, this);
+    }
+    auto previewCropRel =
+        obs_properties_add_bool(cropRelativeGroup, "preview_crop_rect", obs_module_text("PreviewCropRect"));
+    obs_property_set_modified_callback2(previewCropRel, previewCropModified, this);
 
     obs_properties_add_group(
         videoEncoderGroup, "crop_relative_group", obs_module_text("CropRelative"), OBS_GROUP_NORMAL, cropRelativeGroup
@@ -951,10 +997,15 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 
     // Absolute crop group
     auto cropAbsoluteGroup = obs_properties_create();
-    obs_properties_add_int(cropAbsoluteGroup, "crop_abs_x", obs_module_text("CropAbsolute.X"), 0, 8192, 2);
-    obs_properties_add_int(cropAbsoluteGroup, "crop_abs_y", obs_module_text("CropAbsolute.Y"), 0, 8192, 2);
-    obs_properties_add_int(cropAbsoluteGroup, "crop_abs_width", obs_module_text("CropAbsolute.Width"), 0, 8192, 2);
-    obs_properties_add_int(cropAbsoluteGroup, "crop_abs_height", obs_module_text("CropAbsolute.Height"), 0, 8192, 2);
+    const char *absProps[] = {"crop_abs_x", "crop_abs_y", "crop_abs_width", "crop_abs_height"};
+    const char *absLabels[] = {"CropAbsolute.X", "CropAbsolute.Y", "CropAbsolute.Width", "CropAbsolute.Height"};
+    for (int i = 0; i < 4; i++) {
+        auto prop = obs_properties_add_int(cropAbsoluteGroup, absProps[i], obs_module_text(absLabels[i]), 0, 8192, 2);
+        obs_property_set_modified_callback2(prop, cropValueModified, this);
+    }
+    auto previewCropAbs =
+        obs_properties_add_bool(cropAbsoluteGroup, "preview_crop_rect", obs_module_text("PreviewCropRect"));
+    obs_property_set_modified_callback2(previewCropAbs, previewCropModified, this);
 
     obs_properties_add_group(
         videoEncoderGroup, "crop_absolute_group", obs_module_text("CropAbsolute"), OBS_GROUP_NORMAL, cropAbsoluteGroup
@@ -1091,6 +1142,15 @@ obs_properties_t *BranchOutputFilter::getProperties()
 {
     auto props = obs_properties_create();
     obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
+
+    // Reset crop preview when properties dialog is closed
+    obs_properties_set_param(
+        props, this,
+        [](void *param) {
+            auto filter = static_cast<BranchOutputFilter *>(param);
+            filter->previewCrop = std::nullopt;
+        }
+    );
 
     //--- "Streaming" group ---//
     addStreamingGroup(props);
