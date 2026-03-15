@@ -24,9 +24,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 CropRectPreviewRenderer::CropRectPreviewRenderer() : srcWidth(0), srcHeight(0) {}
 
-void CropRectPreviewRenderer::show(
-    const std::optional<CropRect> &cropRect, uint32_t sourceWidth, uint32_t sourceHeight
-)
+void CropRectPreviewRenderer::show(const std::optional<CropRect> &cropRect, uint32_t sourceWidth, uint32_t sourceHeight)
 {
     crop = cropRect;
     srcWidth = sourceWidth;
