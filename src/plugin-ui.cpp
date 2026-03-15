@@ -930,15 +930,27 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
             auto filter = static_cast<BranchOutputFilter *>(param);
             auto cropType = obs_data_get_string(settings, "crop_type");
-            bool cropEnabled = cropType && strcmp(cropType, "none");
+            bool isRelative = cropType && !strcmp(cropType, "relative");
+            bool isAbsolute = cropType && !strcmp(cropType, "absolute");
 
-            auto _cropRelativeGroup = obs_properties_get(_props, "crop_relative_group");
-            obs_property_set_visible(_cropRelativeGroup, !strcmp(cropType, "relative"));
+            obs_property_set_visible(obs_properties_get(_props, "crop_relative_group"), isRelative);
+            obs_property_set_visible(obs_properties_get(_props, "crop_absolute_group"), isAbsolute);
 
-            auto _cropAbsoluteGroup = obs_properties_get(_props, "crop_absolute_group");
-            obs_property_set_visible(_cropAbsoluteGroup, !strcmp(cropType, "absolute"));
+            // Sync preview checkbox state between crop modes
+            bool previewOn = obs_data_get_bool(settings, "preview_crop_rect_rel") ||
+                             obs_data_get_bool(settings, "preview_crop_rect_abs");
+            obs_data_set_bool(settings, "preview_crop_rect_rel", previewOn);
+            obs_data_set_bool(settings, "preview_crop_rect_abs", previewOn);
 
-            if (!cropEnabled) {
+            if ((isRelative || isAbsolute) && previewOn) {
+                uint32_t srcWidth, srcHeight;
+                filter->getSourceResolution(srcWidth, srcHeight);
+                if (srcWidth > 0 && srcHeight > 0) {
+                    filter->cropPreview.show(
+                        filter->calculateCrop(srcWidth, srcHeight, settings), srcWidth, srcHeight
+                    );
+                }
+            } else {
                 filter->cropPreview.hide();
             }
 
@@ -950,7 +962,16 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     // Crop value modified callback: updates preview rectangle in real-time
     auto cropValueModified = [](void *param, obs_properties_t *, obs_property_t *, obs_data_t *settings) {
         auto filter = static_cast<BranchOutputFilter *>(param);
-        if (filter->cropPreview.isVisible()) {
+        // Check the preview checkbox for the active crop type (not isVisible, which may be false
+        // due to previous invalid crop values)
+        auto cropType = obs_data_get_string(settings, "crop_type");
+        bool previewOn = false;
+        if (cropType && !strcmp(cropType, "relative")) {
+            previewOn = obs_data_get_bool(settings, "preview_crop_rect_rel");
+        } else if (cropType && !strcmp(cropType, "absolute")) {
+            previewOn = obs_data_get_bool(settings, "preview_crop_rect_abs");
+        }
+        if (previewOn) {
             uint32_t srcWidth, srcHeight;
             filter->getSourceResolution(srcWidth, srcHeight);
             if (srcWidth > 0 && srcHeight > 0) {
@@ -961,9 +982,15 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     };
 
     // Crop preview checkbox callback
-    auto previewCropModified = [](void *param, obs_properties_t *, obs_property_t *, obs_data_t *settings) {
+    auto previewCropModified = [](void *param, obs_properties_t *, obs_property_t *prop, obs_data_t *settings) {
         auto filter = static_cast<BranchOutputFilter *>(param);
-        if (obs_data_get_bool(settings, "preview_crop_rect")) {
+        bool checked = obs_data_get_bool(settings, obs_property_name(prop));
+
+        // Sync both checkboxes so the preview state persists across crop type switches
+        obs_data_set_bool(settings, "preview_crop_rect_rel", checked);
+        obs_data_set_bool(settings, "preview_crop_rect_abs", checked);
+
+        if (checked) {
             uint32_t srcWidth, srcHeight;
             filter->getSourceResolution(srcWidth, srcHeight);
             if (srcWidth > 0 && srcHeight > 0) {
@@ -984,7 +1011,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
         obs_property_set_modified_callback2(prop, cropValueModified, this);
     }
     auto previewCropRel =
-        obs_properties_add_bool(cropRelativeGroup, "preview_crop_rect", obs_module_text("PreviewCropRect"));
+        obs_properties_add_bool(cropRelativeGroup, "preview_crop_rect_rel", obs_module_text("PreviewCropRect"));
     obs_property_set_modified_callback2(previewCropRel, previewCropModified, this);
 
     obs_properties_add_group(
@@ -1000,7 +1027,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
         obs_property_set_modified_callback2(prop, cropValueModified, this);
     }
     auto previewCropAbs =
-        obs_properties_add_bool(cropAbsoluteGroup, "preview_crop_rect", obs_module_text("PreviewCropRect"));
+        obs_properties_add_bool(cropAbsoluteGroup, "preview_crop_rect_abs", obs_module_text("PreviewCropRect"));
     obs_property_set_modified_callback2(previewCropAbs, previewCropModified, this);
 
     obs_properties_add_group(
