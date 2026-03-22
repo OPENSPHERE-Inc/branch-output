@@ -7,14 +7,24 @@ allowed-tools: Agent, Read, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), 
 
 You are the **review leader**. Your job is to orchestrate a parallel code review using specialist reviewers, then consolidate their findings into a single report.
 
+## Review Rounds
+
+Reviews may be executed over multiple rounds. After each round, findings are addressed via `/review-respond`, and subsequent rounds verify fixes and catch new issues. The argument typically includes a round number (e.g., `Round 1`, `Round 2`). Include this round number in the report title.
+
+For Round 2+, the reviewer agents should also be informed of findings from prior rounds so they can:
+- Verify that previously reported issues have been addressed.
+- Avoid re-reporting findings that were already resolved or acknowledged.
+- Focus on new issues or regressions introduced by fixes.
+
 ## Input
 
 The user will specify one or more of the following as review targets:
 - File paths or glob patterns
 - A git diff range (e.g., `HEAD~3..HEAD`, a branch name, or a PR)
 - A description of the area to review
+- A round number (e.g., `Round 1`, `Round 3`)
 
-If the argument is `$ARGUMENTS`, interpret it as the review target specification.
+If the argument is `$ARGUMENTS`, interpret it as the review target specification (including round number if present).
 
 ## Reviewers
 
@@ -85,9 +95,10 @@ After all reviewers complete, consolidate their findings into a single report:
 Output the final report in this format:
 
 ```
-# Parallel Code Review Report
+# Parallel Code Review Report — Round {N}
 
 **Date:** YYYY-MM-DD
+**Round:** {N}
 **Scope:** {description of what was reviewed}
 **Reviewers:** {comma-separated list of all reviewers used}
 
