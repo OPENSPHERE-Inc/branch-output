@@ -281,6 +281,10 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 
 ## Agent Teams
 
+### Communication Language
+
+- Agents must respond in the same language the user is using (e.g., reply in Japanese if the user writes in Japanese, in English if the user writes in English).
+
 ### Team Leader Policy
 
 - The team leader must focus exclusively on orchestrating teammates.

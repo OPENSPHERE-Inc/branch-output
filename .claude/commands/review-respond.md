@@ -40,7 +40,9 @@ The document may also contain:
    - Description of the issue
    - Reviewer action (`[Action Required]` or `[No Action Needed]` with rationale)
    - Current resolution status (check if already marked as `**Status: Fixed**`)
-4. Focus on findings marked `**[Action Required]**` that are not yet resolved. Findings marked `**[No Action Needed]**` are already triaged by the reviewer and do not need fixes.
+4. Process **all** findings that are not yet resolved:
+   - `**[Action Required]**` findings proceed to triage (Step 2) for fix decisions.
+   - `**[No Action Needed]**` findings do not need fixes, but still require a status line with your assessment of whether the reviewer's rationale is sound (Step 4). This allows the reviewer to verify your judgment.
 
 ## Step 2 — Triage
 
@@ -93,7 +95,18 @@ Instructions:
 - Findings affecting **different files** may be fixed in parallel by launching multiple agents simultaneously.
 - Findings affecting the **same file** must be fixed sequentially — launch them one at a time, waiting for each to complete before starting the next.
 
-## Step 4 — Update the Review Document
+## Step 4 — Build Verification
+
+After all fixes are complete, run a build to verify that the changes compile without errors.
+
+1. Determine the appropriate build command for the current platform. Check for build scripts (`build.ps1`, `Makefile`, etc.) or use CMake presets as documented in `CLAUDE.md`.
+2. Run the build. If the build fails:
+   - Analyze the error output.
+   - Delegate the fix to the appropriate specialist agent (same selection criteria as Step 3).
+   - Re-run the build after the fix. Repeat until the build succeeds.
+3. Report build results (success or the errors encountered and how they were resolved).
+
+## Step 5 — Update the Review Document
 
 After all fixes are complete, update the review document. Since the document uses markdown tables, status annotations are appended as blockquote lines **after the table, before the `---` section separator**.
 
@@ -102,13 +115,19 @@ After all fixes are complete, update the review document. Since the document use
 For fixed findings:
 
 ```
-> **{finding-id} Status: Fixed** — {Brief description of the fix.}
+> - **{finding-id} Status: Fixed** — {Brief description of the fix.}
 ```
 
-For "Won't Fix" decisions:
+For "Won't Fix" decisions (triaged by you during Step 2):
 
 ```
-> **{finding-id} Status: Won't Fix** — {Reason why no action is needed.}
+> - **{finding-id} Status: Won't Fix** — {Reason why no action is needed.}
+```
+
+For findings already marked `[No Action Needed]` by the reviewer — add your assessment of the reviewer's rationale:
+
+```
+> - **{finding-id} Status: Acknowledged** — {Your assessment: agree/disagree with the reviewer's rationale and why.}
 ```
 
 ### Rules
@@ -145,9 +164,21 @@ After:
 > **C-1 Status: Fixed** — Added `obs_data_addref()` and wrapped with `OBSDataAutoRelease` for RAII protection inside the lambda.
 
 ---
+
+## Major
+
+| # | Location | Finding | Reviewer(s) | Action |
+|---|----------|---------|-------------|--------|
+| M-1 | `output.cpp:80` | Missing error check... | obs-sensei | **[Action Required]** Add return value check. |
+| M-2 | `client.cpp:120` | Redundant copy... | cpp-sensei | **[No Action Needed]** Existing code, not introduced in this change. |
+
+> **M-1 Status: Fixed** — Added `if (!output)` guard with `LOG_ERROR` before proceeding.
+> **M-2 Status: Acknowledged** — Agree. This is pre-existing code outside the scope of this change. Tracked for future cleanup.
+
+---
 ```
 
-## Step 5 — Summary
+## Step 6 — Summary
 
 Output a summary of all actions taken:
 
@@ -163,13 +194,15 @@ Output a summary of all actions taken:
 |---|----------|----------|------------|-------|
 | C-1 | Critical | Fixed | cpp-sensei | Brief description of fix |
 | M-1 | Major | Fixed | cpp-sensei | Brief description of fix |
+| M-2 | Major | Acknowledged | — | Agree with reviewer rationale |
 | m-1 | Minor | Won't Fix | — | Reason |
 | ... | ... | ... | ... | ... |
 
 ## Statistics
 
-- **Total findings processed:** N (actionable items marked [Action Required])
+- **Total findings processed:** N
 - **Fixed:** N
 - **Won't Fix:** N
+- **Acknowledged ([No Action Needed]):** N
 - **Already resolved (skipped):** N
 ```
