@@ -292,6 +292,8 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - Start with research and review, then launch the team for parallel execution.
 - **Do not use subagents for tasks that can be handled by agent teams.**
 
+  **Exception**: Use subagents for parallel reviews.
+
 ### Agent Cast
 
 #### cpp-sensei — C++ Native Application Specialist
@@ -301,6 +303,7 @@ Expert in C++ language specifications and Windows/macOS/Linux native application
 - C++ implementation work
 - C++ coding advice
 - Code review from the perspective of C++ language specifications and coding standards
+- Multithreading implementation and thread safety advice
 
 #### obs-sensei — OBS Studio Plugin Specialist
 
@@ -318,6 +321,16 @@ Expert in Qt framework, GUI application design, implementation, and testing.
 - Qt API selection
 - Qt GUI construction advice
 - Qt object design advice
+
+#### network-sensei — Network Specialist
+
+Expert in network programming, TCP/IP, HTTP, SSL/TLS, WebSocket, socket communication, and streaming protocols such as RTMP/SRT/WebRTC.
+
+- Network programming advice
+- Network protocol implementation advice
+- Streaming protocol implementation advice
+- Security advice
+- Network code review
 
 #### translation-sensei — Translation Specialist
 
