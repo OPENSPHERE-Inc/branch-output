@@ -48,6 +48,7 @@ class BranchOutputFilter : public QObject {
         INTERLOCK_TYPE_STREAMING_RECORDING,
         INTERLOCK_TYPE_VIRTUAL_CAM,
         INTERLOCK_TYPE_REPLAY_BUFFER,
+        INTERLOCK_TYPE_INDIVIDUAL,
         INTERLOCK_TYPE_ALWAYS_OFF = 9999,
     };
 
@@ -80,8 +81,14 @@ class BranchOutputFilter : public QObject {
     uint32_t activeSettingsRev;
     QTimer *intervalTimer;
     bool streamingStopping;
+    bool streamingIndividualStopping;
     bool blankingOutputActive;
     bool blankingAudioMuted;
+
+    // Per-output user intent flags (persisted via save callback)
+    bool streamingUserEnabled;
+    bool recordingUserEnabled;
+    bool replayBufferUserEnabled;
 
     // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
@@ -106,6 +113,7 @@ class BranchOutputFilter : public QObject {
     FilterVideoCapture *filterVideoCapture;
 
     // Audio context
+    pthread_mutex_t audioMutex; // Protects audios[] capture pointers against audioFilterCallback
     BranchOutputAudioContext audios[MAX_AUDIO_MIXES];
 
     // Recording context
@@ -138,6 +146,21 @@ class BranchOutputFilter : public QObject {
 
     void startOutput(obs_data_t *settings);
     void stopOutput();
+    bool ensureInfrastructure(obs_data_t *settings);
+    void releaseInfrastructureIfIdle();
+
+    // Internal helpers (caller must hold outputMutex)
+    void createAndStartStreamingOutputs(obs_data_t *settings);
+    void createAndStartRecordingOutputChecked(obs_data_t *settings);
+    void createAndStartReplayBufferChecked(obs_data_t *settings);
+    bool stopStreamingOutputsGracefully();
+
+    void startStreamingIndividual();
+    void stopStreamingIndividual();
+    void startRecordingIndividual();
+    void stopRecordingIndividual();
+    void startReplayBufferIndividual();
+    void stopReplayBufferIndividual();
     void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop);
     void loadProfile(obs_data_t *settings);
@@ -146,6 +169,15 @@ class BranchOutputFilter : public QObject {
     void registerHotkey();
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
     void setAudioCapturesActive(bool active);
+    void saveCallback(obs_data_t *settings);
+
+    // Per-output user intent setters/getters
+    void setStreamingUserEnabled(bool enabled) { streamingUserEnabled = enabled; }
+    void setRecordingUserEnabled(bool enabled) { recordingUserEnabled = enabled; }
+    void setReplayBufferUserEnabled(bool enabled) { replayBufferUserEnabled = enabled; }
+    bool isStreamingUserEnabled() const { return streamingUserEnabled; }
+    bool isRecordingUserEnabled() const { return recordingUserEnabled; }
+    bool isReplayBufferUserEnabled() const { return replayBufferUserEnabled; }
     std::optional<CropRect> calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings);
     QString applyFilenameFormatArgs(const QString &format, bool noSpace);
 

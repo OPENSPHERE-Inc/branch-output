@@ -40,6 +40,13 @@ class QPushButton;
 class BranchOutputFilter;
 class OutputTableRow;
 
+enum RowOutputType {
+    ROW_OUTPUT_NONE = 0,
+    ROW_OUTPUT_STREAMING = 1,
+    ROW_OUTPUT_RECORDING = 2,
+    ROW_OUTPUT_REPLAY_BUFFER = 3,
+};
+
 struct BranchOutputFilterInfo {
     QString sourceName;
     QString sourceUuid;
@@ -162,6 +169,36 @@ public:
     void setTextValue(const QString &value);
 };
 
+class OutputCell : public QWidget {
+    Q_OBJECT
+
+    OutputTableCellItem *_item;
+    QCheckBox *outputToggleCheckbox;
+    QLabel *name;
+    RowOutputType outputType;
+    obs_source_t *source; // filter source for folder opening (recording/replay buffer)
+
+    void openOutputFolder();
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override;
+
+signals:
+    void toggled(bool checked);
+
+public:
+    explicit OutputCell(
+        const QString &rowId, const QString &textValue, bool checked, RowOutputType outputType,
+        obs_source_t *source = nullptr, QWidget *parent = nullptr
+    );
+    ~OutputCell();
+
+    void setTextValue(const QString &value);
+    void setChecked(bool checked);
+    inline bool isChecked() const { return outputToggleCheckbox->isChecked(); }
+    inline OutputTableCellItem *item() const { return _item; }
+};
+
 class StatusCell : public QWidget {
     Q_OBJECT
 
@@ -211,13 +248,6 @@ public:
     inline void setSaveReplayBufferButtonShow(bool show) { saveReplayBufferButton->setVisible(show); };
     inline bool isSaveReplayBufferButtonShow() const { return saveReplayBufferButton->isVisible(); };
     inline OutputTableCellItem *item() const { return _item; }
-};
-
-enum RowOutputType {
-    ROW_OUTPUT_NONE = 0,
-    ROW_OUTPUT_STREAMING = 1,
-    ROW_OUTPUT_RECORDING = 2,
-    ROW_OUTPUT_REPLAY_BUFFER = 3,
 };
 
 class BranchOutputStatusDock : public QFrame {
@@ -310,11 +340,11 @@ class OutputTableRow : public QObject {
     BranchOutputFilter *filter;
     FilterCell *filterCell;
     ParentCell *parentCell;
+    OutputCell *outputName;
     StatusCell *status;
     LabelCell *droppedFrames;
     LabelCell *megabytesSent;
     LabelCell *bitrate;
-    LabelCell *outputName;
 
     RowOutputType outputType;
     size_t streamingIndex;

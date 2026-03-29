@@ -215,6 +215,11 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_bool(defaults, "replay_buffer_no_space_filename", fileNameWithoutSpace);
     obs_data_set_default_string(defaults, "replay_buffer_format", recFormat);
 
+    // Per-output user intent defaults (not shown in UI, persisted in settings)
+    obs_data_set_default_bool(defaults, "streaming_output_enabled", true);
+    obs_data_set_default_bool(defaults, "recording_output_enabled", true);
+    obs_data_set_default_bool(defaults, "replay_buffer_output_enabled", true);
+
     obs_log(LOG_INFO, "Default settings applied.");
 }
 

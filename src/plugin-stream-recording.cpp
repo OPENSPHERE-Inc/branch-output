@@ -426,3 +426,50 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
         filter->splitRecording();
     }
 }
+
+// Internal helper: caller must hold outputMutex
+void BranchOutputFilter::createAndStartRecordingOutputChecked(obs_data_t *settings)
+{
+    if (!isRecordingEnabled(settings) || recordingActive || recordingPending) {
+        return;
+    }
+
+    uint32_t sourceWidth;
+    uint32_t sourceHeight;
+    getSourceResolution(sourceWidth, sourceHeight);
+
+    recordingPending = (sourceWidth == 0 || sourceHeight == 0) &&
+                       obs_data_get_bool(settings, "suspend_recording_when_source_collapsed");
+    if (!recordingPending) {
+        createAndStartRecordingOutput(settings);
+    } else {
+        obs_log(LOG_INFO, "%s: The recording output pending until source is uncollapsed", qUtf8Printable(name));
+    }
+}
+
+void BranchOutputFilter::startRecordingIndividual()
+{
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        if (!ensureInfrastructure(settings)) {
+            return;
+        }
+
+        createAndStartRecordingOutputChecked(settings);
+    }
+}
+
+void BranchOutputFilter::stopRecordingIndividual()
+{
+    stopRecordingOutput();
+
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+        releaseInfrastructureIfIdle();
+    }
+}

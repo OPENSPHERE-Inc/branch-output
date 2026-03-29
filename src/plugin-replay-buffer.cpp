@@ -278,3 +278,40 @@ void BranchOutputFilter::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_
     auto filter = static_cast<BranchOutputFilter *>(data);
     filter->saveReplayBuffer();
 }
+
+// Internal helper: caller must hold outputMutex
+void BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
+{
+    if (!isReplayBufferEnabled(settings) || replayBufferActive) {
+        return;
+    }
+
+    createAndStartReplayBuffer(settings);
+}
+
+void BranchOutputFilter::startReplayBufferIndividual()
+{
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        if (!ensureInfrastructure(settings)) {
+            return;
+        }
+
+        createAndStartReplayBufferChecked(settings);
+    }
+}
+
+void BranchOutputFilter::stopReplayBufferIndividual()
+{
+    stopReplayBufferOutput();
+
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+        releaseInfrastructureIfIdle();
+    }
+}
