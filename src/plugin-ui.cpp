@@ -540,6 +540,30 @@ void BranchOutputFilter::addAdvancedSettingsGroup(obs_properties_t *props)
     );
 }
 
+static void updateReplayBufferEstimate(obs_properties_t *props, obs_data_t *settings)
+{
+    auto estimateProp = obs_properties_get(props, "replay_buffer_estimate");
+    if (!estimateProp) {
+        return;
+    }
+
+    auto seconds = obs_data_get_int(settings, "replay_buffer_duration");
+    auto vbitrate = obs_data_get_int(settings, "bitrate");
+    auto abitrate = obs_data_get_int(settings, "audio_bitrate");
+
+    if (vbitrate > 0 || abitrate > 0) {
+        int64_t memMB = int64_t(seconds) * int64_t(vbitrate + abitrate) * 1000 / 8 / 1024 / 1024;
+        if (memMB < 1) {
+            memMB = 1;
+        }
+        char buf[256];
+        snprintf(buf, sizeof(buf), obs_module_text("ReplayBufferEstimate"), static_cast<int>(memMB));
+        obs_property_set_description(estimateProp, buf);
+    } else {
+        obs_property_set_description(estimateProp, obs_module_text("ReplayBufferEstimateUnknown"));
+    }
+}
+
 void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
 {
     auto replayBufferGroup = obs_properties_create();
@@ -551,6 +575,26 @@ void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
 
     obs_properties_add_int(
         replayBufferGroup, "replay_buffer_duration", obs_module_text("ReplayBufferDuration"), 1, 21600, 1
+    );
+
+    // Estimated memory usage checkbox (checking triggers recalculation)
+    auto rbEstimate = obs_properties_add_bool(
+        replayBufferGroup, "replay_buffer_estimate", obs_module_text("ReplayBufferEstimate.Show")
+    );
+    obs_property_set_long_description(rbEstimate, obs_module_text("ReplayBufferEstimate.ToolTip"));
+    obs_property_set_modified_callback2(
+        rbEstimate,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            if (obs_data_get_bool(settings, "replay_buffer_estimate")) {
+                updateReplayBufferEstimate(_props, settings);
+            } else {
+                obs_property_set_description(
+                    obs_properties_get(_props, "replay_buffer_estimate"), obs_module_text("ReplayBufferEstimate.Show")
+                );
+            }
+            return true;
+        },
+        nullptr
     );
 
     //--- Replay buffer path settings ---//
@@ -603,6 +647,7 @@ void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
             auto _replayBufferEnabled = obs_data_get_bool(settings, "replay_buffer");
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_description"), !_replayBufferEnabled);
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_duration"), _replayBufferEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_estimate"), _replayBufferEnabled);
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_use_profile_path"), _replayBufferEnabled);
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_path"), _replayBufferEnabled);
             obs_property_set_visible(
@@ -1163,10 +1208,11 @@ obs_properties_t *BranchOutputFilter::getProperties()
     auto props = obs_properties_create();
     obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
 
-    // Ensure crop preview checkboxes start unchecked
+    // Ensure transient checkboxes start unchecked
     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
     obs_data_set_bool(settings, "preview_crop_rect_rel", false);
     obs_data_set_bool(settings, "preview_crop_rect_abs", false);
+    obs_data_set_bool(settings, "replay_buffer_estimate", false);
 
     // Reset crop preview when properties dialog is closed
     obs_properties_set_param(props, this, [](void *param) {
