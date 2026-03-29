@@ -82,7 +82,7 @@ obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
     obs_data_set_string(replaySettings, "extension", qUtf8Printable(getFormatExt(rbFormat)));
     obs_data_set_bool(replaySettings, "allow_spaces", !noSpace);
     obs_data_set_int(replaySettings, "max_time_sec", obs_data_get_int(settings, "replay_buffer_duration"));
-    obs_data_set_int(replaySettings, "max_size_mb", 512);
+    obs_data_set_int(replaySettings, "max_size_mb", 0);
 
     // Fragmented MP4/MOV support
     bool isFragmented = strncmp(rbFormat, "fragmented", 10) == 0;
