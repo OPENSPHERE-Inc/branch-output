@@ -21,6 +21,7 @@ The user will specify the output directory for review documents. If the argument
 | `--confirm-round` | OFF | Wait for user confirmation before proceeding to the next round when unresolved findings exist |
 | `--commit` | OFF | Create a git commit after each finding fix (passed to review-respond) |
 | `--max-rounds N` | 5 | Change the maximum number of outer loop rounds (1–10) |
+| `--base {branch}` | `main` or `master` | Specify the base branch (passed to parallel-review) |
 
 ## Review Document File Naming
 
@@ -33,25 +34,31 @@ The user will specify the output directory for review documents. If the argument
 - Create subdirectories as needed.
 - Preserve all round review documents — do not overwrite.
 
+## Review Document Language
+
+Review documents must be written in the **user's chat language**. If the user is conversing in Japanese, output in Japanese; if in English, output in English.
+
 ## Agent Context Separation Rules
 
-- **Use completely new agent contexts per round.** Do not reuse agents from prior rounds.
-- **review and resolve share the same agent context** (reviewer side), while **respond runs in a separate agent context** (fix side). This preserves role separation: the same agent that reviewed also verifies resolution.
+- **review, respond, and resolve must all run in separate agent contexts.** No agent reuse whatsoever.
+- Agent reuse across rounds is also prohibited.
 - Information sharing between agent contexts is done **only through review documents**. No verbal handoffs or context summary passing.
 
 ## Flow Overview
 
 ```
 Round 1 Start
-  ├─ [Reviewer A] parallel-review → round1.md generated
-  ├─ Check for actionable findings (if none, exit)
-  ├─ [Fixer B] review-respond → round1.md updated
-  ├─ [Reviewer A] review-resolve → round1.md verified
-  ├─ Check for feedback
-  │   └─ If feedback: [Fixer C] review-respond → round1.md re-fixed
-  │   └─ [Reviewer A] review-resolve again (up to 3 times until no feedback)
+  ├─ [Agent A] parallel-review → round1.md generated
+  ├─ Orchestrator checks for actionable findings (if none, exit)
+  ├─ [Agent B] review-respond → round1.md updated
+  ├─ [Agent C] review-resolve → round1.md verified
+  ├─ Orchestrator checks for feedback
+  │   └─ If feedback: [Agent D] review-respond → round1.md re-fixed
+  │   └─ [Agent E] review-resolve → round1.md re-verified (up to 3 times)
   └─ Round 1 End
-Round 2 Start (carries over unresolved findings from round1.md, new agent contexts)
+Round 2 Start (all new agent contexts)
+  ├─ [Agent F] parallel-review → round2.md generated (full scope re-review)
+  ├─ Orchestrator deduplicates against prior rounds
   └─ ...
 ```
 
@@ -68,7 +75,9 @@ Repeat the following while the round counter is ≤ `--max-rounds`.
 
 ### 2.1 — Execute Review (parallel-review)
 
-Launch a **new reviewer-side agent** to execute `/parallel-review` equivalent processing. This agent will be reused for review-resolve in Step 2.4.
+Launch a **new agent** to execute `/parallel-review` equivalent processing.
+
+Regardless of the round number, always review the entire scope. Do not pass previous round review documents to the review agent. Deduplication against prior rounds is handled by the orchestrator (Step 2.2).
 
 Agent prompt:
 
@@ -76,27 +85,25 @@ Agent prompt:
 Execute a parallel code review.
 
 Round: Round {N}
+Base branch: {--base value, or default}
 Review targets: Branch-specific commits and working tree changes (default review targets)
-
-{If N > 1:}
-Previous round review document: {previous round file path}
-Read the previous round's review document and:
-- Do not re-report findings that were already addressed.
-- Focus on new issues or regressions introduced by fixes.
+Review document language: {user's chat language}
 
 Output the report to: {current round file path}
 ```
 
-### 2.2 — Check for Actionable Findings
+### 2.2 — Deduplication and Actionable Findings Check
 
-Read the generated review document and check whether any `[Action Required]` findings exist.
+Read the generated review document and:
 
-- **No actionable findings:** Exit the loop and proceed to Step 3 (Final Report).
-- **Actionable findings exist:** Proceed to the next step.
+1. **Deduplicate (Round 2+)** — Compare with the previous round's review document and exclude findings that were already reported and addressed. Remove excluded findings from the document or annotate them as `[No Action Needed] Addressed in prior round`.
+2. **Check for actionable findings** — After deduplication, check whether any `[Action Required]` findings exist.
+   - **No actionable findings:** Exit the loop and proceed to Step 3 (Final Report).
+   - **Actionable findings exist:** Proceed to the next step.
 
 ### 2.3 — Review Response (review-respond)
 
-Launch a **new fixer-side agent** to execute `/review-respond` equivalent processing. This must run in a separate agent context from the reviewer side.
+Launch a **new agent** to execute `/review-respond` equivalent processing.
 
 Agent prompt:
 
@@ -117,7 +124,7 @@ Proceed to fixes after triage without waiting for user confirmation.
 
 ### 2.4 — Review Verification (review-resolve)
 
-Use the **same reviewer-side agent from Step 2.1** to execute `/review-resolve` equivalent processing. Having the same agent that performed the review verify resolutions ensures a consistent evaluation perspective.
+Launch a **new agent** to execute `/review-resolve` equivalent processing.
 
 Agent prompt:
 
@@ -139,8 +146,8 @@ Read the verification report and check for findings marked as "Feedback Required
 
 Re-fix loop:
 
-1. Launch a **new fixer-side agent** to re-execute review-respond. Instruct the agent to re-address findings in the review document based on the feedback in the verification report.
-2. Use the **same reviewer-side agent** to re-execute review-resolve.
+1. Launch a **new agent** to re-execute review-respond. Instruct the agent to re-address findings in the review document based on the feedback.
+2. Launch a **new agent** to re-execute review-resolve.
 3. If feedback remains, repeat. If not resolved after 3 iterations, record as unresolved and end the round.
 
 ### 2.6 — Round End

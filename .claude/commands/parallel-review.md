@@ -24,16 +24,26 @@ The user will specify one or more of the following as review targets:
 - A description of the area to review
 - A round number (e.g., `Round 1`, `Round 3`)
 
-If the argument is `$ARGUMENTS`, interpret it as the review target specification (including round number if present).
+If the argument is `$ARGUMENTS`, interpret it as the review target specification (including round number and options if present).
+
+## Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--base {branch}` | `main` or `master` | Specify the base branch |
 
 ### Default Review Targets
 
 When the user does not explicitly specify review targets, use the following defaults:
 
-1. **Branch-specific commits** — All commits since the divergence point from the main branch (`master` or `main`), equivalent to `git log main..HEAD` or `git log master..HEAD`.
+1. **Branch-specific commits** — All commits since the divergence point from the base branch, equivalent to `git log {base}..HEAD`.
 2. **Working tree changes** — Both staged (`git diff --cached`) and unstaged (`git diff`) changes.
 
-In other words, changes that already exist on the main branch are excluded from the review scope.
+In other words, changes that already exist on the base branch are excluded from the review scope.
+
+#### Base Branch
+
+The user can specify the base branch with `--base {branch}`. When not specified, the default is `main` or `master` (whichever exists on the remote; `main` takes priority if both exist).
 
 ## Reviewers
 

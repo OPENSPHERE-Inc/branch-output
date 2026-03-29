@@ -25,18 +25,28 @@ When enabled, each finding's fix is committed to git after the fix is complete i
 
 - **Granularity**: Commit per finding whenever possible. Ideally, one finding's fix corresponds to one commit.
 - **Multiple findings in the same file**: Even when fixing multiple findings in the same file sequentially, commit individually after each finding's fix is complete.
-- **Commit message**: Describe the fix concisely. Do **not** include finding IDs (`C-1`, `M-1`, etc.) in commit messages.
-- **Staging**: Stage only the files related to the fix (do not use `git add -A`).
+- **Commit message**: 1–3 lines describing the fix concisely. Do **not** include finding IDs (`C-1`, `M-1`, etc.) in commit messages.
+- **Staging**: Stage only source code files related to the fix (do not use `git add -A`). **Do not commit review documents.**
 - **Relationship to build verification**: Commits are made after Step 4 (Build Verification). If build errors occur, include their fixes before committing.
 
 #### Commit Message Examples
 
 ```
 fix: Add null check before accessing output pointer
+```
 
+```
 fix: Guard audio buffer access with mutex lock
 
+Wrap push/pop operations with QMutexLocker to prevent
+data race between audio callback and encoder thread.
+```
+
+```
 fix: Use OBSDataAutoRelease for RAII protection in lambda
+
+The lambda captured a raw obs_data_t pointer without
+adding a reference, risking use-after-free.
 ```
 
 ## Review Document Format
