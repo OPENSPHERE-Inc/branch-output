@@ -578,8 +578,9 @@ void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
     );
 
     // Estimated memory usage checkbox (checking triggers recalculation)
-    auto rbEstimate =
-        obs_properties_add_bool(replayBufferGroup, "replay_buffer_estimate", obs_module_text("ReplayBufferEstimate.Show"));
+    auto rbEstimate = obs_properties_add_bool(
+        replayBufferGroup, "replay_buffer_estimate", obs_module_text("ReplayBufferEstimate.Show")
+    );
     obs_property_set_long_description(rbEstimate, obs_module_text("ReplayBufferEstimate.ToolTip"));
     obs_property_set_modified_callback2(
         rbEstimate,
@@ -588,8 +589,7 @@ void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
                 updateReplayBufferEstimate(_props, settings);
             } else {
                 obs_property_set_description(
-                    obs_properties_get(_props, "replay_buffer_estimate"),
-                    obs_module_text("ReplayBufferEstimate.Show")
+                    obs_properties_get(_props, "replay_buffer_estimate"), obs_module_text("ReplayBufferEstimate.Show")
                 );
             }
             return true;
