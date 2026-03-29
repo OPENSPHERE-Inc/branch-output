@@ -26,6 +26,15 @@ The user will specify one or more of the following as review targets:
 
 If the argument is `$ARGUMENTS`, interpret it as the review target specification (including round number if present).
 
+### Default Review Targets
+
+When the user does not explicitly specify review targets, use the following defaults:
+
+1. **Branch-specific commits** — All commits since the divergence point from the main branch (`master` or `main`), equivalent to `git log main..HEAD` or `git log master..HEAD`.
+2. **Working tree changes** — Both staged (`git diff --cached`) and unstaged (`git diff`) changes.
+
+In other words, changes that already exist on the main branch are excluded from the review scope.
+
 ## Reviewers
 
 ### Required (always launched)

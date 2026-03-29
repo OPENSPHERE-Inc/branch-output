@@ -1,6 +1,6 @@
 ---
 description: Respond to review findings by triaging, fixing, self-reviewing, and updating the review document
-allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash
+allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*)
 ---
 
 # Review Response
@@ -10,6 +10,34 @@ You are the **review response leader**. Your job is to process a review document
 ## Input
 
 The user will specify a path to a review document (markdown). If the argument is `$ARGUMENTS`, interpret it as the path to the review document.
+
+## Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--commit` | OFF | Create a git commit after each finding is fixed |
+
+### `--commit` Option
+
+When enabled, each finding's fix is committed to git after the fix is complete in Step 3 (Fix).
+
+#### Commit Rules
+
+- **Granularity**: Commit per finding whenever possible. Ideally, one finding's fix corresponds to one commit.
+- **Multiple findings in the same file**: Even when fixing multiple findings in the same file sequentially, commit individually after each finding's fix is complete.
+- **Commit message**: Describe the fix concisely. Do **not** include finding IDs (`C-1`, `M-1`, etc.) in commit messages.
+- **Staging**: Stage only the files related to the fix (do not use `git add -A`).
+- **Relationship to build verification**: Commits are made after Step 4 (Build Verification). If build errors occur, include their fixes before committing.
+
+#### Commit Message Examples
+
+```
+fix: Add null check before accessing output pointer
+
+fix: Guard audio buffer access with mutex lock
+
+fix: Use OBSDataAutoRelease for RAII protection in lambda
+```
 
 ## Review Document Format
 
