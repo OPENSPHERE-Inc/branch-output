@@ -217,9 +217,12 @@ void BranchOutputFilter::registerHotkey()
     );
 }
 
+// Caller must hold outputMutex.
+// Idempotent: if infrastructure already exists, return true.
+// On failure after partial resource creation, all resources are cleaned up
+// so that the next call can retry from a clean state.
 bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
 {
-    // Idempotent: if infrastructure already exists, return true
     if (view) {
         return true;
     }
@@ -323,8 +326,12 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
         videoOutput = obs_view_add2(view, &ovi);
         if (!videoOutput) {
             obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
-            delete filterVideoCapture;
-            filterVideoCapture = nullptr;
+            // releaseInfrastructureIfIdle() safely handles partially-initialized state:
+            // - OBS RAII wrappers accept nullptr assignment
+            // - AudioCapture/filterVideoCapture pointers are nullptr-checked before delete
+            // - FilterVideoCapture::setActive(false) on a never-activated instance is safe
+            //   (simply stores false to atomic bool)
+            releaseInfrastructureIfIdle();
             return false;
         }
         filterVideoCapture->setActive(true);
@@ -351,6 +358,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
         videoOutput = obs_view_add2(view, &ovi);
         if (!videoOutput) {
             obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
+            releaseInfrastructureIfIdle();
             return false;
         }
     }
@@ -364,6 +372,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
     obs_audio_info ai = {0};
     if (!obs_get_audio_info(&ai)) {
         obs_log(LOG_ERROR, "%s: Failed to get audio info", qUtf8Printable(name));
+        releaseInfrastructureIfIdle();
         return false;
     }
 
@@ -408,6 +417,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
                         LOG_ERROR, "%s: Invalid master audio track No.%d for track %d", qUtf8Printable(name),
                         masterTrack, track
                     );
+                    releaseInfrastructureIfIdle();
                     return false;
                 }
                 obs_log(
@@ -465,6 +475,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
                     delete audioContext->capture;
                     audioContext->capture = nullptr;
                 }
+                releaseInfrastructureIfIdle();
                 return false;
             }
         }
@@ -482,6 +493,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
             obs_log(LOG_ERROR, "%s: Audio creation failed", qUtf8Printable(name));
             delete audioContext->capture;
             audioContext->capture = nullptr;
+            releaseInfrastructureIfIdle();
             return false;
         }
     }
@@ -492,6 +504,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
     videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), settings, nullptr);
     if (!videoEncoder) {
         obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));
+        releaseInfrastructureIfIdle();
         return false;
     }
 
@@ -549,6 +562,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
         );
         if (!audioContext->encoder) {
             obs_log(LOG_ERROR, "%s: Audio encoder creation failed for track %d", qUtf8Printable(name), i + 1);
+            releaseInfrastructureIfIdle();
             return false;
         }
         obs_encoder_set_audio(audioContext->encoder, audioContext->audio);
@@ -562,6 +576,10 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
     return true;
 }
 
+// Start all enabled outputs. User intent flags (streamingUserEnabled, etc.)
+// are intentionally respected: if the user has disabled a specific output type
+// via the status dock checkbox, it stays disabled even after a restartOutput()
+// triggered by settings changes.
 void BranchOutputFilter::startOutput(obs_data_t *settings)
 {
     // Force release references
@@ -678,6 +696,8 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
     obs_log(LOG_INFO, "Recently settings loaded");
 }
 
+// Caller must hold outputMutex.
+// Releases shared infrastructure (view, encoders, audio) if all outputs are idle.
 void BranchOutputFilter::releaseInfrastructureIfIdle()
 {
     // Only release if all outputs are stopped
@@ -734,6 +754,11 @@ void BranchOutputFilter::stopOutput()
         for (size_t i = 0; i < MAX_SERVICES; i++) {
             stopStreamingOutput(i);
         }
+
+        // Reset individual stopping flag so it does not persist across
+        // full stop/restart cycles (e.g., filter eye-icon toggle while
+        // streamingIndividualStopping is still true).
+        streamingIndividualStopping = false;
 
         releaseInfrastructureIfIdle();
     }
@@ -885,17 +910,23 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_INDIVIDUAL) {
-                // Individual start: follow OBS frontend state per output type
-                // Only one start per tick to avoid crash from rapid state transitions
-                if (isStreamingUserEnabled() && obs_frontend_streaming_active()) {
+                // Individual start: follow OBS frontend state per output type.
+                // Check both the user toggle (dock checkbox) and the filter setting
+                // (whether the output type is configured) to avoid blocking subsequent
+                // outputs when an unconfigured type matches first.
+                OBSDataAutoRelease idleSettings = obs_source_get_settings(filterSource);
+                if (isStreamingUserEnabled() && obs_frontend_streaming_active() &&
+                    isStreamingGroupEnabled(idleSettings)) {
                     startStreamingIndividual();
                     return;
                 }
-                if (isRecordingUserEnabled() && obs_frontend_recording_active()) {
+                if (isRecordingUserEnabled() && obs_frontend_recording_active() &&
+                    isRecordingEnabled(idleSettings)) {
                     startRecordingIndividual();
                     return;
                 }
-                if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active()) {
+                if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() &&
+                    isReplayBufferEnabled(idleSettings)) {
                     startReplayBufferIndividual();
                     return;
                 }
@@ -971,6 +1002,23 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     return;
                 }
                 // No stop needed — fall through to per-output toggle + monitoring
+
+                // Individual start for additional outputs while some are already active
+                if (isStreamingUserEnabled() && obs_frontend_streaming_active() && !streamingActive &&
+                    isStreamingGroupEnabled(settings)) {
+                    startStreamingIndividual();
+                    return;
+                }
+                if (isRecordingUserEnabled() && obs_frontend_recording_active() && !recordingActive &&
+                    !recordingPending && isRecordingEnabled(settings)) {
+                    startRecordingIndividual();
+                    return;
+                }
+                if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() && !replayBufferActive &&
+                    isReplayBufferEnabled(settings)) {
+                    startReplayBufferIndividual();
+                    return;
+                }
             }
 
             // Per-output toggle check (all interlock modes including non-Individual)
@@ -992,18 +1040,29 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 return;
             }
 
-            // Per-output toggle re-enable check (all interlock modes)
-            if (isStreamingUserEnabled() && !streamingActive && isStreamingGroupEnabled(settings)) {
-                startStreamingIndividual();
-                return;
-            }
-            if (isRecordingUserEnabled() && !recordingActive && !recordingPending && isRecordingEnabled(settings)) {
-                startRecordingIndividual();
-                return;
-            }
-            if (isReplayBufferUserEnabled() && !replayBufferActive && isReplayBufferEnabled(settings)) {
-                startReplayBufferIndividual();
-                return;
+            // Per-output toggle re-enable check.
+            // Only re-enable an output if the current interlock condition is met.
+            // For ALWAYS_OFF, we never reach here (returned above).
+            // For INDIVIDUAL, per-output start is handled in the Individual block above.
+            // For other modes, re-enable only when the interlock condition is currently satisfied.
+            // Note: No explicit interlock recheck is needed here because this code is only
+            // reachable within the "outputs active" block, which means the interlock condition
+            // was already satisfied when outputs were started and has not been violated (the
+            // interlock stop checks above would have returned before reaching this point).
+            if (interlockType != INTERLOCK_TYPE_INDIVIDUAL) {
+                if (isStreamingUserEnabled() && !streamingActive && isStreamingGroupEnabled(settings)) {
+                    startStreamingIndividual();
+                    return;
+                }
+                if (isRecordingUserEnabled() && !recordingActive && !recordingPending &&
+                    isRecordingEnabled(settings)) {
+                    startRecordingIndividual();
+                    return;
+                }
+                if (isReplayBufferUserEnabled() && !replayBufferActive && isReplayBufferEnabled(settings)) {
+                    startReplayBufferIndividual();
+                    return;
+                }
             }
 
             if (activeSettingsRev < storedSettingsRev) {

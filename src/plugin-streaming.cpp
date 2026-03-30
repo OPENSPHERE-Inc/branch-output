@@ -319,7 +319,9 @@ bool BranchOutputFilter::isStreamingEnabled(obs_data_t *settings, size_t index)
     return !!strlen(obs_data_get_string(settings, qUtf8Printable(propNameFormat.arg("server"))));
 }
 
-// Internal helper: caller must hold outputMutex
+// Internal helper: caller must hold outputMutex.
+// Note: stopStreamingOutput() sets streamings[i].output to nullptr, so stopped slots
+// are always recreated with fresh settings via createSreamingOutput().
 void BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
 {
     if (!isStreamingGroupEnabled(settings) || countActiveStreamings() > 0) {
@@ -339,7 +341,9 @@ void BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
 }
 
 // Internal helper: caller must hold pluginMutex + outputMutex.
+// Lock order: pluginMutex -> outputMutex (must be consistent with all callers).
 // Returns true if all streamings have stopped.
+// Note: stopStreamingOutput() called within assumes outputMutex is already held.
 bool BranchOutputFilter::stopStreamingOutputsGracefully()
 {
     for (size_t i = 0; i < MAX_SERVICES; i++) {

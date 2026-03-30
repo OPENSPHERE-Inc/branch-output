@@ -25,6 +25,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/deque.h>
 #include <util/threading.h>
 
+#include <atomic>
+
 #include <QObject>
 
 #include "UI/output-status-dock.hpp"
@@ -85,10 +87,12 @@ class BranchOutputFilter : public QObject {
     bool blankingOutputActive;
     bool blankingAudioMuted;
 
-    // Per-output user intent flags (persisted via save callback)
-    bool streamingUserEnabled;
-    bool recordingUserEnabled;
-    bool replayBufferUserEnabled;
+    // Per-output user intent flags (persisted via save callback).
+    // Atomic because setters are called from UI thread while saveCallback()
+    // may be called from OBS core on a different thread.
+    std::atomic<bool> streamingUserEnabled;
+    std::atomic<bool> recordingUserEnabled;
+    std::atomic<bool> replayBufferUserEnabled;
 
     // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
@@ -171,13 +175,13 @@ class BranchOutputFilter : public QObject {
     void setAudioCapturesActive(bool active);
     void saveCallback(obs_data_t *settings);
 
-    // Per-output user intent setters/getters
-    void setStreamingUserEnabled(bool enabled) { streamingUserEnabled = enabled; }
-    void setRecordingUserEnabled(bool enabled) { recordingUserEnabled = enabled; }
-    void setReplayBufferUserEnabled(bool enabled) { replayBufferUserEnabled = enabled; }
-    bool isStreamingUserEnabled() const { return streamingUserEnabled; }
-    bool isRecordingUserEnabled() const { return recordingUserEnabled; }
-    bool isReplayBufferUserEnabled() const { return replayBufferUserEnabled; }
+    // Per-output user intent setters/getters (thread-safe via std::atomic)
+    void setStreamingUserEnabled(bool enabled) { streamingUserEnabled.store(enabled, std::memory_order_relaxed); }
+    void setRecordingUserEnabled(bool enabled) { recordingUserEnabled.store(enabled, std::memory_order_relaxed); }
+    void setReplayBufferUserEnabled(bool enabled) { replayBufferUserEnabled.store(enabled, std::memory_order_relaxed); }
+    bool isStreamingUserEnabled() const { return streamingUserEnabled.load(std::memory_order_relaxed); }
+    bool isRecordingUserEnabled() const { return recordingUserEnabled.load(std::memory_order_relaxed); }
+    bool isReplayBufferUserEnabled() const { return replayBufferUserEnabled.load(std::memory_order_relaxed); }
     std::optional<CropRect> calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings);
     QString applyFilenameFormatArgs(const QString &format, bool noSpace);
 

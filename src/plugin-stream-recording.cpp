@@ -455,6 +455,9 @@ void BranchOutputFilter::startRecordingIndividual()
     {
         OBSMutexAutoUnlock locked(&outputMutex);
 
+        // ensureInfrastructure() may fail gracefully if the source is collapsed
+        // (calculateCrop returns nullopt). This is acceptable — the interval timer
+        // will retry on the next tick when the source becomes available.
         if (!ensureInfrastructure(settings)) {
             return;
         }
@@ -465,6 +468,11 @@ void BranchOutputFilter::startRecordingIndividual()
 
 void BranchOutputFilter::stopRecordingIndividual()
 {
+    // stopRecordingOutput() clears recordingPending and recordingActive.
+    // If recording was in pending state (source collapsed), this simply clears the
+    // pending flag. releaseInfrastructureIfIdle() will then release shared resources
+    // if no other outputs are active. Re-enabling recording later will go through
+    // ensureInfrastructure() which will retry from a clean state.
     stopRecordingOutput();
 
     pthread_mutex_lock(&outputMutex);

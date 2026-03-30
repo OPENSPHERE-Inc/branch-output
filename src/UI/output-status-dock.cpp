@@ -1294,6 +1294,8 @@ OutputCell::OutputCell(
     QWidget *parent
 )
     : QWidget(parent),
+      // _item ownership is transferred to QTableWidget via setItem(); QTableWidget
+      // deletes it when the table is destroyed. Do not delete _item in ~OutputCell().
       _item(new OutputTableCellItem(rowId, "")),
       outputType(_outputType),
       source(_source)
@@ -1308,6 +1310,11 @@ OutputCell::OutputCell(
     outputToggleCheckbox->setCursor(Qt::PointingHandCursor);
 
     connect(outputToggleCheckbox, &QCheckBox::clicked, this, [this](bool checked) { emit toggled(checked); });
+
+    // ROW_OUTPUT_NONE has no associated output to toggle
+    if (outputType == ROW_OUTPUT_NONE) {
+        outputToggleCheckbox->setVisible(false);
+    }
 
     name = new QLabel(this);
 
@@ -1378,80 +1385,6 @@ bool OutputCell::eventFilter(QObject *obj, QEvent *event)
         }
     }
     return QWidget::eventFilter(obj, event);
-}
-
-//--- RecordingOutputCell class ---//
-
-RecordingOutputCell::RecordingOutputCell(
-    const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent
-)
-    : LabelCell(rowId, parent),
-      source(_source)
-{
-    // Markup as link
-    setTextFormat(Qt::RichText);
-    setCursor(Qt::PointingHandCursor);
-
-    setTextValue(textValue);
-}
-
-RecordingOutputCell::~RecordingOutputCell() {}
-
-void RecordingOutputCell::setTextValue(const QString &textValue)
-{
-    // Markup as link
-    LabelCell::setValue(textValue);
-    LabelCell::setText(QString("<u>%1</u>").arg(textValue));
-}
-
-void RecordingOutputCell::mousePressEvent(QMouseEvent *event)
-{
-    if (event->button() == Qt::LeftButton) {
-        // Open OS file browser
-        OBSDataAutoRelease settings = obs_source_get_settings(source);
-        auto path = obs_data_get_bool(settings, "use_profile_recording_path")
-                        ? getProfileRecordingPath(obs_frontend_get_profile_config())
-                        : obs_data_get_string(settings, "path");
-        obs_log(LOG_DEBUG, "path=%s", path);
-        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
-    }
-}
-
-//--- ReplayBufferOutputCell class ---//
-
-ReplayBufferOutputCell::ReplayBufferOutputCell(
-    const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent
-)
-    : LabelCell(rowId, parent),
-      source(_source)
-{
-    // Markup as link
-    setTextFormat(Qt::RichText);
-    setCursor(Qt::PointingHandCursor);
-
-    setTextValue(textValue);
-}
-
-ReplayBufferOutputCell::~ReplayBufferOutputCell() {}
-
-void ReplayBufferOutputCell::setTextValue(const QString &textValue)
-{
-    // Markup as link
-    LabelCell::setValue(textValue);
-    LabelCell::setText(QString("<u>%1</u>").arg(textValue));
-}
-
-void ReplayBufferOutputCell::mousePressEvent(QMouseEvent *event)
-{
-    if (event->button() == Qt::LeftButton) {
-        // Open OS file browser
-        OBSDataAutoRelease settings = obs_source_get_settings(source);
-        auto path = obs_data_get_bool(settings, "replay_buffer_use_profile_path")
-                        ? getProfileRecordingPath(obs_frontend_get_profile_config())
-                        : obs_data_get_string(settings, "replay_buffer_path");
-        obs_log(LOG_DEBUG, "path=%s", path);
-        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
-    }
 }
 
 //--- StatusCell class ---//

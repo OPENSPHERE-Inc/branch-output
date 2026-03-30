@@ -135,40 +135,6 @@ public:
     void setTextValue(const QString &value);
 };
 
-class RecordingOutputCell : public LabelCell {
-    Q_OBJECT
-
-    obs_source_t *source;
-
-protected:
-    void mousePressEvent(QMouseEvent *event) override;
-
-public:
-    explicit RecordingOutputCell(
-        const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr
-    );
-    ~RecordingOutputCell();
-
-    void setTextValue(const QString &value);
-};
-
-class ReplayBufferOutputCell : public LabelCell {
-    Q_OBJECT
-
-    obs_source_t *source;
-
-protected:
-    void mousePressEvent(QMouseEvent *event) override;
-
-public:
-    explicit ReplayBufferOutputCell(
-        const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr
-    );
-    ~ReplayBufferOutputCell();
-
-    void setTextValue(const QString &value);
-};
-
 class OutputCell : public QWidget {
     Q_OBJECT
 
