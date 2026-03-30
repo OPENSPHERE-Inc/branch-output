@@ -920,8 +920,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     startStreamingIndividual();
                     return;
                 }
-                if (isRecordingUserEnabled() && obs_frontend_recording_active() &&
-                    isRecordingEnabled(idleSettings)) {
+                if (isRecordingUserEnabled() && obs_frontend_recording_active() && isRecordingEnabled(idleSettings)) {
                     startRecordingIndividual();
                     return;
                 }
@@ -1054,8 +1053,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     startStreamingIndividual();
                     return;
                 }
-                if (isRecordingUserEnabled() && !recordingActive && !recordingPending &&
-                    isRecordingEnabled(settings)) {
+                if (isRecordingUserEnabled() && !recordingActive && !recordingPending && isRecordingEnabled(settings)) {
                     startRecordingIndividual();
                     return;
                 }
