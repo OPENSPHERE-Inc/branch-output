@@ -1309,7 +1309,7 @@ OutputCell::OutputCell(
     outputToggleCheckbox->setChecked(checked);
     outputToggleCheckbox->setCursor(Qt::PointingHandCursor);
 
-    connect(outputToggleCheckbox, &QCheckBox::clicked, this, [this](bool checked) { emit toggled(checked); });
+    connect(outputToggleCheckbox, &QCheckBox::clicked, this, [this](bool value) { emit toggled(value); });
 
     // ROW_OUTPUT_NONE has no associated output to toggle
     if (outputType == ROW_OUTPUT_NONE) {
