@@ -280,13 +280,18 @@ void BranchOutputFilter::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_
 }
 
 // Internal helper: caller must hold outputMutex
-void BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
+bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
 {
-    if (!isReplayBufferEnabled(settings) || replayBufferActive) {
-        return;
+    if (!isReplayBufferEnabled(settings)) {
+        return false;
+    }
+    if (replayBufferActive) {
+        return true;
     }
 
     createAndStartReplayBuffer(settings);
+
+    return replayBufferActive;
 }
 
 void BranchOutputFilter::startReplayBufferIndividual()
@@ -301,7 +306,9 @@ void BranchOutputFilter::startReplayBufferIndividual()
             return;
         }
 
-        createAndStartReplayBufferChecked(settings);
+        if (!createAndStartReplayBufferChecked(settings)) {
+            releaseInfrastructureIfIdle();
+        }
     }
 }
 

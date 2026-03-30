@@ -428,10 +428,13 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
 }
 
 // Internal helper: caller must hold outputMutex
-void BranchOutputFilter::createAndStartRecordingOutputChecked(obs_data_t *settings)
+bool BranchOutputFilter::createAndStartRecordingOutputChecked(obs_data_t *settings)
 {
-    if (!isRecordingEnabled(settings) || recordingActive || recordingPending) {
-        return;
+    if (!isRecordingEnabled(settings)) {
+        return false;
+    }
+    if (recordingActive || recordingPending) {
+        return true;
     }
 
     uint32_t sourceWidth;
@@ -445,6 +448,8 @@ void BranchOutputFilter::createAndStartRecordingOutputChecked(obs_data_t *settin
     } else {
         obs_log(LOG_INFO, "%s: The recording output pending until source is uncollapsed", qUtf8Printable(name));
     }
+
+    return recordingActive || recordingPending;
 }
 
 void BranchOutputFilter::startRecordingIndividual()
@@ -462,7 +467,9 @@ void BranchOutputFilter::startRecordingIndividual()
             return;
         }
 
-        createAndStartRecordingOutputChecked(settings);
+        if (!createAndStartRecordingOutputChecked(settings)) {
+            releaseInfrastructureIfIdle();
+        }
     }
 }
 

@@ -322,10 +322,13 @@ bool BranchOutputFilter::isStreamingEnabled(obs_data_t *settings, size_t index)
 // Internal helper: caller must hold outputMutex.
 // Note: stopStreamingOutput() sets streamings[i].output to nullptr, so stopped slots
 // are always recreated with fresh settings via createSreamingOutput().
-void BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
+bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
 {
-    if (!isStreamingGroupEnabled(settings) || countActiveStreamings() > 0) {
-        return;
+    if (!isStreamingGroupEnabled(settings)) {
+        return false;
+    }
+    if (countActiveStreamings() > 0) {
+        return true;
     }
 
     auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
@@ -338,6 +341,8 @@ void BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
     for (size_t i = 0; i < MAX_SERVICES; i++) {
         startStreamingOutput(i);
     }
+
+    return countActiveStreamings() > 0;
 }
 
 // Internal helper: caller must hold pluginMutex + outputMutex.
@@ -374,7 +379,9 @@ void BranchOutputFilter::startStreamingIndividual()
             return;
         }
 
-        createAndStartStreamingOutputs(settings);
+        if (!createAndStartStreamingOutputs(settings)) {
+            releaseInfrastructureIfIdle();
+        }
     }
 }
 

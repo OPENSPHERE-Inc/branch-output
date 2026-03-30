@@ -154,9 +154,10 @@ class BranchOutputFilter : public QObject {
     void releaseInfrastructureIfIdle();
 
     // Internal helpers (caller must hold outputMutex)
-    void createAndStartStreamingOutputs(obs_data_t *settings);
-    void createAndStartRecordingOutputChecked(obs_data_t *settings);
-    void createAndStartReplayBufferChecked(obs_data_t *settings);
+    // Returns true if any output was actually started.
+    bool createAndStartStreamingOutputs(obs_data_t *settings);
+    bool createAndStartRecordingOutputChecked(obs_data_t *settings);
+    bool createAndStartReplayBufferChecked(obs_data_t *settings);
     bool stopStreamingOutputsGracefully();
 
     void startStreamingIndividual();
