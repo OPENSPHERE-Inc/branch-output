@@ -75,14 +75,15 @@ class BranchOutputFilter : public QObject {
     struct BranchOutputStreamingContext {
         OBSOutputAutoRelease output;
         OBSServiceAutoRelease service;
-        uint64_t reconnectAttemptingAt;
-        bool outputStarting;
-        bool active;
-        bool stopping;
+        std::atomic<uint64_t> reconnectAttemptingAt{0};
+        std::atomic<bool> outputStarting{false};
+        bool active = false;
+        bool stopping = false;
         OBSSignal outputStartingSignal;
         OBSSignal outputActivateSignal;
         OBSSignal outputReconnectSignal;
         OBSSignal outputStopSignal;
+
     };
 
     QString name;
@@ -216,7 +217,7 @@ class BranchOutputFilter : public QObject {
 
     // Implemented in plugin-streaming.cpp
     obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
-    BranchOutputStreamingContext createSreamingOutput(obs_data_t *settings, size_t index = 0);
+    bool createSreamingOutput(obs_data_t *settings, size_t index = 0);
     void startStreamingOutput(size_t index = 0);
     void stopStreamingOutput(size_t index = 0);
     void reconnectStreamingOutput(size_t index = 0);

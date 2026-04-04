@@ -81,11 +81,6 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", qUtf8Printable(name));
     obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
 
-    // Do not use memset
-    for (size_t i = 0; i < MAX_SERVICES; i++) {
-        streamings[i] = {0};
-    }
-
     // Per-stream user-enabled flags (with backward compatibility migration)
     bool legacyStreamingEnabled = obs_data_get_bool(settings, "streaming_output_enabled");
     for (size_t i = 0; i < MAX_SERVICES; i++) {
