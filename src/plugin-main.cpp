@@ -599,14 +599,20 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             return;
         }
 
+        bool anyStarted = false;
         if (isRecordingUserEnabled()) {
-            createAndStartRecordingOutputChecked(settings);
+            anyStarted |= createAndStartRecordingOutputChecked(settings);
         }
         if (isReplayBufferUserEnabled()) {
-            createAndStartReplayBufferChecked(settings);
+            anyStarted |= createAndStartReplayBufferChecked(settings);
         }
         if (isStreamingUserEnabled()) {
-            createAndStartStreamingOutputs(settings);
+            anyStarted |= createAndStartStreamingOutputs(settings);
+        }
+
+        // Release infrastructure if all outputs failed to start
+        if (!anyStarted) {
+            releaseInfrastructureIfIdle();
         }
     }
 }
@@ -778,19 +784,24 @@ void BranchOutputFilter::restartOutput()
 
 void BranchOutputFilter::setAudioCapturesActive(bool active)
 {
-    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-        auto audioContext = &audios[i];
-        if (audioContext->capture) {
-            audioContext->capture->setActive(active);
+    pthread_mutex_lock(&audioMutex);
+    {
+        OBSMutexAutoUnlock locked(&audioMutex);
+
+        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
+            auto audioContext = &audios[i];
+            if (audioContext->capture) {
+                audioContext->capture->setActive(active);
+            }
         }
     }
 }
 
 void BranchOutputFilter::saveCallback(obs_data_t *settings)
 {
-    obs_data_set_bool(settings, "streaming_output_enabled", streamingUserEnabled);
-    obs_data_set_bool(settings, "recording_output_enabled", recordingUserEnabled);
-    obs_data_set_bool(settings, "replay_buffer_output_enabled", replayBufferUserEnabled);
+    obs_data_set_bool(settings, "streaming_output_enabled", isStreamingUserEnabled());
+    obs_data_set_bool(settings, "recording_output_enabled", isRecordingUserEnabled());
+    obs_data_set_bool(settings, "replay_buffer_output_enabled", isReplayBufferUserEnabled());
 }
 
 void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_source_t *parent)
@@ -985,18 +996,19 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_INDIVIDUAL) {
-                // Individual stop: follow OBS frontend state per output type
-                // Only one stop per tick to avoid crash from rapid state transitions
-                if ((!obs_frontend_streaming_active() || !isStreamingUserEnabled()) && streamingActive) {
+                // Individual stop: follow OBS frontend state per output type.
+                // Only checks the OBS frontend state here; user toggle (per-output checkbox)
+                // is handled separately in the common per-output toggle block below.
+                // Only one stop per tick to avoid crash from rapid state transitions.
+                if (!obs_frontend_streaming_active() && streamingActive) {
                     stopStreamingIndividual();
                     return;
                 }
-                if ((!obs_frontend_recording_active() || !isRecordingUserEnabled()) &&
-                    (recordingActive || recordingPending)) {
+                if (!obs_frontend_recording_active() && (recordingActive || recordingPending)) {
                     stopRecordingIndividual();
                     return;
                 }
-                if ((!obs_frontend_replay_buffer_active() || !isReplayBufferUserEnabled()) && replayBufferActive) {
+                if (!obs_frontend_replay_buffer_active() && replayBufferActive) {
                     stopReplayBufferIndividual();
                     return;
                 }

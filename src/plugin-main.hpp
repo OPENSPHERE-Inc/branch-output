@@ -37,6 +37,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #define MAX_SERVICES 8
 
+// Defined in plugin-main.cpp. Guards plugin-wide state shared across filter instances.
+extern pthread_mutex_t pluginMutex;
+
 class BranchOutputFilter : public QObject {
     Q_OBJECT
 
@@ -153,7 +156,7 @@ class BranchOutputFilter : public QObject {
     bool ensureInfrastructure(obs_data_t *settings);
     void releaseInfrastructureIfIdle();
 
-    // Internal helpers (caller must hold outputMutex)
+    // Internal helpers (caller must hold outputMutex, and must call ensureInfrastructure() first)
     // Returns true if any output was actually started.
     bool createAndStartStreamingOutputs(obs_data_t *settings);
     bool createAndStartRecordingOutputChecked(obs_data_t *settings);

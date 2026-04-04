@@ -320,6 +320,8 @@ bool BranchOutputFilter::isStreamingEnabled(obs_data_t *settings, size_t index)
 }
 
 // Internal helper: caller must hold outputMutex.
+// Caller must call ensureInfrastructure() before this function to set up
+// the view, video/audio encoders, and related infrastructure.
 // Note: stopStreamingOutput() sets streamings[i].output to nullptr, so stopped slots
 // are always recreated with fresh settings via createSreamingOutput().
 bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
@@ -345,8 +347,7 @@ bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
     return countActiveStreamings() > 0;
 }
 
-// Internal helper: caller must hold pluginMutex + outputMutex.
-// Lock order: pluginMutex -> outputMutex (must be consistent with all callers).
+// Internal helper: caller must hold outputMutex.
 // Returns true if all streamings have stopped.
 // Note: stopStreamingOutput() called within assumes outputMutex is already held.
 bool BranchOutputFilter::stopStreamingOutputsGracefully()
@@ -384,8 +385,6 @@ void BranchOutputFilter::startStreamingIndividual()
         }
     }
 }
-
-extern pthread_mutex_t pluginMutex;
 
 void BranchOutputFilter::stopStreamingIndividual()
 {

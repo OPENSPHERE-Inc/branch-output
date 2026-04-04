@@ -279,7 +279,9 @@ void BranchOutputFilter::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_
     filter->saveReplayBuffer();
 }
 
-// Internal helper: caller must hold outputMutex
+// Internal helper: caller must hold outputMutex.
+// Caller must call ensureInfrastructure() before this function to set up
+// the view, video/audio encoders, and related infrastructure.
 bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
 {
     if (!isReplayBufferEnabled(settings)) {

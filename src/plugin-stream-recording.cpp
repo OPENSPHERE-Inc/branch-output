@@ -427,7 +427,9 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
     }
 }
 
-// Internal helper: caller must hold outputMutex
+// Internal helper: caller must hold outputMutex.
+// Caller must call ensureInfrastructure() before this function to set up
+// the view, video/audio encoders, and related infrastructure.
 bool BranchOutputFilter::createAndStartRecordingOutputChecked(obs_data_t *settings)
 {
     if (!isRecordingEnabled(settings)) {
