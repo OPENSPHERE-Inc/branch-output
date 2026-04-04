@@ -341,7 +341,7 @@ bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
     }
 
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (isStreamingUserEnabled(i)) {
+        if (isStreamingUserEnabled(i) && streamings[i].output) {
             startStreamingOutput(i);
         }
     }
@@ -352,43 +352,40 @@ bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
 // Internal helper: caller must hold outputMutex.
 // Returns true if all streamings have stopped.
 // Note: stopStreamingOutput() called within assumes outputMutex is already held.
-bool BranchOutputFilter::stopStreamingOutputsGracefully()
+bool BranchOutputFilter::stopAllStreamingOutputsGracefully()
 {
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (streamings[i].output && streamings[i].active) {
-            if (streamings[i].stopping) {
-                if (reconnectAttemptingTimedOut(i)) {
-                    stopStreamingOutput(i);
-                }
-            } else if (obs_output_reconnecting(streamings[i].output)) {
-                streamings[i].stopping = true;
-            } else {
-                stopStreamingOutput(i);
-            }
-        }
+        stopSingleStreamingOutputGracefully(i);
     }
     return countActiveStreamings() == 0;
 }
 
-void BranchOutputFilter::startStreamingIndividual()
+bool BranchOutputFilter::startStreamingIndividual()
 {
     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
 
-    pthread_mutex_lock(&outputMutex);
+    pthread_mutex_lock(&pluginMutex);
     {
-        OBSMutexAutoUnlock locked(&outputMutex);
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
 
-        if (!ensureInfrastructure(settings)) {
-            return;
-        }
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-        if (!createAndStartStreamingOutputs(settings)) {
-            releaseInfrastructureIfIdle();
+            if (!ensureInfrastructure(settings)) {
+                return false;
+            }
+
+            if (!createAndStartStreamingOutputs(settings)) {
+                releaseInfrastructureIfIdle();
+                return false;
+            }
         }
     }
+    return true;
 }
 
-void BranchOutputFilter::stopStreamingIndividual()
+bool BranchOutputFilter::stopStreamingIndividual()
 {
     pthread_mutex_lock(&pluginMutex);
     {
@@ -400,8 +397,8 @@ void BranchOutputFilter::stopStreamingIndividual()
 
             streamingIndividualStopping = true;
 
-            if (!stopStreamingOutputsGracefully()) {
-                return;
+            if (!stopAllStreamingOutputsGracefully()) {
+                return true;
             }
 
             streamingIndividualStopping = false;
@@ -409,42 +406,50 @@ void BranchOutputFilter::stopStreamingIndividual()
             releaseInfrastructureIfIdle();
         }
     }
+    return true;
 }
 
-void BranchOutputFilter::startSingleStreamingIndividual(size_t index)
+bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
 {
     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
 
-    pthread_mutex_lock(&outputMutex);
+    pthread_mutex_lock(&pluginMutex);
     {
-        OBSMutexAutoUnlock locked(&outputMutex);
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
 
-        if (!ensureInfrastructure(settings)) {
-            return;
-        }
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-        if (!isStreamingGroupEnabled(settings) || !isStreamingEnabled(settings, index)) {
-            releaseInfrastructureIfIdle();
-            return;
-        }
+            if (!ensureInfrastructure(settings)) {
+                return false;
+            }
 
-        if (streamings[index].active) {
-            return;
-        }
+            if (!isStreamingGroupEnabled(settings) || !isStreamingEnabled(settings, index)) {
+                releaseInfrastructureIfIdle();
+                return false;
+            }
 
-        if (!streamings[index].output) {
-            streamings[index] = createSreamingOutput(settings, index);
-        }
+            if (streamings[index].active) {
+                return false;
+            }
 
-        startStreamingOutput(index);
+            if (!streamings[index].output) {
+                streamings[index] = createSreamingOutput(settings, index);
+            }
 
-        if (!streamings[index].active) {
-            releaseInfrastructureIfIdle();
+            startStreamingOutput(index);
+
+            if (!streamings[index].active) {
+                releaseInfrastructureIfIdle();
+                return false;
+            }
         }
     }
+    return true;
 }
 
-void BranchOutputFilter::stopSingleStreamingIndividual(size_t index)
+bool BranchOutputFilter::stopSingleStreamingIndividual(size_t index)
 {
     pthread_mutex_lock(&pluginMutex);
     {
@@ -455,12 +460,13 @@ void BranchOutputFilter::stopSingleStreamingIndividual(size_t index)
             OBSMutexAutoUnlock outputLocked(&outputMutex);
 
             if (!stopSingleStreamingOutputGracefully(index)) {
-                return; // reconnecting, will retry next tick
+                return true; // reconnecting, will retry next tick
             }
 
             releaseInfrastructureIfIdle();
         }
     }
+    return true;
 }
 
 // Internal helper: caller must hold outputMutex.

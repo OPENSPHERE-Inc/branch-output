@@ -832,19 +832,25 @@ OutputTableRow::~OutputTableRow()
 // Imitate UI/window-basic-stats.cpp
 void OutputTableRow::update()
 {
-    // Sync per-output toggle checkbox with filter's user-enabled flags
+    // Sync per-output toggle checkbox with filter's user-enabled flags.
+    // Only update when the state has actually changed to avoid unnecessary work
+    // and prevent potential UI glitch if the user is clicking the checkbox.
+    bool desiredChecked = false;
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
-        outputName->setChecked(filter->isStreamingUserEnabled(streamingIndex));
+        desiredChecked = filter->isStreamingUserEnabled(streamingIndex);
         break;
     case ROW_OUTPUT_RECORDING:
-        outputName->setChecked(filter->isRecordingUserEnabled());
+        desiredChecked = filter->isRecordingUserEnabled();
         break;
     case ROW_OUTPUT_REPLAY_BUFFER:
-        outputName->setChecked(filter->isReplayBufferUserEnabled());
+        desiredChecked = filter->isReplayBufferUserEnabled();
         break;
     default:
         break;
+    }
+    if (outputName->isChecked() != desiredChecked) {
+        outputName->setChecked(desiredChecked);
     }
 
     obs_output_t *output;
@@ -1301,7 +1307,7 @@ OutputCell::OutputCell(
       // deletes it when the table is destroyed. Do not delete _item in ~OutputCell().
       _item(new OutputTableCellItem(rowId, "")),
       outputType(_outputType),
-      source(_source)
+      weakSource(obs_source_get_weak_source(_source))
 {
     setMinimumHeight(27);
 
@@ -1361,6 +1367,7 @@ void OutputCell::setChecked(bool checked)
 
 void OutputCell::openOutputFolder()
 {
+    OBSSourceAutoRelease source = obs_weak_source_get_source(weakSource);
     if (!source) {
         return;
     }

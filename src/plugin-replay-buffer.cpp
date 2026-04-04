@@ -296,31 +296,46 @@ bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
     return replayBufferActive;
 }
 
-void BranchOutputFilter::startReplayBufferIndividual()
+bool BranchOutputFilter::startReplayBufferIndividual()
 {
     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
 
-    pthread_mutex_lock(&outputMutex);
+    pthread_mutex_lock(&pluginMutex);
     {
-        OBSMutexAutoUnlock locked(&outputMutex);
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
 
-        if (!ensureInfrastructure(settings)) {
-            return;
-        }
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-        if (!createAndStartReplayBufferChecked(settings)) {
-            releaseInfrastructureIfIdle();
+            if (!ensureInfrastructure(settings)) {
+                return false;
+            }
+
+            bool started = createAndStartReplayBufferChecked(settings);
+            if (!started) {
+                releaseInfrastructureIfIdle();
+            }
+            return started;
         }
     }
 }
 
-void BranchOutputFilter::stopReplayBufferIndividual()
+bool BranchOutputFilter::stopReplayBufferIndividual()
 {
-    stopReplayBufferOutput();
+    bool wasActive = replayBufferActive;
 
-    pthread_mutex_lock(&outputMutex);
+    pthread_mutex_lock(&pluginMutex);
     {
-        OBSMutexAutoUnlock locked(&outputMutex);
-        releaseInfrastructureIfIdle();
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        stopReplayBufferOutput();
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+            releaseInfrastructureIfIdle();
+        }
     }
+    return wasActive;
 }

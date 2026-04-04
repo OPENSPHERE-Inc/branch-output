@@ -142,7 +142,7 @@ class OutputCell : public QWidget {
     QCheckBox *outputToggleCheckbox;
     QLabel *name;
     RowOutputType outputType;
-    obs_source_t *source; // filter source for folder opening (recording/replay buffer)
+    OBSWeakSourceAutoRelease weakSource; // filter source for folder opening (recording/replay buffer)
 
     void openOutputFolder();
 

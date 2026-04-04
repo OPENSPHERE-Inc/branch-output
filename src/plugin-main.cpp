@@ -55,7 +55,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       storedSettingsRev(0),
       activeSettingsRev(0),
       intervalTimer(nullptr),
-      streamingStopping(false),
+      outputGracefullyStopping(false),
       streamingIndividualStopping(false),
       blankingOutputActive(false),
       blankingAudioMuted(false),
@@ -882,14 +882,8 @@ void BranchOutputFilter::onIntervalTimerTimeout()
         return;
     }
 
-    if (streamingStopping) {
-        onStopOutputGracefully();
-        return;
-    }
-
-    // Handle streamingIndividualStopping (per-output graceful streaming stop)
-    if (streamingIndividualStopping) {
-        stopStreamingIndividual();
+    if (outputGracefullyStopping) {
+        stopOutputGracefully();
         return;
     }
 
@@ -939,19 +933,20 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 // Check both the user toggle (dock checkbox) and the filter setting
                 // (whether the output type is configured) to avoid blocking subsequent
                 // outputs when an unconfigured type matches first.
-                OBSDataAutoRelease idleSettings = obs_source_get_settings(filterSource);
+                OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+                bool anyStarted = false;
                 if (isAnyStreamingUserEnabled() && obs_frontend_streaming_active() &&
-                    isStreamingGroupEnabled(idleSettings)) {
-                    startStreamingIndividual();
-                    return;
+                    isStreamingGroupEnabled(settings)) {
+                    anyStarted |= startStreamingIndividual();
                 }
-                if (isRecordingUserEnabled() && obs_frontend_recording_active() && isRecordingEnabled(idleSettings)) {
-                    startRecordingIndividual();
-                    return;
+                if (isRecordingUserEnabled() && obs_frontend_recording_active() && isRecordingEnabled(settings)) {
+                    anyStarted |= startRecordingIndividual();
                 }
                 if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() &&
-                    isReplayBufferEnabled(idleSettings)) {
-                    startReplayBufferIndividual();
+                    isReplayBufferEnabled(settings)) {
+                    anyStarted |= startReplayBufferIndividual();
+                }
+                if (anyStarted) {
                     return;
                 }
             } else {
@@ -971,80 +966,101 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             }
 
             OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+
+            // Start all eligible streaming slots as a single output group.
+            // Returns true if any slot was started.
+            // Guarded by streamingIndividualStopping to prevent starting slots while
+            // a graceful stop is still in progress.
+            auto startEligibleStreamings = [&]() -> bool {
+                if (streamingIndividualStopping) {
+                    return false;
+                }
+                bool anyStarted = false;
+                for (size_t i = 0; i < MAX_SERVICES; i++) {
+                    if (isStreamingUserEnabled(i) && !streamings[i].active &&
+                        isStreamingEnabled(settings, i) && isStreamingGroupEnabled(settings)) {
+                        if (startSingleStreamingIndividual(i)) {
+                            anyStarted = true;
+                        }
+                    }
+                }
+                return anyStarted;
+            };
             bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
             bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
 
             // Check interlock condition
             if (interlockType == INTERLOCK_TYPE_ALWAYS_OFF) {
                 // Always OFF: Stop output immediately
-                onStopOutputGracefully();
+                stopOutputGracefully();
                 return;
             } else if (interlockType == INTERLOCK_TYPE_STREAMING) {
                 if (!obs_frontend_streaming_active()) {
                     // Stop output when streaming is not active
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_RECORDING) {
                 if (!obs_frontend_recording_active()) {
                     // Stop output when recording is not active
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_STREAMING_RECORDING) {
                 if (!obs_frontend_streaming_active() && !obs_frontend_recording_active()) {
                     // Stop output when streaming and recording are not active
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
                 if (!obs_frontend_virtualcam_active()) {
                     // Stop output when virtual cam is not active
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_REPLAY_BUFFER) {
                 if (!obs_frontend_replay_buffer_active()) {
                     // Stop output when replay buffer is not active
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_INDIVIDUAL) {
                 // Individual stop: follow OBS frontend state per output type.
                 // Only checks the OBS frontend state here; user toggle (per-output checkbox)
                 // is handled separately in the common per-output toggle block below.
-                // Only one stop per tick to avoid crash from rapid state transitions.
-                if (!obs_frontend_streaming_active() && streamingActive) {
-                    stopStreamingIndividual();
-                    return;
-                }
-                if (!obs_frontend_recording_active() && (recordingActive || recordingPending)) {
-                    stopRecordingIndividual();
-                    return;
-                }
-                if (!obs_frontend_replay_buffer_active() && replayBufferActive) {
-                    stopReplayBufferIndividual();
-                    return;
-                }
-                // No stop needed — fall through to per-output toggle + monitoring
-
-                // Individual start for additional outputs while some are already active
-                for (size_t i = 0; i < MAX_SERVICES; i++) {
-                    if (isStreamingUserEnabled(i) && obs_frontend_streaming_active() && !streamings[i].active &&
-                        isStreamingEnabled(settings, i) && isStreamingGroupEnabled(settings)) {
-                        startSingleStreamingIndividual(i);
-                        return; // one start per tick
+                {
+                    bool anyStopped = false;
+                    if (!obs_frontend_streaming_active() && streamingActive) {
+                        anyStopped |= stopStreamingIndividual();
+                    }
+                    if (!obs_frontend_recording_active() && (recordingActive || recordingPending)) {
+                        anyStopped |= stopRecordingIndividual();
+                    }
+                    if (!obs_frontend_replay_buffer_active() && replayBufferActive) {
+                        anyStopped |= stopReplayBufferIndividual();
+                    }
+                    if (anyStopped) {
+                        return;
                     }
                 }
-                if (isRecordingUserEnabled() && obs_frontend_recording_active() && !recordingActive &&
-                    !recordingPending && isRecordingEnabled(settings)) {
-                    startRecordingIndividual();
-                    return;
-                }
-                if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() && !replayBufferActive &&
-                    isReplayBufferEnabled(settings)) {
-                    startReplayBufferIndividual();
-                    return;
+
+                // Individual start for additional outputs while some are already active.
+                {
+                    bool anyStarted = false;
+                    if (obs_frontend_streaming_active()) {
+                        anyStarted |= startEligibleStreamings();
+                    }
+                    if (isRecordingUserEnabled() && obs_frontend_recording_active() && !recordingActive &&
+                        !recordingPending && isRecordingEnabled(settings)) {
+                        anyStarted |= startRecordingIndividual();
+                    }
+                    if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() && !replayBufferActive &&
+                        isReplayBufferEnabled(settings)) {
+                        anyStarted |= startReplayBufferIndividual();
+                    }
+                    if (anyStarted) {
+                        return;
+                    }
                 }
             }
 
@@ -1054,18 +1070,30 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             // the current interlock mode. This allows, for example, stopping recording
             // while keeping streaming active even in "Always ON" mode.
             // Only one start/stop per tick to avoid crash from rapid state transitions.
-            for (size_t i = 0; i < MAX_SERVICES; i++) {
-                if (!isStreamingUserEnabled(i) && streamings[i].active) {
-                    stopSingleStreamingIndividual(i);
-                    return; // one stop per tick
+            // Streaming slots are treated as a single output group.
+            {
+                bool anyStopped = false;
+                for (size_t i = 0; i < MAX_SERVICES; i++) {
+                    if (!isStreamingUserEnabled(i) && streamings[i].active) {
+                        anyStopped |= stopSingleStreamingIndividual(i);
+                    }
+                }
+                if (!isRecordingUserEnabled() && (recordingActive || recordingPending)) {
+                    anyStopped |= stopRecordingIndividual();
+                }
+                if (!isReplayBufferUserEnabled() && replayBufferActive) {
+                    anyStopped |= stopReplayBufferIndividual();
+                }
+                if (anyStopped) {
+                    return;
                 }
             }
-            if (!isRecordingUserEnabled() && (recordingActive || recordingPending)) {
-                stopRecordingIndividual();
-                return;
-            }
-            if (!isReplayBufferUserEnabled() && replayBufferActive) {
-                stopReplayBufferIndividual();
+
+            // Retry graceful streaming stop if still in progress.
+            // Placed after per-output toggle stops so recording/replay buffer stops
+            // are not blocked during streaming graceful stop.
+            if (streamingIndividualStopping) {
+                stopStreamingIndividual();
                 return;
             }
 
@@ -1079,19 +1107,15 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             // was already satisfied when outputs were started and has not been violated (the
             // interlock stop checks above would have returned before reaching this point).
             if (interlockType != INTERLOCK_TYPE_INDIVIDUAL) {
-                for (size_t i = 0; i < MAX_SERVICES; i++) {
-                    if (isStreamingUserEnabled(i) && !streamings[i].active && isStreamingEnabled(settings, i) &&
-                        isStreamingGroupEnabled(settings)) {
-                        startSingleStreamingIndividual(i);
-                        return; // one start per tick
-                    }
-                }
+                bool anyStarted = false;
+                anyStarted |= startEligibleStreamings();
                 if (isRecordingUserEnabled() && !recordingActive && !recordingPending && isRecordingEnabled(settings)) {
-                    startRecordingIndividual();
-                    return;
+                    anyStarted |= startRecordingIndividual();
                 }
                 if (isReplayBufferUserEnabled() && !replayBufferActive && isReplayBufferEnabled(settings)) {
-                    startReplayBufferIndividual();
+                    anyStarted |= startReplayBufferIndividual();
+                }
+                if (anyStarted) {
                     return;
                 }
             }
@@ -1114,7 +1138,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
                 if (!sourceInFrontend(parent)) {
                     // Stop output when source had been removed
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
                     return;
                 }
 
@@ -1238,15 +1262,17 @@ void BranchOutputFilter::onIntervalTimerTimeout()
         } else {
             if (streamingActive || recordingActive || recordingPending || replayBufferActive) {
                 // Clicked filter's "Eye" icon (Hide)
-                onStopOutputGracefully();
+                stopOutputGracefully();
                 return;
             }
         }
     }
 }
 
-void BranchOutputFilter::onStopOutputGracefully()
+void BranchOutputFilter::stopOutputGracefully()
 {
+    outputGracefullyStopping = true;
+
     // Stop recording and replay buffer immediately first
     stopRecordingOutput();
     stopReplayBufferOutput();
@@ -1260,16 +1286,14 @@ void BranchOutputFilter::onStopOutputGracefully()
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-            streamingStopping = true;
-
-            if (!stopStreamingOutputsGracefully()) {
+            if (!stopAllStreamingOutputsGracefully()) {
                 return;
             }
-
-            // All streaming has been stopped
-            streamingStopping = false;
         }
     }
+
+    // All streaming has been stopped
+    outputGracefullyStopping = false;
 
     // Finalize termination
     stopOutput();

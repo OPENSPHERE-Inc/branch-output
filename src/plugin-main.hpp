@@ -85,7 +85,7 @@ class BranchOutputFilter : public QObject {
     uint32_t storedSettingsRev;
     uint32_t activeSettingsRev;
     QTimer *intervalTimer;
-    bool streamingStopping;
+    bool outputGracefullyStopping;
     bool streamingIndividualStopping;
     bool blankingOutputActive;
     bool blankingAudioMuted;
@@ -120,6 +120,8 @@ class BranchOutputFilter : public QObject {
     FilterVideoCapture *filterVideoCapture;
 
     // Audio context
+    // Lock ordering: always acquire in order pluginMutex -> outputMutex -> audioMutex.
+    // Never acquire a higher-order lock while holding a lower-order one.
     pthread_mutex_t audioMutex; // Protects audios[] capture pointers against audioFilterCallback
     BranchOutputAudioContext audios[MAX_AUDIO_MIXES];
 
@@ -161,21 +163,22 @@ class BranchOutputFilter : public QObject {
     bool createAndStartStreamingOutputs(obs_data_t *settings);
     bool createAndStartRecordingOutputChecked(obs_data_t *settings);
     bool createAndStartReplayBufferChecked(obs_data_t *settings);
-    bool stopStreamingOutputsGracefully();
+    bool stopAllStreamingOutputsGracefully();
 
-    void startStreamingIndividual();
-    void stopStreamingIndividual();
-    void startSingleStreamingIndividual(size_t index);
-    void stopSingleStreamingIndividual(size_t index);
-    void startRecordingIndividual();
-    void stopRecordingIndividual();
-    void startReplayBufferIndividual();
-    void stopReplayBufferIndividual();
+    bool startStreamingIndividual();
+    bool stopStreamingIndividual();
+    bool startSingleStreamingIndividual(size_t index);
+    bool stopSingleStreamingIndividual(size_t index);
+    bool startRecordingIndividual();
+    bool stopRecordingIndividual();
+    bool startReplayBufferIndividual();
+    bool stopReplayBufferIndividual();
     void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop);
     void loadProfile(obs_data_t *settings);
     void loadRecently(obs_data_t *settings);
     void restartOutput();
+    void stopOutputGracefully();
     void registerHotkey();
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
     void setAudioCapturesActive(bool active);
@@ -289,7 +292,6 @@ class BranchOutputFilter : public QObject {
 private slots:
     void onIntervalTimerTimeout();
     void removeCallback();
-    void onStopOutputGracefully();
 
 public:
     explicit BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
