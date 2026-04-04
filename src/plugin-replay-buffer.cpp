@@ -160,33 +160,28 @@ void BranchOutputFilter::createAndStartReplayBuffer(obs_data_t *settings)
     }
 }
 
-// Caller must hold outputMutex.
-void BranchOutputFilter::stopReplayBufferOutputLocked()
-{
-    if (replayBufferOutput) {
-        if (replayBufferActive) {
-            obs_source_t *parent = obs_filter_get_parent(filterSource);
-            if (parent) {
-                obs_source_dec_showing(parent);
-            }
-            obs_output_stop(replayBufferOutput);
-        }
-    }
-    replayBufferSavedSignal.Disconnect();
-    replayBufferOutput = nullptr;
-
-    if (replayBufferActive) {
-        replayBufferActive = false;
-        obs_log(LOG_INFO, "%s: Stopping replay buffer succeeded", qUtf8Printable(name));
-    }
-}
-
 void BranchOutputFilter::stopReplayBufferOutput()
 {
     pthread_mutex_lock(&outputMutex);
     {
         OBSMutexAutoUnlock locked(&outputMutex);
-        stopReplayBufferOutputLocked();
+
+        if (replayBufferOutput) {
+            if (replayBufferActive) {
+                obs_source_t *parent = obs_filter_get_parent(filterSource);
+                if (parent) {
+                    obs_source_dec_showing(parent);
+                }
+                obs_output_stop(replayBufferOutput);
+            }
+        }
+        replayBufferSavedSignal.Disconnect();
+        replayBufferOutput = nullptr;
+
+        if (replayBufferActive) {
+            replayBufferActive = false;
+            obs_log(LOG_INFO, "%s: Stopping replay buffer succeeded", qUtf8Printable(name));
+        }
     }
 }
 
@@ -341,7 +336,7 @@ bool BranchOutputFilter::stopReplayBufferIndividual()
             // Read shared state under lock to avoid data race on non-atomic booleans.
             wasActive = replayBufferActive;
 
-            stopReplayBufferOutputLocked();
+            stopReplayBufferOutput();
             releaseInfrastructureIfIdle();
         }
     }

@@ -102,8 +102,8 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
         audios[i] = {0};
     }
 
-    pthread_mutex_init(&outputMutex, nullptr);
-    pthread_mutex_init(&audioMutex, nullptr);
+    pthread_mutex_init_recursive(&outputMutex);
+    pthread_mutex_init_recursive(&audioMutex);
 
     if (!strcmp(obs_data_get_last_json(settings), "{}")) {
         // Maybe initial creation
@@ -256,7 +256,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
         return false;
     }
 
-    // Mandatory paramters
+    // Mandatory parameters
     if (!isStreamingGroupEnabled(settings) && !isRecordingEnabled(settings) && !isReplayBufferEnabled(settings)) {
         obs_log(LOG_ERROR, "%s: Nothing to do", qUtf8Printable(name));
         return false;
@@ -605,6 +605,13 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             return;
         }
 
+        // Skip infrastructure setup if the user has disabled all output types
+        // via the status dock checkboxes. Without this check, interlock modes like
+        // ALWAYS_ON would rebuild and immediately tear down infrastructure every tick.
+        if (!isAnyStreamingUserEnabled() && !isRecordingUserEnabled() && !isReplayBufferUserEnabled()) {
+            return;
+        }
+
         if (!ensureInfrastructure(settings)) {
             return;
         }
@@ -760,12 +767,12 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
 
 void BranchOutputFilter::stopOutput()
 {
-    stopRecordingOutput();
-    stopReplayBufferOutput();
-
     pthread_mutex_lock(&outputMutex);
     {
         OBSMutexAutoUnlock locked(&outputMutex);
+
+        stopRecordingOutput();
+        stopReplayBufferOutput();
 
         for (size_t i = 0; i < MAX_SERVICES; i++) {
             stopStreamingOutput(i);
@@ -1273,11 +1280,8 @@ void BranchOutputFilter::stopOutputGracefully()
 {
     outputGracefullyStopping = true;
 
-    // Stop recording and replay buffer immediately first
-    stopRecordingOutput();
-    stopReplayBufferOutput();
-
-    // Lock out other output thread to prevent crash
+    // Lock out other output thread to prevent crash.
+    // Lock order: pluginMutex -> outputMutex (consistent with stopOutput() and Individual stop functions).
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);
@@ -1285,6 +1289,10 @@ void BranchOutputFilter::stopOutputGracefully()
         pthread_mutex_lock(&outputMutex);
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            // Stop recording and replay buffer immediately first (under outputMutex)
+            stopRecordingOutput();
+            stopReplayBufferOutput();
 
             if (!stopAllStreamingOutputsGracefully()) {
                 return;
@@ -1786,7 +1794,7 @@ bool obs_module_load()
     proxySourceInfo = FilterVideoCapture::createProxySourceInfo();
     obs_register_source(&proxySourceInfo);
 
-    pthread_mutex_init(&pluginMutex, nullptr);
+    pthread_mutex_init_recursive(&pluginMutex);
 
     obs_log(LOG_INFO, "Plugin loaded successfully (version %s)", PLUGIN_VERSION);
     return true;

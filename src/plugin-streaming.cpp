@@ -449,6 +449,9 @@ bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
     return true;
 }
 
+// Returns true to indicate that a stop operation was attempted (regardless of whether
+// the stream has fully stopped yet). The caller uses this to track whether any action
+// was taken during the current tick via `anyStopped |= stopSingleStreamingIndividual(i)`.
 bool BranchOutputFilter::stopSingleStreamingIndividual(size_t index)
 {
     pthread_mutex_lock(&pluginMutex);

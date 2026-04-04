@@ -37,7 +37,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #define MAX_SERVICES 8
 
-// Defined in plugin-main.cpp. Guards plugin-wide state shared across filter instances.
+// Defined in plugin-main.cpp. Guards plugin-wide state shared across filter instances:
+// - Serializes OBS global API calls (obs_view, obs_encoder, obs_output creation/destruction)
+// - Protects BranchOutputFilter instance lists and cross-instance coordination
+// - Prevents concurrent infrastructure setup/teardown across multiple filter instances
+// Lock ordering: pluginMutex -> outputMutex -> audioMutex
+// All three mutexes are recursive — safe to re-lock from the same thread.
 extern pthread_mutex_t pluginMutex;
 
 class BranchOutputFilter : public QObject {
@@ -122,7 +127,7 @@ class BranchOutputFilter : public QObject {
     // Audio context
     // Lock ordering: always acquire in order pluginMutex -> outputMutex -> audioMutex.
     // Never acquire a higher-order lock while holding a lower-order one.
-    pthread_mutex_t audioMutex; // Protects audios[] capture pointers against audioFilterCallback
+    pthread_mutex_t audioMutex; // Recursive mutex — protects audios[] capture pointers against audioFilterCallback
     BranchOutputAudioContext audios[MAX_AUDIO_MIXES];
 
     // Recording context
@@ -141,7 +146,7 @@ class BranchOutputFilter : public QObject {
     QString replayBufferFilenameFormatOverride;
 
     // Streaming context
-    pthread_mutex_t outputMutex;
+    pthread_mutex_t outputMutex; // Recursive mutex — safe to re-lock from same thread
     BranchOutputStreamingContext streamings[MAX_SERVICES];
 
     // Hotkey context
@@ -201,11 +206,6 @@ class BranchOutputFilter : public QObject {
                 return true;
         }
         return false;
-    }
-    void setAllStreamingUserEnabled(bool enabled)
-    {
-        for (size_t i = 0; i < MAX_SERVICES; i++)
-            streamingUserEnabled[i].store(enabled, std::memory_order_relaxed);
     }
     void setRecordingUserEnabled(bool enabled) { recordingUserEnabled.store(enabled, std::memory_order_relaxed); }
     void setReplayBufferUserEnabled(bool enabled) { replayBufferUserEnabled.store(enabled, std::memory_order_relaxed); }
