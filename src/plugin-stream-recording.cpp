@@ -197,32 +197,37 @@ void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
     }
 }
 
+// Caller must hold outputMutex.
+void BranchOutputFilter::stopRecordingOutputLocked(bool pending)
+{
+    if (recordingOutput) {
+        if (recordingActive) {
+            obs_source_t *parent = obs_filter_get_parent(filterSource);
+            if (parent) {
+                obs_source_dec_showing(parent);
+            }
+            obs_output_stop(recordingOutput);
+        }
+    }
+    recordingOutput = nullptr;
+
+    if (recordingActive) {
+        recordingActive = false;
+        obs_log(LOG_INFO, "%s: Stopping recording output succeeded", qUtf8Printable(name));
+    }
+
+    recordingPending = pending;
+    recordingSettingsOverridden = false;
+    addChapterToRecordingEnabled = false;
+    splitRecordingEnabled = false;
+}
+
 void BranchOutputFilter::stopRecordingOutput(bool pending)
 {
     pthread_mutex_lock(&outputMutex);
     {
         OBSMutexAutoUnlock locked(&outputMutex);
-
-        if (recordingOutput) {
-            if (recordingActive) {
-                obs_source_t *parent = obs_filter_get_parent(filterSource);
-                if (parent) {
-                    obs_source_dec_showing(parent);
-                }
-                obs_output_stop(recordingOutput);
-            }
-        }
-        recordingOutput = nullptr;
-
-        if (recordingActive) {
-            recordingActive = false;
-            obs_log(LOG_INFO, "%s: Stopping recording output succeeded", qUtf8Printable(name));
-        }
-
-        recordingPending = pending;
-        recordingSettingsOverridden = false;
-        addChapterToRecordingEnabled = false;
-        splitRecordingEnabled = false;
+        stopRecordingOutputLocked(pending);
     }
 }
 
@@ -484,22 +489,25 @@ bool BranchOutputFilter::startRecordingIndividual()
 
 bool BranchOutputFilter::stopRecordingIndividual()
 {
-    bool wasActive = recordingActive || recordingPending;
+    bool wasActive = false;
 
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);
 
-        // stopRecordingOutput() clears recordingPending and recordingActive.
-        // If recording was in pending state (source collapsed), this simply clears the
-        // pending flag. releaseInfrastructureIfIdle() will then release shared resources
-        // if no other outputs are active. Re-enabling recording later will go through
-        // ensureInfrastructure() which will retry from a clean state.
-        stopRecordingOutput();
-
         pthread_mutex_lock(&outputMutex);
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            // Read shared state under lock to avoid data race on non-atomic booleans.
+            wasActive = recordingActive || recordingPending;
+
+            // stopRecordingOutputLocked() clears recordingPending and recordingActive.
+            // If recording was in pending state (source collapsed), this simply clears the
+            // pending flag. releaseInfrastructureIfIdle() will then release shared resources
+            // if no other outputs are active. Re-enabling recording later will go through
+            // ensureInfrastructure() which will retry from a clean state.
+            stopRecordingOutputLocked();
             releaseInfrastructureIfIdle();
         }
     }
