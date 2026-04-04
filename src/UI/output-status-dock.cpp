@@ -731,18 +731,22 @@ OutputTableRow::OutputTableRow(
             rowId, QTStr("Streaming%1").arg(streamingIndex + 1), filter->isStreamingUserEnabled(), ROW_OUTPUT_STREAMING,
             nullptr, parent
         );
+        // All streaming slots share a single toggle; toggling one affects all streaming outputs
+        outputName->setToolTip(QTStr("StreamingToggleTooltip"));
         break;
     case ROW_OUTPUT_RECORDING:
         outputName = new OutputCell(
             rowId, QTStr("Recording"), filter->isRecordingUserEnabled(), ROW_OUTPUT_RECORDING, filter->filterSource,
             parent
         );
+        outputName->setToolTip(QTStr("RecordingToggleTooltip"));
         break;
     case ROW_OUTPUT_REPLAY_BUFFER:
         outputName = new OutputCell(
             rowId, QTStr("ReplayBuffer"), filter->isReplayBufferUserEnabled(), ROW_OUTPUT_REPLAY_BUFFER,
             filter->filterSource, parent
         );
+        outputName->setToolTip(QTStr("ReplayBufferToggleTooltip"));
         break;
     default:
         outputName = new OutputCell(rowId, QTStr("None"), true, ROW_OUTPUT_NONE, nullptr, parent);
@@ -1348,7 +1352,12 @@ void OutputCell::setTextValue(const QString &value)
 
 void OutputCell::setChecked(bool checked)
 {
+    // Block signals to prevent re-entrant toggled() emission from programmatic updates.
+    // Currently OutputCell::toggled is connected to QCheckBox::clicked (which is not emitted
+    // by setChecked), but blockSignals provides defense against future signal changes.
+    outputToggleCheckbox->blockSignals(true);
     outputToggleCheckbox->setChecked(checked);
+    outputToggleCheckbox->blockSignals(false);
 }
 
 void OutputCell::openOutputFolder()
