@@ -68,7 +68,7 @@ For each finding that has a status annotation, verify its resolution by reading 
 
 ## Step 3 — Verification Report
 
-Output a verification report in the following format:
+Output a verification report **to the console** (do not write to a file) in the following format:
 
 ```
 # Review Verification Report

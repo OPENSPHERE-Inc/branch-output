@@ -77,6 +77,8 @@ Repeat while the round counter is ≤ `--max-rounds`.
 
 Regardless of the round, always review the entire target scope. Do not pass prior round review documents to the review agent. Deduplication against prior rounds is handled by the orchestrator (Step 2.2).
 
+However, **findings that have been raised in 2 or more prior rounds and rejected each time (Won't Fix / No Action Needed)** may be explicitly listed as exclusions in the review agent's prompt. This prevents the same finding from being repeatedly raised and rejected.
+
 **Agent launch procedure:**
 
 1. Print to console: `## Round {N} — Step 1: Parallel Review`
@@ -92,6 +94,9 @@ Additional instructions:
 - Review target: Commits unique to the current branch and working tree changes (default review target)
 - Review document language: {user's chat language}
 - Write the report to the following file: {current round file path}
+{if there are findings rejected in 2+ prior rounds:}
+- The following findings have been repeatedly rejected in prior rounds. Exclude them from the review:
+  - {summary of each finding and the round numbers where it was rejected}
 ```
 
 ### 2.2 — Deduplication and Actionable Findings Check
@@ -136,10 +141,6 @@ Verify the resolution status of the review document following the instructions i
 
 Command file: .claude/commands/review-resolve.md
 Arguments: {current round file path}
-
-Additional instructions:
-Write the verification report to the same directory as the review document.
-Filename: {branch-name}-round{N}-verification.md
 ```
 
 ### 2.5 — Feedback Check and Re-fix Loop
@@ -161,7 +162,7 @@ Command file: .claude/commands/review-respond.md
 Arguments: {current round file path} {if --commit enabled: --commit}
 
 Additional instructions:
-Review the feedback in {verification report file path} and address the unresolved findings.
+Review the feedback annotations in the review document and address the unresolved findings.
 ```
 
 3. Print to console: `## Round {N} — Step 5: Feedback Verify (attempt {M}/3)`
@@ -172,11 +173,6 @@ Verify the resolution status of the review document following the instructions i
 
 Command file: .claude/commands/review-resolve.md
 Arguments: {current round file path}
-
-Additional instructions:
-Write the verification report to the same directory as the review document.
-Filename: {branch-name}-round{N}-verification.md
-(Overwrite the existing verification report.)
 ```
 
 5. If feedback remains, return to step 1. If unresolved after 3 attempts, record as unresolved and end the round.
