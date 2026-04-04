@@ -977,8 +977,8 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 }
                 bool anyStarted = false;
                 for (size_t i = 0; i < MAX_SERVICES; i++) {
-                    if (isStreamingUserEnabled(i) && !streamings[i].active &&
-                        isStreamingEnabled(settings, i) && isStreamingGroupEnabled(settings)) {
+                    if (isStreamingUserEnabled(i) && !streamings[i].active && isStreamingEnabled(settings, i) &&
+                        isStreamingGroupEnabled(settings)) {
                         if (startSingleStreamingIndividual(i)) {
                             anyStarted = true;
                         }
