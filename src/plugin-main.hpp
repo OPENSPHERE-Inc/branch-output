@@ -83,7 +83,6 @@ class BranchOutputFilter : public QObject {
         OBSSignal outputActivateSignal;
         OBSSignal outputReconnectSignal;
         OBSSignal outputStopSignal;
-
     };
 
     QString name;
