@@ -93,7 +93,7 @@ class BranchOutputFilter : public QObject {
     // Per-output user intent flags (persisted via save callback).
     // Atomic because setters are called from UI thread while saveCallback()
     // may be called from OBS core on a different thread.
-    std::atomic<bool> streamingUserEnabled;
+    std::atomic<bool> streamingUserEnabled[MAX_SERVICES];
     std::atomic<bool> recordingUserEnabled;
     std::atomic<bool> replayBufferUserEnabled;
 
@@ -165,6 +165,8 @@ class BranchOutputFilter : public QObject {
 
     void startStreamingIndividual();
     void stopStreamingIndividual();
+    void startSingleStreamingIndividual(size_t index);
+    void stopSingleStreamingIndividual(size_t index);
     void startRecordingIndividual();
     void stopRecordingIndividual();
     void startReplayBufferIndividual();
@@ -180,10 +182,30 @@ class BranchOutputFilter : public QObject {
     void saveCallback(obs_data_t *settings);
 
     // Per-output user intent setters/getters (thread-safe via std::atomic)
-    void setStreamingUserEnabled(bool enabled) { streamingUserEnabled.store(enabled, std::memory_order_relaxed); }
+    void setStreamingUserEnabled(size_t index, bool enabled)
+    {
+        if (index < MAX_SERVICES)
+            streamingUserEnabled[index].store(enabled, std::memory_order_relaxed);
+    }
+    bool isStreamingUserEnabled(size_t index) const
+    {
+        return index < MAX_SERVICES ? streamingUserEnabled[index].load(std::memory_order_relaxed) : false;
+    }
+    bool isAnyStreamingUserEnabled() const
+    {
+        for (size_t i = 0; i < MAX_SERVICES; i++) {
+            if (streamingUserEnabled[i].load(std::memory_order_relaxed))
+                return true;
+        }
+        return false;
+    }
+    void setAllStreamingUserEnabled(bool enabled)
+    {
+        for (size_t i = 0; i < MAX_SERVICES; i++)
+            streamingUserEnabled[i].store(enabled, std::memory_order_relaxed);
+    }
     void setRecordingUserEnabled(bool enabled) { recordingUserEnabled.store(enabled, std::memory_order_relaxed); }
     void setReplayBufferUserEnabled(bool enabled) { replayBufferUserEnabled.store(enabled, std::memory_order_relaxed); }
-    bool isStreamingUserEnabled() const { return streamingUserEnabled.load(std::memory_order_relaxed); }
     bool isRecordingUserEnabled() const { return recordingUserEnabled.load(std::memory_order_relaxed); }
     bool isReplayBufferUserEnabled() const { return replayBufferUserEnabled.load(std::memory_order_relaxed); }
     std::optional<CropRect> calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings);
@@ -203,6 +225,7 @@ class BranchOutputFilter : public QObject {
     bool hasEnabledStreamings(obs_data_t *settings);
     bool isStreamingGroupEnabled(obs_data_t *settings);
     bool isStreamingEnabled(obs_data_t *settings, size_t index = 0);
+    bool stopSingleStreamingOutputGracefully(size_t index);
 
     // Implemented in plugin-stream-recording.cpp
     obs_data_t *createRecordingSettings(obs_data_t *settings, bool createFolder = false);

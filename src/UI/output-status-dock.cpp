@@ -728,10 +728,9 @@ OutputTableRow::OutputTableRow(
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
         outputName = new OutputCell(
-            rowId, QTStr("Streaming%1").arg(streamingIndex + 1), filter->isStreamingUserEnabled(), ROW_OUTPUT_STREAMING,
-            nullptr, parent
+            rowId, QTStr("Streaming%1").arg(streamingIndex + 1), filter->isStreamingUserEnabled(streamingIndex),
+            ROW_OUTPUT_STREAMING, nullptr, parent
         );
-        // All streaming slots share a single toggle; toggling one affects all streaming outputs
         outputName->setToolTip(QTStr("StreamingToggleTooltip"));
         break;
     case ROW_OUTPUT_RECORDING:
@@ -756,7 +755,7 @@ OutputTableRow::OutputTableRow(
     connect(outputName, &OutputCell::toggled, this, [this](bool checked) {
         switch (outputType) {
         case ROW_OUTPUT_STREAMING:
-            filter->setStreamingUserEnabled(checked);
+            filter->setStreamingUserEnabled(streamingIndex, checked);
             break;
         case ROW_OUTPUT_RECORDING:
             filter->setRecordingUserEnabled(checked);
@@ -836,7 +835,7 @@ void OutputTableRow::update()
     // Sync per-output toggle checkbox with filter's user-enabled flags
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
-        outputName->setChecked(filter->isStreamingUserEnabled());
+        outputName->setChecked(filter->isStreamingUserEnabled(streamingIndex));
         break;
     case ROW_OUTPUT_RECORDING:
         outputName->setChecked(filter->isRecordingUserEnabled());

@@ -335,13 +335,15 @@ bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
 
     auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
     for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
-        if (!streamings[i].output) {
+        if (!streamings[i].output && isStreamingUserEnabled(i)) {
             streamings[i] = createSreamingOutput(settings, i);
         }
     }
 
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        startStreamingOutput(i);
+        if (isStreamingUserEnabled(i)) {
+            startStreamingOutput(i);
+        }
     }
 
     return countActiveStreamings() > 0;
@@ -407,4 +409,83 @@ void BranchOutputFilter::stopStreamingIndividual()
             releaseInfrastructureIfIdle();
         }
     }
+}
+
+void BranchOutputFilter::startSingleStreamingIndividual(size_t index)
+{
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        if (!ensureInfrastructure(settings)) {
+            return;
+        }
+
+        if (!isStreamingGroupEnabled(settings) || !isStreamingEnabled(settings, index)) {
+            releaseInfrastructureIfIdle();
+            return;
+        }
+
+        if (streamings[index].active) {
+            return;
+        }
+
+        if (!streamings[index].output) {
+            streamings[index] = createSreamingOutput(settings, index);
+        }
+
+        startStreamingOutput(index);
+
+        if (!streamings[index].active) {
+            releaseInfrastructureIfIdle();
+        }
+    }
+}
+
+void BranchOutputFilter::stopSingleStreamingIndividual(size_t index)
+{
+    pthread_mutex_lock(&pluginMutex);
+    {
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            if (!stopSingleStreamingOutputGracefully(index)) {
+                return; // reconnecting, will retry next tick
+            }
+
+            releaseInfrastructureIfIdle();
+        }
+    }
+}
+
+// Internal helper: caller must hold outputMutex.
+// Returns true if the stream at the given index has stopped.
+// Returns false if the stream is still waiting for reconnect timeout.
+bool BranchOutputFilter::stopSingleStreamingOutputGracefully(size_t index)
+{
+    if (index >= MAX_SERVICES) {
+        return true;
+    }
+
+    if (streamings[index].output && streamings[index].active) {
+        if (streamings[index].stopping) {
+            if (reconnectAttemptingTimedOut(index)) {
+                stopStreamingOutput(index);
+            } else {
+                return false;
+            }
+        } else if (obs_output_reconnecting(streamings[index].output)) {
+            streamings[index].stopping = true;
+            return false;
+        } else {
+            stopStreamingOutput(index);
+        }
+    }
+
+    return true;
 }

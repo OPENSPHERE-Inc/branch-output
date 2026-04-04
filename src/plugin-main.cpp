@@ -59,7 +59,6 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       streamingIndividualStopping(false),
       blankingOutputActive(false),
       blankingAudioMuted(false),
-      streamingUserEnabled(obs_data_get_bool(settings, "streaming_output_enabled")),
       recordingUserEnabled(obs_data_get_bool(settings, "recording_output_enabled")),
       replayBufferUserEnabled(obs_data_get_bool(settings, "replay_buffer_output_enabled")),
       recordingOutput(nullptr),
@@ -85,6 +84,17 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     // Do not use memset
     for (size_t i = 0; i < MAX_SERVICES; i++) {
         streamings[i] = {0};
+    }
+
+    // Per-stream user-enabled flags (with backward compatibility migration)
+    bool legacyStreamingEnabled = obs_data_get_bool(settings, "streaming_output_enabled");
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        auto key = QString("streaming_output_enabled_%1").arg(i);
+        if (obs_data_has_user_value(settings, qUtf8Printable(key))) {
+            streamingUserEnabled[i].store(obs_data_get_bool(settings, qUtf8Printable(key)), std::memory_order_relaxed);
+        } else {
+            streamingUserEnabled[i].store(legacyStreamingEnabled, std::memory_order_relaxed);
+        }
     }
 
     // Do not use memset
@@ -606,7 +616,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         if (isReplayBufferUserEnabled()) {
             anyStarted |= createAndStartReplayBufferChecked(settings);
         }
-        if (isStreamingUserEnabled()) {
+        if (isAnyStreamingUserEnabled()) {
             anyStarted |= createAndStartStreamingOutputs(settings);
         }
 
@@ -799,7 +809,11 @@ void BranchOutputFilter::setAudioCapturesActive(bool active)
 
 void BranchOutputFilter::saveCallback(obs_data_t *settings)
 {
-    obs_data_set_bool(settings, "streaming_output_enabled", isStreamingUserEnabled());
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        auto key = QString("streaming_output_enabled_%1").arg(i);
+        obs_data_set_bool(settings, qUtf8Printable(key), isStreamingUserEnabled(i));
+    }
+    obs_data_set_bool(settings, "streaming_output_enabled", isAnyStreamingUserEnabled());
     obs_data_set_bool(settings, "recording_output_enabled", isRecordingUserEnabled());
     obs_data_set_bool(settings, "replay_buffer_output_enabled", isReplayBufferUserEnabled());
 }
@@ -926,7 +940,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 // (whether the output type is configured) to avoid blocking subsequent
                 // outputs when an unconfigured type matches first.
                 OBSDataAutoRelease idleSettings = obs_source_get_settings(filterSource);
-                if (isStreamingUserEnabled() && obs_frontend_streaming_active() &&
+                if (isAnyStreamingUserEnabled() && obs_frontend_streaming_active() &&
                     isStreamingGroupEnabled(idleSettings)) {
                     startStreamingIndividual();
                     return;
@@ -1015,10 +1029,12 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 // No stop needed — fall through to per-output toggle + monitoring
 
                 // Individual start for additional outputs while some are already active
-                if (isStreamingUserEnabled() && obs_frontend_streaming_active() && !streamingActive &&
-                    isStreamingGroupEnabled(settings)) {
-                    startStreamingIndividual();
-                    return;
+                for (size_t i = 0; i < MAX_SERVICES; i++) {
+                    if (isStreamingUserEnabled(i) && obs_frontend_streaming_active() && !streamings[i].active &&
+                        isStreamingEnabled(settings, i) && isStreamingGroupEnabled(settings)) {
+                        startSingleStreamingIndividual(i);
+                        return; // one start per tick
+                    }
                 }
                 if (isRecordingUserEnabled() && obs_frontend_recording_active() && !recordingActive &&
                     !recordingPending && isRecordingEnabled(settings)) {
@@ -1038,9 +1054,11 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             // the current interlock mode. This allows, for example, stopping recording
             // while keeping streaming active even in "Always ON" mode.
             // Only one start/stop per tick to avoid crash from rapid state transitions.
-            if (!isStreamingUserEnabled() && streamingActive) {
-                stopStreamingIndividual();
-                return;
+            for (size_t i = 0; i < MAX_SERVICES; i++) {
+                if (!isStreamingUserEnabled(i) && streamings[i].active) {
+                    stopSingleStreamingIndividual(i);
+                    return; // one stop per tick
+                }
             }
             if (!isRecordingUserEnabled() && (recordingActive || recordingPending)) {
                 stopRecordingIndividual();
@@ -1061,9 +1079,12 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             // was already satisfied when outputs were started and has not been violated (the
             // interlock stop checks above would have returned before reaching this point).
             if (interlockType != INTERLOCK_TYPE_INDIVIDUAL) {
-                if (isStreamingUserEnabled() && !streamingActive && isStreamingGroupEnabled(settings)) {
-                    startStreamingIndividual();
-                    return;
+                for (size_t i = 0; i < MAX_SERVICES; i++) {
+                    if (isStreamingUserEnabled(i) && !streamings[i].active && isStreamingEnabled(settings, i) &&
+                        isStreamingGroupEnabled(settings)) {
+                        startSingleStreamingIndividual(i);
+                        return; // one start per tick
+                    }
                 }
                 if (isRecordingUserEnabled() && !recordingActive && !recordingPending && isRecordingEnabled(settings)) {
                     startRecordingIndividual();
