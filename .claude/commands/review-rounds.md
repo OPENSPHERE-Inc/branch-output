@@ -11,7 +11,7 @@ You are the **review round orchestrator**. Your role is to automatically iterate
 
 ## Input
 
-The user will specify the output directory for review documents. If the argument is `$ARGUMENTS`, interpret it as the output directory path (and options).
+The user may optionally specify an output base path. If the argument is `$ARGUMENTS`, interpret it as the output base path (and options). If no output base path is specified, default to `.claude/tmp/` under the project root.
 
 ## Options
 
@@ -25,13 +25,14 @@ The user will specify the output directory for review documents. If the argument
 
 ## Review Document Naming
 
-- **Format:** `{branch-name}-round{N}.md`
+- **Format:** `{base-path}/{branch-name}/review-round{N}.md`
 - **Branch name:** Obtained via `git branch --show-current`.
-- **Handling `/`:** If the branch name contains `/`, use the part before `/` as a subdirectory and the part after as the filename prefix.
-  - Example: branch `feat/add-replay` → `{output-dir}/feat/add-replay-round1.md`
-  - Example: branch `fix/audio/buffer-leak` → `{output-dir}/fix/audio/buffer-leak-round1.md`
-  - Example: branch `dev` → `{output-dir}/dev-round1.md`
-- Create subdirectories as needed.
+- **Branch name is used as a directory path** — the entire branch name (including `/`) becomes the directory hierarchy.
+  - Example: branch `feat/add-replay` → `{base-path}/feat/add-replay/review-round1.md`
+  - Example: branch `fix/audio/buffer-leak` → `{base-path}/fix/audio/buffer-leak/review-round1.md`
+  - Example: branch `dev` → `{base-path}/dev/review-round1.md`
+- **Default base-path:** `.claude/tmp/`
+- Create directories as needed.
 - Retain all round review documents — do not overwrite.
 
 ## Review Document Language
@@ -193,7 +194,7 @@ Increment the round counter and return to Step 2.1.
 
 ## Step 3 — Final Report
 
-After all rounds complete, generate a final report. Filename: `{branch-name}-final-report.md`
+After all rounds complete, generate a final report. File path: `{base-path}/{branch-name}/final-report.md`
 
 The final report must be written by **you (the orchestrator)** by reading all round review documents and verification reports. Do not delegate to an agent.
 

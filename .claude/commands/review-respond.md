@@ -1,6 +1,6 @@
 ---
 description: Respond to review findings by triaging, fixing, self-reviewing, and updating the review document
-allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*)
+allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*), Bash(clang-format:*), Bash(cmake-format:*)
 ---
 
 # Review Response
@@ -133,9 +133,23 @@ Instructions:
 - Findings affecting **different files** may be fixed in parallel by launching multiple agents simultaneously.
 - Findings affecting the **same file** must be fixed sequentially — launch them one at a time, waiting for each to complete before starting the next.
 
-## Step 4 — Build Verification
+## Step 4 — Format Verification & Build Verification
 
-After all fixes are complete, run a build to verify that the changes compile without errors.
+After all fixes are complete, verify code formatting and run a build to ensure quality.
+
+### 4a. Format Verification
+
+1. Identify the source files (`.cpp`, `.hpp`, `.h`, `.c`) modified in Step 3.
+2. Run `clang-format` on each file to check for formatting violations:
+   ```bash
+   clang-format -style=file -fallback-style=none --dry-run -Werror <file>
+   ```
+3. If formatting violations are found:
+   - Auto-fix with `clang-format -i -style=file -fallback-style=none <file>`.
+   - Review the resulting diff to verify no unintended changes were introduced.
+4. If CMake files (`CMakeLists.txt`, `*.cmake`) were modified, verify and fix formatting with `cmake-format` as well.
+
+### 4b. Build Verification
 
 1. Determine the appropriate build command for the current platform. Check for build scripts (`build.ps1`, `Makefile`, etc.) or use CMake presets as documented in `CLAUDE.md`.
 2. Run the build. If the build fails:

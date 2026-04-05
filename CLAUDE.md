@@ -66,6 +66,66 @@ branch-output/
 OBS Studio sources and pre-built dependencies are fetched automatically via `buildspec.json`
 (obs-studio 30.1.2, obs-deps, Qt6).
 
+### clang-format
+
+This project requires **clang-format version 16 or later** (as specified in `.clang-format`).
+CI (GitHub Actions) enforces version 17.0.3 exactly via `build-aux/.run-format.zsh`.
+
+| Platform | Install method |
+|----------|----------------|
+| Windows  | `winget install -v 17.0.3 LLVM.LLVM` or download from the [LLVM 17.0.3 release page](https://github.com/llvm/llvm-project/releases/tag/llvmorg-17.0.3). Ensure `clang-format` is on your `PATH`. |
+| macOS    | `brew install llvm@17` — then use `$(brew --prefix llvm@17)/bin/clang-format` or add it to `PATH`. |
+| Linux    | Install via package manager (e.g., `apt install clang-format-17` on Ubuntu/Debian, or `dnf install clang-tools-extra-17.0.3` on Fedora). The script also looks for `clang-format-17` on `PATH`. |
+
+Verify installation:
+
+```bash
+clang-format --version
+# Expected: clang-format version 17.0.3 (...)
+```
+
+To format all source files locally:
+
+```powershell
+# PowerShell (Windows / cross-platform)
+Get-ChildItem -Recurse -Path src -Include *.cpp,*.hpp,*.h,*.c | ForEach-Object { clang-format -i -style=file -fallback-style=none $_.FullName }
+```
+
+```bash
+# Bash / Zsh (macOS / Linux)
+find src -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.c' \) -exec clang-format -i -style=file -fallback-style=none {} +
+```
+
+### cmake-format
+
+This project requires **cmake-format version 0.6.13 or later**. Configuration is in `.cmake-format.json`.
+CI (GitHub Actions) enforces this version via `build-aux/.run-format.zsh`.
+
+Install via pip:
+
+```bash
+pip install cmake-format>=0.6.13
+```
+
+Verify installation:
+
+```bash
+cmake-format --version
+# Expected: 0.6.13 or later
+```
+
+To format all CMake files locally:
+
+```powershell
+# PowerShell (Windows / cross-platform)
+Get-ChildItem -Recurse -Include CMakeLists.txt,*.cmake | Where-Object { $_.FullName -notmatch 'build_' } | ForEach-Object { cmake-format -i $_.FullName }
+```
+
+```bash
+# Bash / Zsh (macOS / Linux)
+find . -type f \( -name 'CMakeLists.txt' -o -name '*.cmake' \) -not -path '*/build_*/*' -exec cmake-format -i {} +
+```
+
 ### Windows (local)
 
 ```powershell

@@ -20,15 +20,16 @@
       "Bash(gh pr diff:*)",
       "Bash(gh pr list:*)",
       "Bash(gh pr checks:*)",
-      "Bash(cmake:*)"
+      "Bash(cmake:*)",
+      "Bash(clang-format:*)",
+      "Bash(cmake-format:*)"
     ],
     "deny": [
 	    "Read(.env.production)",
       "Bash(git push:*)",
       "Bash(gh pr merge:*)",
       "Bash(gh pr lock:*)",
-      "Bash(gh pr close:*)",
-      "Bash(gh pr create:*)"
+      "Bash(gh pr close:*)"
     ]
   },
   "env": {
