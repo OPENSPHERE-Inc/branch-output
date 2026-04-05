@@ -61,7 +61,7 @@ obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, si
     return streamingSettings;
 }
 
-bool BranchOutputFilter::createSreamingOutput(obs_data_t *settings, size_t index)
+bool BranchOutputFilter::createStreamingOutput(obs_data_t *settings, size_t index)
 {
     auto count = (size_t)obs_data_get_int(settings, "service_count");
     if (index >= count || index >= MAX_SERVICES) {
@@ -355,7 +355,7 @@ bool BranchOutputFilter::isStreamingEnabled(obs_data_t *settings, size_t index)
 // Caller must call ensureInfrastructure() before this function to set up
 // the view, video/audio encoders, and related infrastructure.
 // Note: stopStreamingOutput() sets streamings[i].output to nullptr, so stopped slots
-// are always recreated with fresh settings via createSreamingOutput().
+// are always recreated with fresh settings via createStreamingOutput().
 bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
 {
     if (!isStreamingGroupEnabled(settings)) {
@@ -368,7 +368,7 @@ bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
     auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
     for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
         if (!streamings[i].output && isStreamingUserEnabled(i)) {
-            createSreamingOutput(settings, i);
+            createStreamingOutput(settings, i);
         }
     }
 
@@ -467,7 +467,7 @@ bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
             }
 
             if (!streamings[index].output) {
-                createSreamingOutput(settings, index);
+                createStreamingOutput(settings, index);
             }
 
             startStreamingOutput(index);

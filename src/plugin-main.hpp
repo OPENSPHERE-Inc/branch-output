@@ -204,7 +204,7 @@ class BranchOutputFilter : public QObject {
 
     // Implemented in plugin-streaming.cpp
     obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
-    bool createSreamingOutput(obs_data_t *settings, size_t index = 0);
+    bool createStreamingOutput(obs_data_t *settings, size_t index = 0);
     void startStreamingOutput(size_t index = 0);
     void stopStreamingOutput(size_t index = 0);
     void reconnectStreamingOutput(size_t index = 0);
