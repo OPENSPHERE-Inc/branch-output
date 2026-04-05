@@ -116,10 +116,10 @@ Output the final report in this format:
 ```
 # Parallel Code Review Report — Round {N}
 
-**Date:** YYYY-MM-DD
-**Round:** {N}
-**Scope:** {description of what was reviewed}
-**Reviewers:** {comma-separated list of all reviewers used}
+- **Date:** YYYY-MM-DD
+- **Round:** {N}
+- **Scope:** {description of what was reviewed}
+- **Reviewers:** {comma-separated list of all reviewers used}
 
 ## Critical
 

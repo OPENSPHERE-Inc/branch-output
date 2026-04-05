@@ -122,6 +122,9 @@ Command file: .claude/commands/review-respond.md
 Arguments: {current round file path} {if --commit enabled: --commit}
 
 Additional instructions:
+{if --commit disabled:}
+Do NOT create any git commits. Only modify source code. Committing is strictly prohibited.
+
 {if --confirm-triage enabled:}
 Present triage results to the user and wait for confirmation before proceeding to fixes.
 
@@ -163,6 +166,8 @@ Arguments: {current round file path} {if --commit enabled: --commit}
 
 Additional instructions:
 Review the feedback annotations in the review document and address the unresolved findings.
+{if --commit disabled:}
+Do NOT create any git commits. Only modify source code. Committing is strictly prohibited.
 ```
 
 3. Print to console: `## Round {N} — Step 5: Feedback Verify (attempt {M}/3)`
