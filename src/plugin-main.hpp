@@ -155,6 +155,11 @@ class BranchOutputFilter : public QObject {
     obs_hotkey_pair_id togglePauseRecordingHotkeyPairId;
     obs_hotkey_id addChapterToRecordingHotkeyId;
     obs_hotkey_id saveReplayBufferHotkeyId;
+    obs_hotkey_id enableAllStreamingHotkeyId;
+    obs_hotkey_id disableAllStreamingHotkeyId;
+    obs_hotkey_pair_id toggleStreamingServiceHotkeyPairIds[MAX_SERVICES];
+    obs_hotkey_pair_id toggleRecordingHotkeyPairId;
+    obs_hotkey_pair_id toggleReplayBufferHotkeyPairId;
 
     OBSSignal filterRenamedSignal;
 
@@ -185,6 +190,7 @@ class BranchOutputFilter : public QObject {
     void restartOutput();
     void stopOutputGracefully();
     void registerHotkey();
+    size_t findStreamingSlotByHotkeyPairId(obs_hotkey_pair_id id) const;
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
     void setAudioCapturesActive(bool active);
     void saveCallback(obs_data_t *settings);
@@ -263,6 +269,16 @@ class BranchOutputFilter : public QObject {
     static void
     onAddChapterToRecordingFileHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onEnableAllStreamingHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onDisableAllStreamingHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static bool
+    onEnableStreamingServiceHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
+    static bool
+    onDisableStreamingServiceHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
+    static bool onEnableRecordingHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
+    static bool onDisableRecordingHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
+    static bool onEnableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
+    static bool onDisableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
     static void onReplayBufferSaved(void *data, calldata_t *cd);
     static void onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd);
     static void onOverrideRecordingFilenameFormat(void *data, calldata_t *cd);

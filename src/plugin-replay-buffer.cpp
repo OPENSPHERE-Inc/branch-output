@@ -342,3 +342,25 @@ bool BranchOutputFilter::stopReplayBufferIndividual()
     }
     return wasActive;
 }
+
+bool BranchOutputFilter::onEnableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    filter->setReplayBufferUserEnabled(true);
+    return filter->startReplayBufferIndividual();
+}
+
+bool BranchOutputFilter::onDisableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    filter->setReplayBufferUserEnabled(false);
+    return filter->stopReplayBufferIndividual();
+}

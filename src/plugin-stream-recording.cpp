@@ -508,3 +508,71 @@ bool BranchOutputFilter::stopRecordingIndividual()
     }
     return wasActive;
 }
+
+void BranchOutputFilter::onSplitRecordingFileHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return;
+    }
+
+    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    filter->splitRecording();
+}
+
+bool BranchOutputFilter::onPauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    return filter->pauseRecording();
+}
+
+bool BranchOutputFilter::onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+
+    if (filter->recordingPending) {
+        // Block unpausing when recording is pending
+        return false;
+    }
+
+    return filter->unpauseRecording();
+}
+
+void BranchOutputFilter::onAddChapterToRecordingFileHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return;
+    }
+
+    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    filter->addChapterToRecording();
+}
+
+bool BranchOutputFilter::onEnableRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    filter->setRecordingUserEnabled(true);
+    return filter->startRecordingIndividual();
+}
+
+bool BranchOutputFilter::onDisableRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    filter->setRecordingUserEnabled(false);
+    return filter->stopRecordingIndividual();
+}

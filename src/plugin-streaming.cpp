@@ -530,3 +530,75 @@ bool BranchOutputFilter::stopSingleStreamingOutputGracefully(size_t index)
 
     return true;
 }
+
+size_t BranchOutputFilter::findStreamingSlotByHotkeyPairId(obs_hotkey_pair_id id) const
+{
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        if (toggleStreamingServiceHotkeyPairIds[i] == id) {
+            return i;
+        }
+    }
+    return SIZE_MAX;
+}
+
+void BranchOutputFilter::onEnableAllStreamingHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        filter->setStreamingUserEnabled(i, true);
+    }
+    filter->startStreamingIndividual();
+}
+
+void BranchOutputFilter::onDisableAllStreamingHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    filter->stopStreamingIndividual();
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        filter->setStreamingUserEnabled(i, false);
+    }
+}
+
+bool BranchOutputFilter::onEnableStreamingServiceHotkeyPressed(
+    void *data, obs_hotkey_pair_id id, obs_hotkey *, bool pressed
+)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    size_t index = filter->findStreamingSlotByHotkeyPairId(id);
+    if (index == SIZE_MAX) {
+        return false;
+    }
+
+    filter->setStreamingUserEnabled(index, true);
+    return filter->startSingleStreamingIndividual(index);
+}
+
+bool BranchOutputFilter::onDisableStreamingServiceHotkeyPressed(
+    void *data, obs_hotkey_pair_id id, obs_hotkey *, bool pressed
+)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    size_t index = filter->findStreamingSlotByHotkeyPairId(id);
+    if (index == SIZE_MAX) {
+        return false;
+    }
+
+    filter->setStreamingUserEnabled(index, false);
+    return filter->stopSingleStreamingIndividual(index);
+}

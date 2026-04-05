@@ -75,16 +75,21 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       splitRecordingEnabled(false),
       recordingSettingsOverridden(false),
       replayBufferActive(false),
-      saveReplayBufferHotkeyId(OBS_INVALID_HOTKEY_ID)
+      saveReplayBufferHotkeyId(OBS_INVALID_HOTKEY_ID),
+      enableAllStreamingHotkeyId(OBS_INVALID_HOTKEY_ID),
+      disableAllStreamingHotkeyId(OBS_INVALID_HOTKEY_ID),
+      toggleRecordingHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
+      toggleReplayBufferHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID)
 {
     // DO NOT use obs_filter_get_parent() in this function (It'll return nullptr)
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", qUtf8Printable(name));
     obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
 
-    // Per-stream user-enabled flags
+    // Per-stream user-enabled flags and hotkey IDs
     for (size_t i = 0; i < MAX_SERVICES; i++) {
         auto key = QString("streaming_output_enabled_%1").arg(i);
         streamingUserEnabled[i].store(obs_data_get_bool(settings, qUtf8Printable(key)), std::memory_order_relaxed);
+        toggleStreamingServiceHotkeyPairIds[i] = OBS_INVALID_HOTKEY_PAIR_ID;
     }
 
     // Do not use memset
@@ -165,6 +170,23 @@ void BranchOutputFilter::registerHotkey()
         // Unregsiter previous
         obs_hotkey_unregister(saveReplayBufferHotkeyId);
     }
+    if (enableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        obs_hotkey_unregister(enableAllStreamingHotkeyId);
+    }
+    if (disableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        obs_hotkey_unregister(disableAllStreamingHotkeyId);
+    }
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        if (toggleStreamingServiceHotkeyPairIds[i] != OBS_INVALID_HOTKEY_PAIR_ID) {
+            obs_hotkey_pair_unregister(toggleStreamingServiceHotkeyPairIds[i]);
+        }
+    }
+    if (toggleRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        obs_hotkey_pair_unregister(toggleRecordingHotkeyPairId);
+    }
+    if (toggleReplayBufferHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        obs_hotkey_pair_unregister(toggleReplayBufferHotkeyPairId);
+    }
 
     // Register enable/disable hotkeys
     auto enableFilterName = QString("EnableFilter.%1").arg(obs_source_get_uuid(filterSource));
@@ -214,6 +236,64 @@ void BranchOutputFilter::registerHotkey()
     saveReplayBufferHotkeyId = obs_hotkey_register_source(
         obs_filter_get_parent(filterSource), qUtf8Printable(saveReplayName), qUtf8Printable(saveReplayDescription),
         onSaveReplayBufferHotkeyPressed, this
+    );
+
+    auto uuid = obs_source_get_uuid(filterSource);
+    auto parent = obs_filter_get_parent(filterSource);
+
+    // Register enable all streaming hotkey
+    auto enableAllStreamingName = QString("EnableAllStreaming.%1").arg(uuid);
+    auto enableAllStreamingDesc = QString(obs_module_text("EnableAllStreamingHotkey")).arg(name);
+
+    enableAllStreamingHotkeyId = obs_hotkey_register_source(
+        parent, qUtf8Printable(enableAllStreamingName), qUtf8Printable(enableAllStreamingDesc),
+        onEnableAllStreamingHotkeyPressed, this
+    );
+
+    // Register disable all streaming hotkey
+    auto disableAllStreamingName = QString("DisableAllStreaming.%1").arg(uuid);
+    auto disableAllStreamingDesc = QString(obs_module_text("DisableAllStreamingHotkey")).arg(name);
+
+    disableAllStreamingHotkeyId = obs_hotkey_register_source(
+        parent, qUtf8Printable(disableAllStreamingName), qUtf8Printable(disableAllStreamingDesc),
+        onDisableAllStreamingHotkeyPressed, this
+    );
+
+    // Register per-slot streaming enable/disable hotkeys
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        auto enableName = QString("EnableStreamingService%1.%2").arg(i).arg(uuid);
+        auto enableDesc = QString(obs_module_text("EnableStreamingServiceHotkey")).arg(name).arg(i + 1);
+        auto disableName = QString("DisableStreamingService%1.%2").arg(i).arg(uuid);
+        auto disableDesc = QString(obs_module_text("DisableStreamingServiceHotkey")).arg(name).arg(i + 1);
+
+        toggleStreamingServiceHotkeyPairIds[i] = obs_hotkey_pair_register_source(
+            parent, qUtf8Printable(enableName), qUtf8Printable(enableDesc), qUtf8Printable(disableName),
+            qUtf8Printable(disableDesc), onEnableStreamingServiceHotkeyPressed, onDisableStreamingServiceHotkeyPressed,
+            this, this
+        );
+    }
+
+    // Register enable/disable recording hotkey
+    auto enableRecName = QString("EnableRecordingIndividual.%1").arg(uuid);
+    auto enableRecDesc = QString(obs_module_text("EnableRecordingIndividualHotkey")).arg(name);
+    auto disableRecName = QString("DisableRecordingIndividual.%1").arg(uuid);
+    auto disableRecDesc = QString(obs_module_text("DisableRecordingIndividualHotkey")).arg(name);
+
+    toggleRecordingHotkeyPairId = obs_hotkey_pair_register_source(
+        parent, qUtf8Printable(enableRecName), qUtf8Printable(enableRecDesc), qUtf8Printable(disableRecName),
+        qUtf8Printable(disableRecDesc), onEnableRecordingHotkeyPressed, onDisableRecordingHotkeyPressed, this, this
+    );
+
+    // Register enable/disable replay buffer hotkey
+    auto enableReplayName = QString("EnableReplayBufferIndividual.%1").arg(uuid);
+    auto enableReplayDesc = QString(obs_module_text("EnableReplayBufferIndividualHotkey")).arg(name);
+    auto disableReplayName = QString("DisableReplayBufferIndividual.%1").arg(uuid);
+    auto disableReplayDesc = QString(obs_module_text("DisableReplayBufferIndividualHotkey")).arg(name);
+
+    toggleReplayBufferHotkeyPairId = obs_hotkey_pair_register_source(
+        parent, qUtf8Printable(enableReplayName), qUtf8Printable(enableReplayDesc), qUtf8Printable(disableReplayName),
+        qUtf8Printable(disableReplayDesc), onEnableReplayBufferHotkeyPressed, onDisableReplayBufferHotkeyPressed, this,
+        this
     );
 }
 
@@ -1604,6 +1684,28 @@ void BranchOutputFilter::removeCallback()
         obs_hotkey_unregister(saveReplayBufferHotkeyId);
         saveReplayBufferHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
+    if (enableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        obs_hotkey_unregister(enableAllStreamingHotkeyId);
+        enableAllStreamingHotkeyId = OBS_INVALID_HOTKEY_ID;
+    }
+    if (disableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
+        obs_hotkey_unregister(disableAllStreamingHotkeyId);
+        disableAllStreamingHotkeyId = OBS_INVALID_HOTKEY_ID;
+    }
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        if (toggleStreamingServiceHotkeyPairIds[i] != OBS_INVALID_HOTKEY_PAIR_ID) {
+            obs_hotkey_pair_unregister(toggleStreamingServiceHotkeyPairIds[i]);
+            toggleStreamingServiceHotkeyPairIds[i] = OBS_INVALID_HOTKEY_PAIR_ID;
+        }
+    }
+    if (toggleRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        obs_hotkey_pair_unregister(toggleRecordingHotkeyPairId);
+        toggleRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
+    }
+    if (toggleReplayBufferHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
+        obs_hotkey_pair_unregister(toggleReplayBufferHotkeyPairId);
+        toggleReplayBufferHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
+    }
 
     obs_log(LOG_INFO, "%s: Filter removed", qUtf8Printable(name));
 }
@@ -1651,52 +1753,6 @@ bool BranchOutputFilter::onDisableFilterHotkeyPressed(void *data, obs_hotkey_pai
 
     obs_source_set_enabled(filter->filterSource, false);
     return true;
-}
-
-void BranchOutputFilter::onSplitRecordingFileHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
-{
-    if (!pressed) {
-        return;
-    }
-
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
-    filter->splitRecording();
-}
-
-bool BranchOutputFilter::onPauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
-{
-    if (!pressed) {
-        return false;
-    }
-
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
-    return filter->pauseRecording();
-}
-
-bool BranchOutputFilter::onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
-{
-    if (!pressed) {
-        return false;
-    }
-
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
-
-    if (filter->recordingPending) {
-        // Block unpausing when recording is pending
-        return false;
-    }
-
-    return filter->unpauseRecording();
-}
-
-void BranchOutputFilter::onAddChapterToRecordingFileHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
-{
-    if (!pressed) {
-        return;
-    }
-
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
-    filter->addChapterToRecording();
 }
 
 // Callback from filter audio
