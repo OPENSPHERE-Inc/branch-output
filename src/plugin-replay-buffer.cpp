@@ -185,6 +185,14 @@ void BranchOutputFilter::stopReplayBufferOutput()
     }
 }
 
+void BranchOutputFilter::setReplayBufferUserEnabled(bool enabled)
+{
+    bool previous = replayBufferUserEnabled.exchange(enabled, std::memory_order_relaxed);
+    if (previous != enabled) {
+        emit outputUserEnabledChanged();
+    }
+}
+
 bool BranchOutputFilter::isReplayBufferEnabled(obs_data_t *settings)
 {
     return obs_data_get_bool(settings, "replay_buffer");
@@ -341,4 +349,46 @@ bool BranchOutputFilter::stopReplayBufferIndividual()
         }
     }
     return wasActive;
+}
+
+bool BranchOutputFilter::onEnableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    if (!obs_source_enabled(filter->filterSource)) {
+        return false;
+    }
+
+    if (filter->isReplayBufferUserEnabled()) {
+        // Already enabled
+        return false;
+    }
+
+    filter->setReplayBufferUserEnabled(true);
+
+    return true;
+}
+
+bool BranchOutputFilter::onDisableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    if (!obs_source_enabled(filter->filterSource)) {
+        return false;
+    }
+
+    if (!filter->isReplayBufferUserEnabled()) {
+        // Already disabled
+        return false;
+    }
+
+    filter->setReplayBufferUserEnabled(false);
+
+    return true;
 }

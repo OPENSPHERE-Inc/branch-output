@@ -250,6 +250,7 @@ class BranchOutputStatusDock : public QFrame {
     Qt::SortOrder sortingOrder;
 
     void update();
+    void updateOutputToggles(BranchOutputFilter *filter);
     void applyEnableAllButtonEnabled();
     void applyDisableAllButtonEnabled();
     void applySplitRecordingAllButtonEnabled();
@@ -272,6 +273,7 @@ class BranchOutputStatusDock : public QFrame {
 
 private slots:
     void onHeaderPressed(int index);
+    void onOutputUserEnabledChanged();
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
@@ -323,6 +325,7 @@ class OutputTableRow : public QObject {
     int first_dropped = 0;
 
     void update();
+    void updateOutputToggle();
     void reset();
     void splitRecording();
     void pauseRecording();

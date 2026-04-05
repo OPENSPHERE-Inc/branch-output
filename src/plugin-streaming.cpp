@@ -63,10 +63,6 @@ obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, si
 
 bool BranchOutputFilter::createStreamingOutput(obs_data_t *settings, size_t index)
 {
-    auto count = (size_t)obs_data_get_int(settings, "service_count");
-    if (index >= count || index >= MAX_SERVICES) {
-        return false;
-    }
     if (!isStreamingEnabled(settings, index)) {
         return false;
     }
@@ -256,7 +252,10 @@ bool BranchOutputFilter::reconnectAttemptingTimedOut(size_t index)
 void BranchOutputFilter::setStreamingUserEnabled(size_t index, bool enabled)
 {
     if (index < MAX_SERVICES) {
-        streamingUserEnabled[index].store(enabled, std::memory_order_relaxed);
+        bool previous = streamingUserEnabled[index].exchange(enabled, std::memory_order_relaxed);
+        if (previous != enabled) {
+            emit outputUserEnabledChanged();
+        }
     }
 }
 
@@ -277,8 +276,7 @@ bool BranchOutputFilter::isAnyStreamingUserEnabled() const
 
 bool BranchOutputFilter::isAnyStreamingUserEnabled(obs_data_t *settings)
 {
-    auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
-    for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
         if (isStreamingEnabled(settings, i) && streamingUserEnabled[i].load(std::memory_order_relaxed)) {
             return true;
         }
@@ -299,8 +297,7 @@ bool BranchOutputFilter::someStreamingsStarting()
 int BranchOutputFilter::countEnabledStreamings(obs_data_t *settings)
 {
     int count = 0;
-    auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
-    for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
         if (isStreamingEnabled(settings, i)) {
             count++;
         }
@@ -347,6 +344,13 @@ bool BranchOutputFilter::isStreamingGroupEnabled(obs_data_t *settings)
 
 bool BranchOutputFilter::isStreamingEnabled(obs_data_t *settings, size_t index)
 {
+    if (index >= MAX_SERVICES) {
+        return false;
+    }
+    auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
+    if (index >= serviceCount) {
+        return false;
+    }
     auto propNameFormat = getIndexedPropNameFormat(index);
     return !!strlen(obs_data_get_string(settings, qUtf8Printable(propNameFormat.arg("server"))));
 }
@@ -365,15 +369,14 @@ bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
         return true;
     }
 
-    auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
-    for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
-        if (!streamings[i].output && isStreamingUserEnabled(i)) {
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        if (!streamings[i].output && isStreamingEnabled(settings, i) && isStreamingUserEnabled(i)) {
             createStreamingOutput(settings, i);
         }
     }
 
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (isStreamingUserEnabled(i) && streamings[i].output) {
+        if (streamings[i].output) {
             startStreamingOutput(i);
         }
     }
@@ -527,6 +530,110 @@ bool BranchOutputFilter::stopSingleStreamingOutputGracefully(size_t index)
             stopStreamingOutput(index);
         }
     }
+
+    return true;
+}
+
+size_t BranchOutputFilter::findStreamingSlotByHotkeyPairId(obs_hotkey_pair_id id) const
+{
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        if (toggleStreamingServiceHotkeyPairIds[i] == id) {
+            return i;
+        }
+    }
+    return SIZE_MAX;
+}
+
+void BranchOutputFilter::onEnableAllStreamingHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    if (!obs_source_enabled(filter->filterSource)) {
+        return;
+    }
+
+    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        if (filter->isStreamingEnabled(settings, i)) {
+            filter->setStreamingUserEnabled(i, true);
+        }
+    }
+}
+
+void BranchOutputFilter::onDisableAllStreamingHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    if (!obs_source_enabled(filter->filterSource)) {
+        return;
+    }
+
+    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        if (filter->isStreamingEnabled(settings, i)) {
+            filter->setStreamingUserEnabled(i, false);
+        }
+    }
+}
+
+bool BranchOutputFilter::onEnableStreamingServiceHotkeyPressed(
+    void *data, obs_hotkey_pair_id id, obs_hotkey *, bool pressed
+)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    if (!obs_source_enabled(filter->filterSource)) {
+        return false;
+    }
+
+    size_t index = filter->findStreamingSlotByHotkeyPairId(id);
+    if (index == SIZE_MAX) {
+        return false;
+    }
+
+    if (filter->isStreamingUserEnabled(index)) {
+        // Already enabled
+        return false;
+    }
+
+    filter->setStreamingUserEnabled(index, true);
+
+    return true;
+}
+
+bool BranchOutputFilter::onDisableStreamingServiceHotkeyPressed(
+    void *data, obs_hotkey_pair_id id, obs_hotkey *, bool pressed
+)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    if (!obs_source_enabled(filter->filterSource)) {
+        return false;
+    }
+
+    size_t index = filter->findStreamingSlotByHotkeyPairId(id);
+    if (index == SIZE_MAX) {
+        return false;
+    }
+
+    if (!filter->isStreamingUserEnabled(index)) {
+        // Already disabled
+        return false;
+    }
+
+    filter->setStreamingUserEnabled(index, false);
 
     return true;
 }
