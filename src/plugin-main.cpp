@@ -150,151 +150,165 @@ BranchOutputFilter::~BranchOutputFilter()
 
 void BranchOutputFilter::registerHotkey()
 {
+    // Unregister all previous hotkeys
     if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        // Unregsiter previous
         obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
+        toggleEnableHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
     }
     if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        // Unregsiter previous
         obs_hotkey_unregister(splitRecordingHotkeyId);
+        splitRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
     if (togglePauseRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        // Unregsiter previous
         obs_hotkey_pair_unregister(togglePauseRecordingHotkeyPairId);
+        togglePauseRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
     }
     if (addChapterToRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        // Unregsiter previous
         obs_hotkey_unregister(addChapterToRecordingHotkeyId);
+        addChapterToRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
     if (saveReplayBufferHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        // Unregsiter previous
         obs_hotkey_unregister(saveReplayBufferHotkeyId);
+        saveReplayBufferHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
     if (enableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
         obs_hotkey_unregister(enableAllStreamingHotkeyId);
+        enableAllStreamingHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
     if (disableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
         obs_hotkey_unregister(disableAllStreamingHotkeyId);
+        disableAllStreamingHotkeyId = OBS_INVALID_HOTKEY_ID;
     }
     for (size_t i = 0; i < MAX_SERVICES; i++) {
         if (toggleStreamingServiceHotkeyPairIds[i] != OBS_INVALID_HOTKEY_PAIR_ID) {
             obs_hotkey_pair_unregister(toggleStreamingServiceHotkeyPairIds[i]);
+            toggleStreamingServiceHotkeyPairIds[i] = OBS_INVALID_HOTKEY_PAIR_ID;
         }
     }
     if (toggleRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
         obs_hotkey_pair_unregister(toggleRecordingHotkeyPairId);
+        toggleRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
     }
     if (toggleReplayBufferHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
         obs_hotkey_pair_unregister(toggleReplayBufferHotkeyPairId);
+        toggleReplayBufferHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
     }
 
-    // Register enable/disable hotkeys
-    auto enableFilterName = QString("EnableFilter.%1").arg(obs_source_get_uuid(filterSource));
+    auto uuid = obs_source_get_uuid(filterSource);
+    auto parent = obs_filter_get_parent(filterSource);
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+
+    // Register enable/disable filter hotkey (always registered)
+    auto enableFilterName = QString("EnableFilter.%1").arg(uuid);
     auto enableFilterDescription = QString(obs_module_text("EnableHotkey")).arg(name);
-    auto disableFilterName = QString("DisableFilter.%1").arg(obs_source_get_uuid(filterSource));
+    auto disableFilterName = QString("DisableFilter.%1").arg(uuid);
     auto disableFilterDescription = QString(obs_module_text("DisableHotkey")).arg(name);
 
     toggleEnableHotkeyPairId = obs_hotkey_pair_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(enableFilterName), qUtf8Printable(enableFilterDescription),
+        parent, qUtf8Printable(enableFilterName), qUtf8Printable(enableFilterDescription),
         qUtf8Printable(disableFilterName), qUtf8Printable(disableFilterDescription), onEnableFilterHotkeyPressed,
         onDisableFilterHotkeyPressed, this, this
     );
 
-    // Register split recording hotkey
-    auto splitName = QString("SplitRecordingFile.%1").arg(obs_source_get_uuid(filterSource));
-    auto splitDescription = QString(obs_module_text("SplitRecordingFileHotkey")).arg(name);
+    // --- Streaming hotkeys (only when streaming is enabled) ---
+    if (isStreamingGroupEnabled(settings)) {
+        // Enable/disable all streaming hotkeys
+        auto enableAllStreamingName = QString("EnableAllStreaming.%1").arg(uuid);
+        auto enableAllStreamingDesc = QString(obs_module_text("EnableAllStreamingHotkey")).arg(name);
 
-    splitRecordingHotkeyId = obs_hotkey_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(splitName), qUtf8Printable(splitDescription),
-        onSplitRecordingFileHotkeyPressed, this
-    );
+        enableAllStreamingHotkeyId = obs_hotkey_register_source(
+            parent, qUtf8Printable(enableAllStreamingName), qUtf8Printable(enableAllStreamingDesc),
+            onEnableAllStreamingHotkeyPressed, this
+        );
 
-    // Register pause/unpause recording hotkey
-    auto pauseRecordingName = QString("PauseRecording.%1").arg(obs_source_get_uuid(filterSource));
-    auto pauseRecordingDescription = QString(obs_module_text("PauseRecordingHotkey")).arg(name);
-    auto unpauseRecordingName = QString("UnpauseRecording.%1").arg(obs_source_get_uuid(filterSource));
-    auto unpauseRecordingDescription = QString(obs_module_text("UnpauseRecordingHotkey")).arg(name);
+        auto disableAllStreamingName = QString("DisableAllStreaming.%1").arg(uuid);
+        auto disableAllStreamingDesc = QString(obs_module_text("DisableAllStreamingHotkey")).arg(name);
 
-    togglePauseRecordingHotkeyPairId = obs_hotkey_pair_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(pauseRecordingName),
-        qUtf8Printable(pauseRecordingDescription), qUtf8Printable(unpauseRecordingName),
-        qUtf8Printable(unpauseRecordingDescription), onPauseRecordingHotkeyPressed, onUnpauseRecordingHotkeyPressed,
-        this, this
-    );
+        disableAllStreamingHotkeyId = obs_hotkey_register_source(
+            parent, qUtf8Printable(disableAllStreamingName), qUtf8Printable(disableAllStreamingDesc),
+            onDisableAllStreamingHotkeyPressed, this
+        );
 
-    // Register add chapter to recording hotkey
-    auto addChapterName = QString("AddChapterToRecordingFile.%1").arg(obs_source_get_uuid(filterSource));
-    auto addChapterDescription = QString(obs_module_text("AddChapterToRecordingFileHotkey")).arg(name);
-    addChapterToRecordingHotkeyId = obs_hotkey_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(addChapterName), qUtf8Printable(addChapterDescription),
-        onAddChapterToRecordingFileHotkeyPressed, this
-    );
+        // Per-slot streaming enable/disable hotkeys (only for configured slots)
+        for (size_t i = 0; i < MAX_SERVICES; i++) {
+            if (!isStreamingEnabled(settings, i)) {
+                continue;
+            }
 
-    // Register save replay buffer hotkey
-    auto saveReplayName = QString("SaveReplayBuffer.%1").arg(obs_source_get_uuid(filterSource));
-    auto saveReplayDescription = QString(obs_module_text("SaveReplayBufferHotkey")).arg(name);
-    saveReplayBufferHotkeyId = obs_hotkey_register_source(
-        obs_filter_get_parent(filterSource), qUtf8Printable(saveReplayName), qUtf8Printable(saveReplayDescription),
-        onSaveReplayBufferHotkeyPressed, this
-    );
+            auto enableName = QString("EnableStreamingService%1.%2").arg(i).arg(uuid);
+            auto enableDesc = QString(obs_module_text("EnableStreamingServiceHotkey")).arg(name).arg(i + 1);
+            auto disableName = QString("DisableStreamingService%1.%2").arg(i).arg(uuid);
+            auto disableDesc = QString(obs_module_text("DisableStreamingServiceHotkey")).arg(name).arg(i + 1);
 
-    auto uuid = obs_source_get_uuid(filterSource);
-    auto parent = obs_filter_get_parent(filterSource);
+            toggleStreamingServiceHotkeyPairIds[i] = obs_hotkey_pair_register_source(
+                parent, qUtf8Printable(enableName), qUtf8Printable(enableDesc), qUtf8Printable(disableName),
+                qUtf8Printable(disableDesc), onEnableStreamingServiceHotkeyPressed,
+                onDisableStreamingServiceHotkeyPressed, this, this
+            );
+        }
+    }
 
-    // Register enable all streaming hotkey
-    auto enableAllStreamingName = QString("EnableAllStreaming.%1").arg(uuid);
-    auto enableAllStreamingDesc = QString(obs_module_text("EnableAllStreamingHotkey")).arg(name);
+    // --- Recording hotkeys (only when recording is enabled) ---
+    if (isRecordingEnabled(settings)) {
+        auto splitName = QString("SplitRecordingFile.%1").arg(uuid);
+        auto splitDescription = QString(obs_module_text("SplitRecordingFileHotkey")).arg(name);
 
-    enableAllStreamingHotkeyId = obs_hotkey_register_source(
-        parent, qUtf8Printable(enableAllStreamingName), qUtf8Printable(enableAllStreamingDesc),
-        onEnableAllStreamingHotkeyPressed, this
-    );
+        splitRecordingHotkeyId = obs_hotkey_register_source(
+            parent, qUtf8Printable(splitName), qUtf8Printable(splitDescription), onSplitRecordingFileHotkeyPressed,
+            this
+        );
 
-    // Register disable all streaming hotkey
-    auto disableAllStreamingName = QString("DisableAllStreaming.%1").arg(uuid);
-    auto disableAllStreamingDesc = QString(obs_module_text("DisableAllStreamingHotkey")).arg(name);
+        auto pauseRecordingName = QString("PauseRecording.%1").arg(uuid);
+        auto pauseRecordingDescription = QString(obs_module_text("PauseRecordingHotkey")).arg(name);
+        auto unpauseRecordingName = QString("UnpauseRecording.%1").arg(uuid);
+        auto unpauseRecordingDescription = QString(obs_module_text("UnpauseRecordingHotkey")).arg(name);
 
-    disableAllStreamingHotkeyId = obs_hotkey_register_source(
-        parent, qUtf8Printable(disableAllStreamingName), qUtf8Printable(disableAllStreamingDesc),
-        onDisableAllStreamingHotkeyPressed, this
-    );
+        togglePauseRecordingHotkeyPairId = obs_hotkey_pair_register_source(
+            parent, qUtf8Printable(pauseRecordingName), qUtf8Printable(pauseRecordingDescription),
+            qUtf8Printable(unpauseRecordingName), qUtf8Printable(unpauseRecordingDescription),
+            onPauseRecordingHotkeyPressed, onUnpauseRecordingHotkeyPressed, this, this
+        );
 
-    // Register per-slot streaming enable/disable hotkeys
-    for (size_t i = 0; i < MAX_SERVICES; i++) {
-        auto enableName = QString("EnableStreamingService%1.%2").arg(i).arg(uuid);
-        auto enableDesc = QString(obs_module_text("EnableStreamingServiceHotkey")).arg(name).arg(i + 1);
-        auto disableName = QString("DisableStreamingService%1.%2").arg(i).arg(uuid);
-        auto disableDesc = QString(obs_module_text("DisableStreamingServiceHotkey")).arg(name).arg(i + 1);
+        auto addChapterName = QString("AddChapterToRecordingFile.%1").arg(uuid);
+        auto addChapterDescription = QString(obs_module_text("AddChapterToRecordingFileHotkey")).arg(name);
+        addChapterToRecordingHotkeyId = obs_hotkey_register_source(
+            parent, qUtf8Printable(addChapterName), qUtf8Printable(addChapterDescription),
+            onAddChapterToRecordingFileHotkeyPressed, this
+        );
 
-        toggleStreamingServiceHotkeyPairIds[i] = obs_hotkey_pair_register_source(
-            parent, qUtf8Printable(enableName), qUtf8Printable(enableDesc), qUtf8Printable(disableName),
-            qUtf8Printable(disableDesc), onEnableStreamingServiceHotkeyPressed, onDisableStreamingServiceHotkeyPressed,
-            this, this
+        // Enable/disable recording hotkey
+        auto enableRecName = QString("EnableRecordingIndividual.%1").arg(uuid);
+        auto enableRecDesc = QString(obs_module_text("EnableRecordingIndividualHotkey")).arg(name);
+        auto disableRecName = QString("DisableRecordingIndividual.%1").arg(uuid);
+        auto disableRecDesc = QString(obs_module_text("DisableRecordingIndividualHotkey")).arg(name);
+
+        toggleRecordingHotkeyPairId = obs_hotkey_pair_register_source(
+            parent, qUtf8Printable(enableRecName), qUtf8Printable(enableRecDesc), qUtf8Printable(disableRecName),
+            qUtf8Printable(disableRecDesc), onEnableRecordingHotkeyPressed, onDisableRecordingHotkeyPressed, this, this
         );
     }
 
-    // Register enable/disable recording hotkey
-    auto enableRecName = QString("EnableRecordingIndividual.%1").arg(uuid);
-    auto enableRecDesc = QString(obs_module_text("EnableRecordingIndividualHotkey")).arg(name);
-    auto disableRecName = QString("DisableRecordingIndividual.%1").arg(uuid);
-    auto disableRecDesc = QString(obs_module_text("DisableRecordingIndividualHotkey")).arg(name);
+    // --- Replay buffer hotkeys (only when replay buffer is enabled) ---
+    if (isReplayBufferEnabled(settings)) {
+        auto saveReplayName = QString("SaveReplayBuffer.%1").arg(uuid);
+        auto saveReplayDescription = QString(obs_module_text("SaveReplayBufferHotkey")).arg(name);
+        saveReplayBufferHotkeyId = obs_hotkey_register_source(
+            parent, qUtf8Printable(saveReplayName), qUtf8Printable(saveReplayDescription),
+            onSaveReplayBufferHotkeyPressed, this
+        );
 
-    toggleRecordingHotkeyPairId = obs_hotkey_pair_register_source(
-        parent, qUtf8Printable(enableRecName), qUtf8Printable(enableRecDesc), qUtf8Printable(disableRecName),
-        qUtf8Printable(disableRecDesc), onEnableRecordingHotkeyPressed, onDisableRecordingHotkeyPressed, this, this
-    );
+        // Enable/disable replay buffer hotkey
+        auto enableReplayName = QString("EnableReplayBufferIndividual.%1").arg(uuid);
+        auto enableReplayDesc = QString(obs_module_text("EnableReplayBufferIndividualHotkey")).arg(name);
+        auto disableReplayName = QString("DisableReplayBufferIndividual.%1").arg(uuid);
+        auto disableReplayDesc = QString(obs_module_text("DisableReplayBufferIndividualHotkey")).arg(name);
 
-    // Register enable/disable replay buffer hotkey
-    auto enableReplayName = QString("EnableReplayBufferIndividual.%1").arg(uuid);
-    auto enableReplayDesc = QString(obs_module_text("EnableReplayBufferIndividualHotkey")).arg(name);
-    auto disableReplayName = QString("DisableReplayBufferIndividual.%1").arg(uuid);
-    auto disableReplayDesc = QString(obs_module_text("DisableReplayBufferIndividualHotkey")).arg(name);
-
-    toggleReplayBufferHotkeyPairId = obs_hotkey_pair_register_source(
-        parent, qUtf8Printable(enableReplayName), qUtf8Printable(enableReplayDesc), qUtf8Printable(disableReplayName),
-        qUtf8Printable(disableReplayDesc), onEnableReplayBufferHotkeyPressed, onDisableReplayBufferHotkeyPressed, this,
-        this
-    );
+        toggleReplayBufferHotkeyPairId = obs_hotkey_pair_register_source(
+            parent, qUtf8Printable(enableReplayName), qUtf8Printable(enableReplayDesc),
+            qUtf8Printable(disableReplayName), qUtf8Printable(disableReplayDesc), onEnableReplayBufferHotkeyPressed,
+            onDisableReplayBufferHotkeyPressed, this, this
+        );
+    }
 }
 
 // Caller must hold outputMutex.
@@ -1592,6 +1606,9 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
 
     OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
     obs_data_save_json_safe(settings, path, "tmp", "bak");
+
+    // Re-register hotkeys (they depend on which outputs are enabled in settings).
+    registerHotkey();
 
     // Update status dock
     if (statusDock) {

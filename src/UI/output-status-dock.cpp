@@ -372,6 +372,10 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     // Ensure filter removed
     removeFilter(filter);
 
+    // Immediate checkbox sync when output user-enabled state changes (e.g. from hotkeys)
+    connect(filter, &BranchOutputFilter::outputUserEnabledChanged, this,
+            &BranchOutputStatusDock::onOutputUserEnabledChanged, Qt::UniqueConnection);
+
     OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
 
     auto groupIndex = 0;
@@ -388,8 +392,7 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 
     // Streaming rows
     if (filter->isStreamingGroupEnabled(settings)) {
-        auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
-        for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
+        for (size_t i = 0; i < MAX_SERVICES; i++) {
             if (filter->isStreamingEnabled(settings, i)) {
                 addRow(filter, i, ROW_OUTPUT_STREAMING, groupIndex++);
             }
@@ -437,6 +440,23 @@ void BranchOutputStatusDock::update()
     applyAddChapterToRecordingAllButtonEnabled();
     applySaveReplayBufferAllButtonEnabled();
     sort();
+}
+
+void BranchOutputStatusDock::updateOutputToggles(BranchOutputFilter *filter)
+{
+    foreach (auto row, outputTableRows) {
+        if (row->filter == filter) {
+            row->updateOutputToggle();
+        }
+    }
+}
+
+void BranchOutputStatusDock::onOutputUserEnabledChanged()
+{
+    auto filter = qobject_cast<BranchOutputFilter *>(sender());
+    if (filter) {
+        updateOutputToggles(filter);
+    }
 }
 
 void BranchOutputStatusDock::applyEnableAllButtonEnabled()
@@ -829,8 +849,7 @@ OutputTableRow::~OutputTableRow()
     disconnect(this);
 }
 
-// Imitate UI/window-basic-stats.cpp
-void OutputTableRow::update()
+void OutputTableRow::updateOutputToggle()
 {
     // Sync per-output toggle checkbox with filter's user-enabled flags.
     // Only update when the state has actually changed to avoid unnecessary work
@@ -852,6 +871,12 @@ void OutputTableRow::update()
     if (outputName->isChecked() != desiredChecked) {
         outputName->setChecked(desiredChecked);
     }
+}
+
+// Imitate UI/window-basic-stats.cpp
+void OutputTableRow::update()
+{
+    updateOutputToggle();
 
     obs_output_t *output;
 

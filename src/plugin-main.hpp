@@ -201,8 +201,8 @@ class BranchOutputFilter : public QObject {
     bool isStreamingUserEnabled(size_t index) const;
     bool isAnyStreamingUserEnabled() const;
     bool isAnyStreamingUserEnabled(obs_data_t *settings);
-    void setRecordingUserEnabled(bool enabled) { recordingUserEnabled.store(enabled, std::memory_order_relaxed); }
-    void setReplayBufferUserEnabled(bool enabled) { replayBufferUserEnabled.store(enabled, std::memory_order_relaxed); }
+    void setRecordingUserEnabled(bool enabled);
+    void setReplayBufferUserEnabled(bool enabled);
     bool isRecordingUserEnabled() const { return recordingUserEnabled.load(std::memory_order_relaxed); }
     bool isReplayBufferUserEnabled() const { return replayBufferUserEnabled.load(std::memory_order_relaxed); }
     std::optional<CropRect> calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings);
@@ -292,6 +292,9 @@ class BranchOutputFilter : public QObject {
 
     static obs_audio_data *audioFilterCallback(void *param, obs_audio_data *audioData);
     static void getDefaults(obs_data_t *settings);
+
+signals:
+    void outputUserEnabledChanged();
 
 private slots:
     void onIntervalTimerTimeout();

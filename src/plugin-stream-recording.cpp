@@ -249,6 +249,14 @@ void BranchOutputFilter::restartRecordingOutput()
     }
 }
 
+void BranchOutputFilter::setRecordingUserEnabled(bool enabled)
+{
+    bool previous = recordingUserEnabled.exchange(enabled, std::memory_order_relaxed);
+    if (previous != enabled) {
+        emit outputUserEnabledChanged();
+    }
+}
+
 bool BranchOutputFilter::isRecordingEnabled(obs_data_t *settings)
 {
     return obs_data_get_bool(settings, "stream_recording");
@@ -562,8 +570,18 @@ bool BranchOutputFilter::onEnableRecordingHotkeyPressed(void *data, obs_hotkey_p
     }
 
     auto filter = static_cast<BranchOutputFilter *>(data);
+    if (!obs_source_enabled(filter->filterSource)) {
+        return false;
+    }
+
+    if (filter->isRecordingUserEnabled()) {
+        // Already enabled
+        return false;
+    }
+
     filter->setRecordingUserEnabled(true);
-    return filter->startRecordingIndividual();
+
+    return true;
 }
 
 bool BranchOutputFilter::onDisableRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
@@ -573,6 +591,16 @@ bool BranchOutputFilter::onDisableRecordingHotkeyPressed(void *data, obs_hotkey_
     }
 
     auto filter = static_cast<BranchOutputFilter *>(data);
+    if (!obs_source_enabled(filter->filterSource)) {
+        return false;
+    }
+
+    if (!filter->isRecordingUserEnabled()) {
+        // Already disabled
+        return false;
+    }
+
     filter->setRecordingUserEnabled(false);
-    return filter->stopRecordingIndividual();
+
+    return true;
 }
