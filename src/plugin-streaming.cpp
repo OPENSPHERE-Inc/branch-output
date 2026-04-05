@@ -255,8 +255,9 @@ bool BranchOutputFilter::reconnectAttemptingTimedOut(size_t index)
 
 void BranchOutputFilter::setStreamingUserEnabled(size_t index, bool enabled)
 {
-    if (index < MAX_SERVICES)
+    if (index < MAX_SERVICES) {
         streamingUserEnabled[index].store(enabled, std::memory_order_relaxed);
+    }
 }
 
 bool BranchOutputFilter::isStreamingUserEnabled(size_t index) const
@@ -267,8 +268,9 @@ bool BranchOutputFilter::isStreamingUserEnabled(size_t index) const
 bool BranchOutputFilter::isAnyStreamingUserEnabled() const
 {
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (streamingUserEnabled[i].load(std::memory_order_relaxed))
+        if (streamingUserEnabled[i].load(std::memory_order_relaxed)) {
             return true;
+        }
     }
     return false;
 }
@@ -277,8 +279,9 @@ bool BranchOutputFilter::isAnyStreamingUserEnabled(obs_data_t *settings)
 {
     auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
     for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
-        if (isStreamingEnabled(settings, i) && streamingUserEnabled[i].load(std::memory_order_relaxed))
+        if (isStreamingEnabled(settings, i) && streamingUserEnabled[i].load(std::memory_order_relaxed)) {
             return true;
+        }
     }
     return false;
 }
