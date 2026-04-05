@@ -561,7 +561,6 @@ void BranchOutputFilter::onEnableAllStreamingHotkeyPressed(void *data, obs_hotke
             filter->setStreamingUserEnabled(i, true);
         }
     }
-
 }
 
 void BranchOutputFilter::onDisableAllStreamingHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
@@ -581,7 +580,6 @@ void BranchOutputFilter::onDisableAllStreamingHotkeyPressed(void *data, obs_hotk
             filter->setStreamingUserEnabled(i, false);
         }
     }
-
 }
 
 bool BranchOutputFilter::onEnableStreamingServiceHotkeyPressed(

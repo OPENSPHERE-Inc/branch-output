@@ -190,6 +190,7 @@ class BranchOutputFilter : public QObject {
     void restartOutput();
     void stopOutputGracefully();
     void registerHotkey();
+    void unregisterAllHotkeys();
     size_t findStreamingSlotByHotkeyPairId(obs_hotkey_pair_id id) const;
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
     void setAudioCapturesActive(bool active);

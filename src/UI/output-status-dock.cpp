@@ -373,8 +373,11 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     removeFilter(filter);
 
     // Immediate checkbox sync when output user-enabled state changes (e.g. from hotkeys)
-    connect(filter, &BranchOutputFilter::outputUserEnabledChanged, this,
-            &BranchOutputStatusDock::onOutputUserEnabledChanged, Qt::UniqueConnection);
+    connect(
+        filter, &BranchOutputFilter::outputUserEnabledChanged, this,
+        &BranchOutputStatusDock::onOutputUserEnabledChanged,
+        static_cast<Qt::ConnectionType>(Qt::UniqueConnection | Qt::QueuedConnection)
+    );
 
     OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
 

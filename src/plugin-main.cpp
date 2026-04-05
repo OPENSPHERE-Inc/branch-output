@@ -72,6 +72,8 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       cropScene(nullptr),
       toggleEnableHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
       splitRecordingHotkeyId(OBS_INVALID_HOTKEY_ID),
+      togglePauseRecordingHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
+      addChapterToRecordingHotkeyId(OBS_INVALID_HOTKEY_ID),
       splitRecordingEnabled(false),
       recordingSettingsOverridden(false),
       replayBufferActive(false),
@@ -148,9 +150,8 @@ BranchOutputFilter::~BranchOutputFilter()
     pthread_mutex_destroy(&audioMutex);
 }
 
-void BranchOutputFilter::registerHotkey()
+void BranchOutputFilter::unregisterAllHotkeys()
 {
-    // Unregister all previous hotkeys
     if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
         obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
         toggleEnableHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
@@ -193,9 +194,32 @@ void BranchOutputFilter::registerHotkey()
         obs_hotkey_pair_unregister(toggleReplayBufferHotkeyPairId);
         toggleReplayBufferHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
     }
+}
+
+// OBS hotkey persistence note:
+// OBS persists hotkey keybindings in source->context.hotkey_data using the hotkey **name string**
+// as the dictionary key (NOT the numeric obs_hotkey_id / obs_hotkey_pair_id).
+// When a hotkey is unregistered and re-registered with the same name string,
+// obs_hotkey_register_internal() automatically restores saved keybindings from context.hotkey_data.
+// Therefore, unregister→re-register cycles do NOT lose user keybindings.
+// See: libobs/obs-hotkey.c — obs_hotkey_register_internal(), load_bindings(), enum_save_hotkey().
+//
+// This function conditionally registers hotkeys based on which output types are currently enabled
+// in settings, keeping OBS's hotkey settings UI clean. It is called from:
+//   - addCallback() — initial registration when filter is added
+//   - filterRenamedSignal handler — re-register with updated description text
+//   - updateCallback() — re-register when settings change (output types enabled/disabled)
+void BranchOutputFilter::registerHotkey()
+{
+    auto parent = obs_filter_get_parent(filterSource);
+    if (!parent) {
+        return;
+    }
+
+    // Unregister all previous hotkeys
+    unregisterAllHotkeys();
 
     auto uuid = obs_source_get_uuid(filterSource);
-    auto parent = obs_filter_get_parent(filterSource);
     OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
 
     // Register enable/disable filter hotkey (always registered)
@@ -254,8 +278,7 @@ void BranchOutputFilter::registerHotkey()
         auto splitDescription = QString(obs_module_text("SplitRecordingFileHotkey")).arg(name);
 
         splitRecordingHotkeyId = obs_hotkey_register_source(
-            parent, qUtf8Printable(splitName), qUtf8Printable(splitDescription), onSplitRecordingFileHotkeyPressed,
-            this
+            parent, qUtf8Printable(splitName), qUtf8Printable(splitDescription), onSplitRecordingFileHotkeyPressed, this
         );
 
         auto pauseRecordingName = QString("PauseRecording.%1").arg(uuid);
@@ -1680,49 +1703,8 @@ void BranchOutputFilter::removeCallback()
         QMetaObject::invokeMethod(statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
     }
 
-    // Unregsiter hotkeys
-    if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
-        toggleEnableHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-    if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(splitRecordingHotkeyId);
-        splitRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (togglePauseRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(togglePauseRecordingHotkeyPairId);
-        togglePauseRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-    if (addChapterToRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(addChapterToRecordingHotkeyId);
-        addChapterToRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (saveReplayBufferHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(saveReplayBufferHotkeyId);
-        saveReplayBufferHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (enableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(enableAllStreamingHotkeyId);
-        enableAllStreamingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (disableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(disableAllStreamingHotkeyId);
-        disableAllStreamingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (toggleStreamingServiceHotkeyPairIds[i] != OBS_INVALID_HOTKEY_PAIR_ID) {
-            obs_hotkey_pair_unregister(toggleStreamingServiceHotkeyPairIds[i]);
-            toggleStreamingServiceHotkeyPairIds[i] = OBS_INVALID_HOTKEY_PAIR_ID;
-        }
-    }
-    if (toggleRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(toggleRecordingHotkeyPairId);
-        toggleRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-    if (toggleReplayBufferHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(toggleReplayBufferHotkeyPairId);
-        toggleReplayBufferHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
+    // Unregister hotkeys
+    unregisterAllHotkeys();
 
     obs_log(LOG_INFO, "%s: Filter removed", qUtf8Printable(name));
 }
