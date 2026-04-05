@@ -81,15 +81,10 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", qUtf8Printable(name));
     obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
 
-    // Per-stream user-enabled flags (with backward compatibility migration)
-    bool legacyStreamingEnabled = obs_data_get_bool(settings, "streaming_output_enabled");
+    // Per-stream user-enabled flags
     for (size_t i = 0; i < MAX_SERVICES; i++) {
         auto key = QString("streaming_output_enabled_%1").arg(i);
-        if (obs_data_has_user_value(settings, qUtf8Printable(key))) {
-            streamingUserEnabled[i].store(obs_data_get_bool(settings, qUtf8Printable(key)), std::memory_order_relaxed);
-        } else {
-            streamingUserEnabled[i].store(legacyStreamingEnabled, std::memory_order_relaxed);
-        }
+        streamingUserEnabled[i].store(obs_data_get_bool(settings, qUtf8Printable(key)), std::memory_order_relaxed);
     }
 
     // Do not use memset
@@ -696,6 +691,7 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
 
         obs_data_erase(recently_settings, "stream_recording");
         obs_data_erase(recently_settings, "streaming_enabled");
+        obs_data_erase(recently_settings, "replay_buffer");
         obs_data_erase(recently_settings, "custom_audio_source");
         obs_data_erase(recently_settings, "multitrack_audio");
 
@@ -818,7 +814,6 @@ void BranchOutputFilter::saveCallback(obs_data_t *settings)
         auto key = QString("streaming_output_enabled_%1").arg(i);
         obs_data_set_bool(settings, qUtf8Printable(key), isStreamingUserEnabled(i));
     }
-    obs_data_set_bool(settings, "streaming_output_enabled", isAnyStreamingUserEnabled());
     obs_data_set_bool(settings, "recording_output_enabled", isRecordingUserEnabled());
     obs_data_set_bool(settings, "replay_buffer_output_enabled", isReplayBufferUserEnabled());
 }

@@ -216,7 +216,6 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_string(defaults, "replay_buffer_format", recFormat);
 
     // Per-output user intent defaults (not shown in UI, persisted in settings)
-    obs_data_set_default_bool(defaults, "streaming_output_enabled", true);
     for (size_t i = 0; i < MAX_SERVICES; i++) {
         auto key = QString("streaming_output_enabled_%1").arg(i);
         obs_data_set_default_bool(defaults, qUtf8Printable(key), true);
