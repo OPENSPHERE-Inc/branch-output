@@ -190,23 +190,11 @@ class BranchOutputFilter : public QObject {
     void saveCallback(obs_data_t *settings);
 
     // Per-output user intent setters/getters (thread-safe via std::atomic)
-    void setStreamingUserEnabled(size_t index, bool enabled)
-    {
-        if (index < MAX_SERVICES)
-            streamingUserEnabled[index].store(enabled, std::memory_order_relaxed);
-    }
-    bool isStreamingUserEnabled(size_t index) const
-    {
-        return index < MAX_SERVICES ? streamingUserEnabled[index].load(std::memory_order_relaxed) : false;
-    }
-    bool isAnyStreamingUserEnabled() const
-    {
-        for (size_t i = 0; i < MAX_SERVICES; i++) {
-            if (streamingUserEnabled[i].load(std::memory_order_relaxed))
-                return true;
-        }
-        return false;
-    }
+    // Streaming variants are implemented in plugin-streaming.cpp
+    void setStreamingUserEnabled(size_t index, bool enabled);
+    bool isStreamingUserEnabled(size_t index) const;
+    bool isAnyStreamingUserEnabled() const;
+    bool isAnyStreamingUserEnabled(obs_data_t *settings);
     void setRecordingUserEnabled(bool enabled) { recordingUserEnabled.store(enabled, std::memory_order_relaxed); }
     void setReplayBufferUserEnabled(bool enabled) { replayBufferUserEnabled.store(enabled, std::memory_order_relaxed); }
     bool isRecordingUserEnabled() const { return recordingUserEnabled.load(std::memory_order_relaxed); }

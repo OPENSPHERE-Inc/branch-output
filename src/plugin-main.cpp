@@ -603,7 +603,10 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         // Skip infrastructure setup if the user has disabled all output types
         // via the status dock checkboxes. Without this check, interlock modes like
         // ALWAYS_ON would rebuild and immediately tear down infrastructure every tick.
-        if (!isAnyStreamingUserEnabled() && !isRecordingUserEnabled() && !isReplayBufferUserEnabled()) {
+        // Note: isAnyStreamingUserEnabled(settings) only checks configured service
+        // slots (service_count), not all MAX_SERVICES, because unconfigured slots
+        // are not visible in the status dock and their checkboxes cannot be toggled.
+        if (!isAnyStreamingUserEnabled(settings) && !isRecordingUserEnabled() && !isReplayBufferUserEnabled()) {
             return;
         }
 
@@ -618,7 +621,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         if (isReplayBufferUserEnabled()) {
             anyStarted |= createAndStartReplayBufferChecked(settings);
         }
-        if (isAnyStreamingUserEnabled()) {
+        if (isAnyStreamingUserEnabled(settings)) {
             anyStarted |= createAndStartStreamingOutputs(settings);
         }
 
@@ -937,7 +940,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 // outputs when an unconfigured type matches first.
                 OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
                 bool anyStarted = false;
-                if (isAnyStreamingUserEnabled() && obs_frontend_streaming_active() &&
+                if (isAnyStreamingUserEnabled(settings) && obs_frontend_streaming_active() &&
                     isStreamingGroupEnabled(settings)) {
                     anyStarted |= startStreamingIndividual();
                 }
