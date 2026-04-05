@@ -426,3 +426,85 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
         filter->splitRecording();
     }
 }
+
+// Internal helper: caller must hold outputMutex.
+// Caller must call ensureInfrastructure() before this function to set up
+// the view, video/audio encoders, and related infrastructure.
+bool BranchOutputFilter::createAndStartRecordingOutputChecked(obs_data_t *settings)
+{
+    if (!isRecordingEnabled(settings)) {
+        return false;
+    }
+    if (recordingActive || recordingPending) {
+        return true;
+    }
+
+    uint32_t sourceWidth;
+    uint32_t sourceHeight;
+    getSourceResolution(sourceWidth, sourceHeight);
+
+    recordingPending = (sourceWidth == 0 || sourceHeight == 0) &&
+                       obs_data_get_bool(settings, "suspend_recording_when_source_collapsed");
+    if (!recordingPending) {
+        createAndStartRecordingOutput(settings);
+    } else {
+        obs_log(LOG_INFO, "%s: The recording output pending until source is uncollapsed", qUtf8Printable(name));
+    }
+
+    return recordingActive || recordingPending;
+}
+
+bool BranchOutputFilter::startRecordingIndividual()
+{
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+
+    pthread_mutex_lock(&pluginMutex);
+    {
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            // ensureInfrastructure() may fail gracefully if the source is collapsed
+            // (calculateCrop returns nullopt). This is acceptable — the interval timer
+            // will retry on the next tick when the source becomes available.
+            if (!ensureInfrastructure(settings)) {
+                return false;
+            }
+
+            bool started = createAndStartRecordingOutputChecked(settings);
+            if (!started) {
+                releaseInfrastructureIfIdle();
+            }
+            return started;
+        }
+    }
+}
+
+bool BranchOutputFilter::stopRecordingIndividual()
+{
+    bool wasActive = false;
+
+    pthread_mutex_lock(&pluginMutex);
+    {
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            // Read shared state under lock to avoid data race on non-atomic booleans.
+            wasActive = recordingActive || recordingPending;
+
+            // stopRecordingOutput() clears recordingPending and recordingActive.
+            // If recording was in pending state (source collapsed), this simply clears the
+            // pending flag. releaseInfrastructureIfIdle() will then release shared resources
+            // if no other outputs are active. Re-enabling recording later will go through
+            // ensureInfrastructure() which will retry from a clean state.
+            stopRecordingOutput();
+            releaseInfrastructureIfIdle();
+        }
+    }
+    return wasActive;
+}

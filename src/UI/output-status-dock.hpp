@@ -40,6 +40,13 @@ class QPushButton;
 class BranchOutputFilter;
 class OutputTableRow;
 
+enum RowOutputType {
+    ROW_OUTPUT_NONE = 0,
+    ROW_OUTPUT_STREAMING = 1,
+    ROW_OUTPUT_RECORDING = 2,
+    ROW_OUTPUT_REPLAY_BUFFER = 3,
+};
+
 struct BranchOutputFilterInfo {
     QString sourceName;
     QString sourceUuid;
@@ -128,38 +135,34 @@ public:
     void setTextValue(const QString &value);
 };
 
-class RecordingOutputCell : public LabelCell {
+class OutputCell : public QWidget {
     Q_OBJECT
 
-    obs_source_t *source;
+    OutputTableCellItem *_item;
+    QCheckBox *outputToggleCheckbox;
+    QLabel *name;
+    RowOutputType outputType;
+    OBSWeakSourceAutoRelease weakSource; // filter source for folder opening (recording/replay buffer)
+
+    void openOutputFolder();
 
 protected:
-    void mousePressEvent(QMouseEvent *event) override;
+    bool eventFilter(QObject *obj, QEvent *event) override;
+
+signals:
+    void toggled(bool checked);
 
 public:
-    explicit RecordingOutputCell(
-        const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr
+    explicit OutputCell(
+        const QString &rowId, const QString &textValue, bool checked, RowOutputType outputType,
+        obs_source_t *source = nullptr, QWidget *parent = nullptr
     );
-    ~RecordingOutputCell();
+    ~OutputCell();
 
     void setTextValue(const QString &value);
-};
-
-class ReplayBufferOutputCell : public LabelCell {
-    Q_OBJECT
-
-    obs_source_t *source;
-
-protected:
-    void mousePressEvent(QMouseEvent *event) override;
-
-public:
-    explicit ReplayBufferOutputCell(
-        const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr
-    );
-    ~ReplayBufferOutputCell();
-
-    void setTextValue(const QString &value);
+    void setChecked(bool checked);
+    inline bool isChecked() const { return outputToggleCheckbox->isChecked(); }
+    inline OutputTableCellItem *item() const { return _item; }
 };
 
 class StatusCell : public QWidget {
@@ -211,13 +214,6 @@ public:
     inline void setSaveReplayBufferButtonShow(bool show) { saveReplayBufferButton->setVisible(show); };
     inline bool isSaveReplayBufferButtonShow() const { return saveReplayBufferButton->isVisible(); };
     inline OutputTableCellItem *item() const { return _item; }
-};
-
-enum RowOutputType {
-    ROW_OUTPUT_NONE = 0,
-    ROW_OUTPUT_STREAMING = 1,
-    ROW_OUTPUT_RECORDING = 2,
-    ROW_OUTPUT_REPLAY_BUFFER = 3,
 };
 
 class BranchOutputStatusDock : public QFrame {
@@ -310,11 +306,11 @@ class OutputTableRow : public QObject {
     BranchOutputFilter *filter;
     FilterCell *filterCell;
     ParentCell *parentCell;
+    OutputCell *outputName;
     StatusCell *status;
     LabelCell *droppedFrames;
     LabelCell *megabytesSent;
     LabelCell *bitrate;
-    LabelCell *outputName;
 
     RowOutputType outputType;
     size_t streamingIndex;

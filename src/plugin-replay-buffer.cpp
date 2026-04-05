@@ -278,3 +278,67 @@ void BranchOutputFilter::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_
     auto filter = static_cast<BranchOutputFilter *>(data);
     filter->saveReplayBuffer();
 }
+
+// Internal helper: caller must hold outputMutex.
+// Caller must call ensureInfrastructure() before this function to set up
+// the view, video/audio encoders, and related infrastructure.
+bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
+{
+    if (!isReplayBufferEnabled(settings)) {
+        return false;
+    }
+    if (replayBufferActive) {
+        return true;
+    }
+
+    createAndStartReplayBuffer(settings);
+
+    return replayBufferActive;
+}
+
+bool BranchOutputFilter::startReplayBufferIndividual()
+{
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+
+    pthread_mutex_lock(&pluginMutex);
+    {
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            if (!ensureInfrastructure(settings)) {
+                return false;
+            }
+
+            bool started = createAndStartReplayBufferChecked(settings);
+            if (!started) {
+                releaseInfrastructureIfIdle();
+            }
+            return started;
+        }
+    }
+}
+
+bool BranchOutputFilter::stopReplayBufferIndividual()
+{
+    bool wasActive = false;
+
+    pthread_mutex_lock(&pluginMutex);
+    {
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            // Read shared state under lock to avoid data race on non-atomic booleans.
+            wasActive = replayBufferActive;
+
+            stopReplayBufferOutput();
+            releaseInfrastructureIfIdle();
+        }
+    }
+    return wasActive;
+}

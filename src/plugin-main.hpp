@@ -25,6 +25,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/deque.h>
 #include <util/threading.h>
 
+#include <atomic>
+
 #include <QObject>
 
 #include "UI/output-status-dock.hpp"
@@ -34,6 +36,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "utils.hpp"
 
 #define MAX_SERVICES 8
+
+// Defined in plugin-main.cpp. Guards plugin-wide state shared across filter instances:
+// - Serializes OBS global API calls (obs_view, obs_encoder, obs_output creation/destruction)
+// - Protects BranchOutputFilter instance lists and cross-instance coordination
+// - Prevents concurrent infrastructure setup/teardown across multiple filter instances
+// Lock ordering: pluginMutex -> outputMutex -> audioMutex
+// All three mutexes are recursive — safe to re-lock from the same thread.
+extern pthread_mutex_t pluginMutex;
 
 class BranchOutputFilter : public QObject {
     Q_OBJECT
@@ -48,6 +58,7 @@ class BranchOutputFilter : public QObject {
         INTERLOCK_TYPE_STREAMING_RECORDING,
         INTERLOCK_TYPE_VIRTUAL_CAM,
         INTERLOCK_TYPE_REPLAY_BUFFER,
+        INTERLOCK_TYPE_INDIVIDUAL,
         INTERLOCK_TYPE_ALWAYS_OFF = 9999,
     };
 
@@ -64,10 +75,10 @@ class BranchOutputFilter : public QObject {
     struct BranchOutputStreamingContext {
         OBSOutputAutoRelease output;
         OBSServiceAutoRelease service;
-        uint64_t reconnectAttemptingAt;
-        bool outputStarting;
-        bool active;
-        bool stopping;
+        std::atomic<uint64_t> reconnectAttemptingAt{0};
+        std::atomic<bool> outputStarting{false};
+        bool active = false;
+        bool stopping = false;
         OBSSignal outputStartingSignal;
         OBSSignal outputActivateSignal;
         OBSSignal outputReconnectSignal;
@@ -79,9 +90,17 @@ class BranchOutputFilter : public QObject {
     uint32_t storedSettingsRev;
     uint32_t activeSettingsRev;
     QTimer *intervalTimer;
-    bool streamingStopping;
+    bool outputGracefullyStopping;
+    bool streamingIndividualStopping;
     bool blankingOutputActive;
     bool blankingAudioMuted;
+
+    // Per-output user intent flags (persisted via save callback).
+    // Atomic because setters are called from UI thread while saveCallback()
+    // may be called from OBS core on a different thread.
+    std::atomic<bool> streamingUserEnabled[MAX_SERVICES];
+    std::atomic<bool> recordingUserEnabled;
+    std::atomic<bool> replayBufferUserEnabled;
 
     // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
@@ -106,6 +125,9 @@ class BranchOutputFilter : public QObject {
     FilterVideoCapture *filterVideoCapture;
 
     // Audio context
+    // Lock ordering: always acquire in order pluginMutex -> outputMutex -> audioMutex.
+    // Never acquire a higher-order lock while holding a lower-order one.
+    pthread_mutex_t audioMutex; // Recursive mutex — protects audios[] capture pointers against audioFilterCallback
     BranchOutputAudioContext audios[MAX_AUDIO_MIXES];
 
     // Recording context
@@ -124,7 +146,7 @@ class BranchOutputFilter : public QObject {
     QString replayBufferFilenameFormatOverride;
 
     // Streaming context
-    pthread_mutex_t outputMutex;
+    pthread_mutex_t outputMutex; // Recursive mutex — safe to re-lock from same thread
     BranchOutputStreamingContext streamings[MAX_SERVICES];
 
     // Hotkey context
@@ -138,20 +160,51 @@ class BranchOutputFilter : public QObject {
 
     void startOutput(obs_data_t *settings);
     void stopOutput();
+    bool ensureInfrastructure(obs_data_t *settings);
+    void releaseInfrastructureIfIdle();
+
+    // Internal helpers (caller must hold outputMutex, and must call ensureInfrastructure() first)
+    // Returns true if any output was actually started.
+    bool createAndStartStreamingOutputs(obs_data_t *settings);
+    bool createAndStartRecordingOutputChecked(obs_data_t *settings);
+    bool createAndStartReplayBufferChecked(obs_data_t *settings);
+    bool stopAllStreamingOutputsGracefully();
+
+    bool startStreamingIndividual();
+    bool stopStreamingIndividual();
+    bool startSingleStreamingIndividual(size_t index);
+    bool stopSingleStreamingIndividual(size_t index);
+    bool startRecordingIndividual();
+    bool stopRecordingIndividual();
+    bool startReplayBufferIndividual();
+    bool stopReplayBufferIndividual();
     void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop);
     void loadProfile(obs_data_t *settings);
     void loadRecently(obs_data_t *settings);
     void restartOutput();
+    void stopOutputGracefully();
     void registerHotkey();
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
     void setAudioCapturesActive(bool active);
+    void saveCallback(obs_data_t *settings);
+
+    // Per-output user intent setters/getters (thread-safe via std::atomic)
+    // Streaming variants are implemented in plugin-streaming.cpp
+    void setStreamingUserEnabled(size_t index, bool enabled);
+    bool isStreamingUserEnabled(size_t index) const;
+    bool isAnyStreamingUserEnabled() const;
+    bool isAnyStreamingUserEnabled(obs_data_t *settings);
+    void setRecordingUserEnabled(bool enabled) { recordingUserEnabled.store(enabled, std::memory_order_relaxed); }
+    void setReplayBufferUserEnabled(bool enabled) { replayBufferUserEnabled.store(enabled, std::memory_order_relaxed); }
+    bool isRecordingUserEnabled() const { return recordingUserEnabled.load(std::memory_order_relaxed); }
+    bool isReplayBufferUserEnabled() const { return replayBufferUserEnabled.load(std::memory_order_relaxed); }
     std::optional<CropRect> calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings);
     QString applyFilenameFormatArgs(const QString &format, bool noSpace);
 
     // Implemented in plugin-streaming.cpp
     obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
-    BranchOutputStreamingContext createSreamingOutput(obs_data_t *settings, size_t index = 0);
+    bool createStreamingOutput(obs_data_t *settings, size_t index = 0);
     void startStreamingOutput(size_t index = 0);
     void stopStreamingOutput(size_t index = 0);
     void reconnectStreamingOutput(size_t index = 0);
@@ -163,6 +216,7 @@ class BranchOutputFilter : public QObject {
     bool hasEnabledStreamings(obs_data_t *settings);
     bool isStreamingGroupEnabled(obs_data_t *settings);
     bool isStreamingEnabled(obs_data_t *settings, size_t index = 0);
+    bool stopSingleStreamingOutputGracefully(size_t index);
 
     // Implemented in plugin-stream-recording.cpp
     obs_data_t *createRecordingSettings(obs_data_t *settings, bool createFolder = false);
@@ -226,7 +280,6 @@ class BranchOutputFilter : public QObject {
 private slots:
     void onIntervalTimerTimeout();
     void removeCallback();
-    void onStopOutputGracefully();
 
 public:
     explicit BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);

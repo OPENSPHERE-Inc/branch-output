@@ -61,33 +61,32 @@ obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, si
     return streamingSettings;
 }
 
-BranchOutputFilter::BranchOutputStreamingContext
-BranchOutputFilter::createSreamingOutput(obs_data_t *settings, size_t index)
+bool BranchOutputFilter::createStreamingOutput(obs_data_t *settings, size_t index)
 {
     auto count = (size_t)obs_data_get_int(settings, "service_count");
     if (index >= count || index >= MAX_SERVICES) {
-        return {0};
+        return false;
     }
     if (!isStreamingEnabled(settings, index)) {
-        return {0};
+        return false;
     }
 
     OBSDataAutoRelease streamingSettings = createStreamingSettings(settings, index);
-    BranchOutputStreamingContext context = {0};
+    auto &ctx = streamings[index];
 
     // Create service - We always use "rtmp_custom" as service
-    context.service = obs_service_create("rtmp_custom", qUtf8Printable(name), streamingSettings, nullptr);
-    if (!context.service) {
+    ctx.service = obs_service_create("rtmp_custom", qUtf8Printable(name), streamingSettings, nullptr);
+    if (!ctx.service) {
         obs_log(LOG_ERROR, "%s: Streaming %zu service creation failed", qUtf8Printable(name), index);
-        return {0};
+        return false;
     }
-    obs_service_apply_encoder_settings(context.service, streamingSettings, nullptr);
+    obs_service_apply_encoder_settings(ctx.service, streamingSettings, nullptr);
 
     // Determine output type
-    auto type = obs_service_get_preferred_output_type(context.service);
+    auto type = obs_service_get_preferred_output_type(ctx.service);
     if (!type) {
         type = "rtmp_output";
-        auto url = obs_service_get_connect_info(context.service, OBS_SERVICE_CONNECT_INFO_SERVER_URL);
+        auto url = obs_service_get_connect_info(ctx.service, OBS_SERVICE_CONNECT_INFO_SERVER_URL);
         if (url != nullptr && !strncmp(url, FTL_PROTOCOL, strlen(FTL_PROTOCOL))) {
             type = "ftl_output";
         } else if (url != nullptr && strncmp(url, RTMP_PROTOCOL, strlen(RTMP_PROTOCOL))) {
@@ -96,16 +95,16 @@ BranchOutputFilter::createSreamingOutput(obs_data_t *settings, size_t index)
     }
 
     // Create streaming output
-    context.output =
+    ctx.output =
         obs_output_create(type, qUtf8Printable(QString("%1 (%2)").arg(name).arg(index)), streamingSettings, nullptr);
-    if (!context.output) {
+    if (!ctx.output) {
         obs_log(LOG_ERROR, "%s (%zu): Streaming output creation failed", qUtf8Printable(name), index);
-        return {0};
+        return false;
     }
-    obs_output_set_reconnect_settings(context.output, OUTPUT_MAX_RETRIES, OUTPUT_RETRY_DELAY_SECS);
-    obs_output_set_service(context.output, context.service);
+    obs_output_set_reconnect_settings(ctx.output, OUTPUT_MAX_RETRIES, OUTPUT_RETRY_DELAY_SECS);
+    obs_output_set_service(ctx.output, ctx.service);
 
-    return context;
+    return true;
 }
 
 void BranchOutputFilter::startStreamingOutput(size_t index)
@@ -250,8 +249,41 @@ void BranchOutputFilter::reconnectStreamingOutput(size_t index)
 
 bool BranchOutputFilter::reconnectAttemptingTimedOut(size_t index)
 {
-    return streamings[index].reconnectAttemptingAt &&
-           os_gettime_ns() - streamings[index].reconnectAttemptingAt > RECONNECT_ATTEMPTING_TIMEOUT_NS;
+    auto attemptingAt = streamings[index].reconnectAttemptingAt.load();
+    return attemptingAt && os_gettime_ns() - attemptingAt > RECONNECT_ATTEMPTING_TIMEOUT_NS;
+}
+
+void BranchOutputFilter::setStreamingUserEnabled(size_t index, bool enabled)
+{
+    if (index < MAX_SERVICES) {
+        streamingUserEnabled[index].store(enabled, std::memory_order_relaxed);
+    }
+}
+
+bool BranchOutputFilter::isStreamingUserEnabled(size_t index) const
+{
+    return index < MAX_SERVICES ? streamingUserEnabled[index].load(std::memory_order_relaxed) : false;
+}
+
+bool BranchOutputFilter::isAnyStreamingUserEnabled() const
+{
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        if (streamingUserEnabled[i].load(std::memory_order_relaxed)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool BranchOutputFilter::isAnyStreamingUserEnabled(obs_data_t *settings)
+{
+    auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
+    for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
+        if (isStreamingEnabled(settings, i) && streamingUserEnabled[i].load(std::memory_order_relaxed)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool BranchOutputFilter::someStreamingsStarting()
@@ -317,4 +349,184 @@ bool BranchOutputFilter::isStreamingEnabled(obs_data_t *settings, size_t index)
 {
     auto propNameFormat = getIndexedPropNameFormat(index);
     return !!strlen(obs_data_get_string(settings, qUtf8Printable(propNameFormat.arg("server"))));
+}
+
+// Internal helper: caller must hold outputMutex.
+// Caller must call ensureInfrastructure() before this function to set up
+// the view, video/audio encoders, and related infrastructure.
+// Note: stopStreamingOutput() sets streamings[i].output to nullptr, so stopped slots
+// are always recreated with fresh settings via createStreamingOutput().
+bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
+{
+    if (!isStreamingGroupEnabled(settings)) {
+        return false;
+    }
+    if (countActiveStreamings() > 0) {
+        return true;
+    }
+
+    auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
+    for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
+        if (!streamings[i].output && isStreamingUserEnabled(i)) {
+            createStreamingOutput(settings, i);
+        }
+    }
+
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        if (isStreamingUserEnabled(i) && streamings[i].output) {
+            startStreamingOutput(i);
+        }
+    }
+
+    return countActiveStreamings() > 0;
+}
+
+// Internal helper: caller must hold outputMutex.
+// Returns true if all streamings have stopped.
+// Note: stopStreamingOutput() called within assumes outputMutex is already held.
+bool BranchOutputFilter::stopAllStreamingOutputsGracefully()
+{
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        stopSingleStreamingOutputGracefully(i);
+    }
+    return countActiveStreamings() == 0;
+}
+
+bool BranchOutputFilter::startStreamingIndividual()
+{
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+
+    pthread_mutex_lock(&pluginMutex);
+    {
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            if (!ensureInfrastructure(settings)) {
+                return false;
+            }
+
+            if (!createAndStartStreamingOutputs(settings)) {
+                releaseInfrastructureIfIdle();
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool BranchOutputFilter::stopStreamingIndividual()
+{
+    pthread_mutex_lock(&pluginMutex);
+    {
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            streamingIndividualStopping = true;
+
+            if (!stopAllStreamingOutputsGracefully()) {
+                return true;
+            }
+
+            streamingIndividualStopping = false;
+
+            releaseInfrastructureIfIdle();
+        }
+    }
+    return true;
+}
+
+bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
+{
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+
+    pthread_mutex_lock(&pluginMutex);
+    {
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            if (!ensureInfrastructure(settings)) {
+                return false;
+            }
+
+            if (!isStreamingGroupEnabled(settings) || !isStreamingEnabled(settings, index)) {
+                releaseInfrastructureIfIdle();
+                return false;
+            }
+
+            if (streamings[index].active) {
+                return false;
+            }
+
+            if (!streamings[index].output) {
+                createStreamingOutput(settings, index);
+            }
+
+            startStreamingOutput(index);
+
+            if (!streamings[index].active) {
+                releaseInfrastructureIfIdle();
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Returns true to indicate that a stop operation was attempted (regardless of whether
+// the stream has fully stopped yet). The caller uses this to track whether any action
+// was taken during the current tick via `anyStopped |= stopSingleStreamingIndividual(i)`.
+bool BranchOutputFilter::stopSingleStreamingIndividual(size_t index)
+{
+    pthread_mutex_lock(&pluginMutex);
+    {
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            if (!stopSingleStreamingOutputGracefully(index)) {
+                return true; // reconnecting, will retry next tick
+            }
+
+            releaseInfrastructureIfIdle();
+        }
+    }
+    return true;
+}
+
+// Internal helper: caller must hold outputMutex.
+// Returns true if the stream at the given index has stopped.
+// Returns false if the stream is still waiting for reconnect timeout.
+bool BranchOutputFilter::stopSingleStreamingOutputGracefully(size_t index)
+{
+    if (index >= MAX_SERVICES) {
+        return true;
+    }
+
+    if (streamings[index].output && streamings[index].active) {
+        if (streamings[index].stopping) {
+            if (reconnectAttemptingTimedOut(index)) {
+                stopStreamingOutput(index);
+            } else {
+                return false;
+            }
+        } else if (obs_output_reconnecting(streamings[index].output)) {
+            streamings[index].stopping = true;
+            return false;
+        } else {
+            stopStreamingOutput(index);
+        }
+    }
+
+    return true;
 }

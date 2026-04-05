@@ -55,9 +55,12 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       storedSettingsRev(0),
       activeSettingsRev(0),
       intervalTimer(nullptr),
-      streamingStopping(false),
+      outputGracefullyStopping(false),
+      streamingIndividualStopping(false),
       blankingOutputActive(false),
       blankingAudioMuted(false),
+      recordingUserEnabled(obs_data_get_bool(settings, "recording_output_enabled")),
+      replayBufferUserEnabled(obs_data_get_bool(settings, "replay_buffer_output_enabled")),
       recordingOutput(nullptr),
       videoEncoder(nullptr),
       videoOutput(nullptr),
@@ -78,9 +81,10 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", qUtf8Printable(name));
     obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
 
-    // Do not use memset
+    // Per-stream user-enabled flags
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        streamings[i] = {0};
+        auto key = QString("streaming_output_enabled_%1").arg(i);
+        streamingUserEnabled[i].store(obs_data_get_bool(settings, qUtf8Printable(key)), std::memory_order_relaxed);
     }
 
     // Do not use memset
@@ -88,7 +92,8 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
         audios[i] = {0};
     }
 
-    pthread_mutex_init(&outputMutex, nullptr);
+    pthread_mutex_init_recursive(&outputMutex);
+    pthread_mutex_init_recursive(&audioMutex);
 
     if (!strcmp(obs_data_get_last_json(settings), "{}")) {
         // Maybe initial creation
@@ -135,6 +140,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
 BranchOutputFilter::~BranchOutputFilter()
 {
     pthread_mutex_destroy(&outputMutex);
+    pthread_mutex_destroy(&audioMutex);
 }
 
 void BranchOutputFilter::registerHotkey()
@@ -211,6 +217,369 @@ void BranchOutputFilter::registerHotkey()
     );
 }
 
+// Caller must hold outputMutex.
+// Idempotent: if infrastructure already exists, return true.
+// On failure after partial resource creation, all resources are cleaned up
+// so that the next call can retry from a clean state.
+bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
+{
+    if (view) {
+        return true;
+    }
+
+    // Abort when obs initializing or filter disabled.
+    if (!obs_initialized() || !obs_source_enabled(filterSource)) {
+        obs_log(LOG_ERROR, "%s: Ignore unavailable filter", qUtf8Printable(name));
+        return false;
+    }
+
+    // Retrieve filter source
+    auto parent = obs_filter_get_parent(filterSource);
+    if (!parent) {
+        obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
+        return false;
+    }
+
+    // Ignore private sources
+    if (sourceIsPrivate(parent)) {
+        obs_log(LOG_ERROR, "%s: Ignore private source", qUtf8Printable(name));
+        return false;
+    }
+
+    // Mandatory parameters
+    if (!isStreamingGroupEnabled(settings) && !isRecordingEnabled(settings) && !isReplayBufferEnabled(settings)) {
+        obs_log(LOG_ERROR, "%s: Nothing to do", qUtf8Printable(name));
+        return false;
+    }
+
+    bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
+    bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
+
+    obs_video_info ovi = {0};
+    if (!obs_get_video_info(&ovi)) {
+        // Abort when no video situation
+        obs_log(LOG_ERROR, "%s: No video", qUtf8Printable(name));
+        return false;
+    }
+
+    // Determine video source type first to choose correct resolution source
+    auto videoSourceType = obs_data_get_string(settings, "video_source_type");
+    useFilterInput = videoSourceType && !strcmp(videoSourceType, "filter_input");
+
+    // Resolve input resolution based on video source type
+    // sourceWidth/sourceHeight represent the actual input resolution for this filter,
+    // used both for video capture and for collapsed-source detection (recording pending).
+    uint32_t sourceWidth;
+    uint32_t sourceHeight;
+    getSourceResolution(sourceWidth, sourceHeight);
+
+    width = sourceWidth;
+    height = sourceHeight;
+
+    if (width == 0 || height == 0) {
+        // Default to canvas size
+        width = ovi.base_width;
+        height = ovi.base_height;
+    }
+
+    // Treat 0x0 crop result as source collapse — abort silently so that
+    // the interval timer can retry when the resolution becomes compatible.
+    auto crop = calculateCrop(width, height, settings);
+    if (!crop) {
+        // Abort when crop produces invalid resolution (0x0)
+        obs_log(LOG_DEBUG, "%s: Crop produces invalid resolution, treat as collapsed source", qUtf8Printable(name));
+        return false;
+    }
+
+    determineOutputResolution(settings, &ovi, *crop);
+
+    if (ovi.output_width == 0 || ovi.output_height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
+        // Abort when invalid video parameters situation
+        obs_log(LOG_DEBUG, "%s: Invalid video spec", qUtf8Printable(name));
+        return false;
+    }
+
+    // Update active revision with stored settings.
+    activeSettingsRev = storedSettingsRev;
+
+    //--- Open video output ---//
+    if (useFilterInput) {
+        // Filter input mode: capture via texrender + proxy source + obs_view.
+        // The proxy source renders the captured texrender texture on the GPU.
+        // obs_view creates a video_t* registered in OBS's mix list, allowing
+        // GPU encoders (NVENC, QSV, AMF, etc.) to work directly.
+        filterVideoCapture = new FilterVideoCapture(filterSource, parent, width, height);
+        if (!filterVideoCapture->getProxySource()) {
+            obs_log(LOG_ERROR, "%s: Filter video capture creation failed", qUtf8Printable(name));
+            delete filterVideoCapture;
+            filterVideoCapture = nullptr;
+            return false;
+        }
+
+        if (crop->width != width || crop->height != height) {
+            filterVideoCapture->setCrop(*crop);
+        }
+
+        view = obs_view_create();
+        obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
+
+        videoOutput = obs_view_add2(view, &ovi);
+        if (!videoOutput) {
+            obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
+            // releaseInfrastructureIfIdle() safely handles partially-initialized state:
+            // - OBS RAII wrappers accept nullptr assignment
+            // - AudioCapture/filterVideoCapture pointers are nullptr-checked before delete
+            // - FilterVideoCapture::setActive(false) on a never-activated instance is safe
+            //   (simply stores false to atomic bool)
+            releaseInfrastructureIfIdle();
+            return false;
+        }
+        filterVideoCapture->setActive(true);
+    } else {
+        // Source output mode (default): use obs_view for the parent source
+        view = obs_view_create();
+
+        if (crop->width != width || crop->height != height) {
+            cropScene = obs_scene_create_private("branch_output_crop");
+            obs_sceneitem_t *item = obs_scene_add(cropScene, parent);
+
+            struct obs_sceneitem_crop itemCrop;
+            itemCrop.left = (int)crop->left;
+            itemCrop.top = (int)crop->top;
+            itemCrop.right = (int)(width - crop->left - crop->width);
+            itemCrop.bottom = (int)(height - crop->top - crop->height);
+            obs_sceneitem_set_crop(item, &itemCrop);
+
+            obs_view_set_source(view, 0, obs_scene_get_source(cropScene));
+        } else {
+            obs_view_set_source(view, 0, parent);
+        }
+
+        videoOutput = obs_view_add2(view, &ovi);
+        if (!videoOutput) {
+            obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
+            releaseInfrastructureIfIdle();
+            return false;
+        }
+    }
+
+    //--- Open audio output(s) ---//
+    // Do not use memset
+    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
+        audios[i] = {0};
+    }
+
+    obs_audio_info ai = {0};
+    if (!obs_get_audio_info(&ai)) {
+        obs_log(LOG_ERROR, "%s: Failed to get audio info", qUtf8Printable(name));
+        releaseInfrastructureIfIdle();
+        return false;
+    }
+
+    if (obs_data_get_bool(settings, "custom_audio_source")) {
+        // Apply custom audio source
+        bool multitrack = obs_data_get_bool(settings, "multitrack_audio");
+
+        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
+            auto audioContext = &audios[i];
+            if (!multitrack && i > 0) {
+                // Signle track mode
+                break;
+            }
+
+            size_t track = i + 1;
+            auto propNameFormat = getIndexedPropNameFormat(track, 1);
+
+            auto audioDest = obs_data_get_string(settings, qUtf8Printable(propNameFormat.arg("audio_dest")));
+            audioContext->streaming = !strcmp(audioDest, "streaming") || !strcmp(audioDest, "both");
+            audioContext->recording = !strcmp(audioDest, "recording") || !strcmp(audioDest, "both");
+
+            auto audioSourceUuid = obs_data_get_string(settings, qUtf8Printable(propNameFormat.arg("audio_source")));
+            if (!strcmp(audioSourceUuid, "disabled")) {
+                // Disabled track
+                obs_log(LOG_INFO, "%s: Track %d is disabled", qUtf8Printable(name), track);
+                continue;
+
+            } else if (!strcmp(audioSourceUuid, "no_audio")) {
+                // Silence audio
+                obs_log(LOG_INFO, "%s: Use silence for track %d (%s)", qUtf8Printable(name), track, audioDest);
+
+                audioContext->capture =
+                    new AudioCapture("Silence", ai.samples_per_sec, ai.speakers, AudioCapture::silenceCapture, this);
+                audioContext->audio = audioContext->capture->getAudio();
+                audioContext->name = audioContext->capture->getName();
+
+            } else if (!strcmp(audioSourceUuid, "master_track")) {
+                // Master audio
+                auto masterTrack = obs_data_get_int(settings, qUtf8Printable(propNameFormat.arg("audio_track")));
+                if (masterTrack < 1 || masterTrack > MAX_AUDIO_MIXES) {
+                    obs_log(
+                        LOG_ERROR, "%s: Invalid master audio track No.%d for track %d", qUtf8Printable(name),
+                        masterTrack, track
+                    );
+                    releaseInfrastructureIfIdle();
+                    return false;
+                }
+                obs_log(
+                    LOG_INFO, "%s: Use master audio track No.%d for track %d (%s)", qUtf8Printable(name), masterTrack,
+                    track, audioDest
+                );
+
+                if (blankWhenHidden && muteWhenHidden) {
+                    audioContext->capture =
+                        new MasterAudioCapture(masterTrack - 1, ai.samples_per_sec, ai.speakers, this);
+                    audioContext->audio = audioContext->capture->getAudio();
+                    audioContext->mixIndex = 0;
+                    audioContext->name = audioContext->capture->getName();
+                } else {
+                    audioContext->mixIndex = masterTrack - 1;
+                    audioContext->audio = obs_get_audio();
+                    audioContext->name = QTStr("MasterTrack%1").arg(masterTrack);
+                }
+
+            } else if (!strcmp(audioSourceUuid, "filter")) {
+                // Filter pipline's audio
+                obs_log(LOG_INFO, "%s: Use filter audio for track %d (%s)", qUtf8Printable(name), track, audioDest);
+
+                audioContext->capture =
+                    new FilterAudioCapture(qUtf8Printable(name), ai.samples_per_sec, ai.speakers, this);
+                audioContext->audio = audioContext->capture->getAudio();
+                audioContext->name = audioContext->capture->getName();
+
+            } else {
+                // Specific source's audio
+                OBSSourceAutoRelease source = obs_get_source_by_uuid(audioSourceUuid);
+                if (!source) {
+                    // Non-stopping error
+                    obs_log(
+                        LOG_WARNING, "%s: Ignore audio source for track %d (%s)", qUtf8Printable(name), track, audioDest
+                    );
+                    continue;
+                }
+
+                // Use custom audio source
+                obs_log(
+                    LOG_INFO, "%s: Use %s audio for track %d", qUtf8Printable(name), obs_source_get_name(source), track
+                );
+
+                audioContext->capture = new SourceAudioCapture(source, ai.samples_per_sec, ai.speakers, this);
+                audioContext->audio = audioContext->capture->getAudio();
+                audioContext->name = audioContext->capture->getName();
+            }
+
+            if (!audioContext->audio) {
+                obs_log(
+                    LOG_ERROR, "%s: Audio creation failed for track %d (%s)", qUtf8Printable(name), track, audioDest
+                );
+                if (audioContext->capture) {
+                    delete audioContext->capture;
+                    audioContext->capture = nullptr;
+                }
+                releaseInfrastructureIfIdle();
+                return false;
+            }
+        }
+    } else {
+        // Filter pipeline's audio
+        obs_log(LOG_INFO, "%s: Use filter audio for track 1", qUtf8Printable(name));
+        auto audioContext = &audios[0];
+        audioContext->capture = new FilterAudioCapture(qUtf8Printable(name), ai.samples_per_sec, ai.speakers, this);
+        audioContext->audio = audioContext->capture->getAudio();
+        audioContext->streaming = true;
+        audioContext->recording = true;
+        audioContext->name = audioContext->capture->getName();
+
+        if (!audioContext->audio) {
+            obs_log(LOG_ERROR, "%s: Audio creation failed", qUtf8Printable(name));
+            delete audioContext->capture;
+            audioContext->capture = nullptr;
+            releaseInfrastructureIfIdle();
+            return false;
+        }
+    }
+
+    //--- Setup video encoder ---//
+    auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
+
+    videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), settings, nullptr);
+    if (!videoEncoder) {
+        obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));
+        releaseInfrastructureIfIdle();
+        return false;
+    }
+
+    // Apply frame rate divisor
+    auto fpsDivider = (uint32_t)obs_data_get_int(settings, "fps_divider");
+    if (fpsDivider > 1) {
+        // Validate: fps_num must be evenly divisible by the divisor
+        // This ensures clean frame rate for both integer (60, 30, 24) and
+        // NTSC (60000/1001, 30000/1001) source rates.
+        bool valid = (ovi.fps_num % fpsDivider) == 0;
+
+        if (!valid) {
+            // Fallback: search downward for nearest valid divisor
+            uint32_t originalDivider = fpsDivider;
+            fpsDivider = 1;
+            for (uint32_t d = originalDivider - 1; d > 1; d--) {
+                if ((ovi.fps_num % d) == 0) {
+                    fpsDivider = d;
+                    break;
+                }
+            }
+            obs_log(
+                LOG_WARNING, "%s: Frame rate divider 1/%u invalid for %u/%u fps, falling back to 1/%u",
+                qUtf8Printable(name), originalDivider, ovi.fps_num, ovi.fps_den, fpsDivider
+            );
+        }
+
+        if (fpsDivider > 1) {
+            if (!obs_encoder_set_frame_rate_divisor(videoEncoder, fpsDivider)) {
+                obs_log(LOG_WARNING, "%s: Failed to set frame rate divisor to %u", qUtf8Printable(name), fpsDivider);
+            } else {
+                obs_log(LOG_INFO, "%s: Frame rate divisor set to 1/%u", qUtf8Printable(name), fpsDivider);
+            }
+        }
+    }
+
+    obs_encoder_set_scaled_size(videoEncoder, 0, 0); // No scaling
+    obs_encoder_set_video(videoEncoder, videoOutput);
+
+    //--- Setup audio encoder ---//
+    auto audio_encoder_id = obs_data_get_string(settings, "audio_encoder");
+    auto audio_bitrate = obs_data_get_int(settings, "audio_bitrate");
+    OBSDataAutoRelease audio_encoder_settings = obs_encoder_defaults(audio_encoder_id);
+    obs_data_set_int(audio_encoder_settings, "bitrate", audio_bitrate);
+
+    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
+        auto audioContext = &audios[i];
+        if (!audioContext->audio) {
+            continue;
+        }
+
+        audioContext->encoder = obs_audio_encoder_create(
+            audio_encoder_id, qUtf8Printable(audioContext->name), audio_encoder_settings, audioContext->mixIndex,
+            nullptr
+        );
+        if (!audioContext->encoder) {
+            obs_log(LOG_ERROR, "%s: Audio encoder creation failed for track %d", qUtf8Printable(name), i + 1);
+            releaseInfrastructureIfIdle();
+            return false;
+        }
+        obs_encoder_set_audio(audioContext->encoder, audioContext->audio);
+    }
+
+    if (blankWhenHidden) {
+        bool visibleInProgram = sourceVisibleInProgram(parent);
+        setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
+    }
+
+    return true;
+}
+
+// Start all enabled outputs. User intent flags (streamingUserEnabled, etc.)
+// are intentionally respected: if the user has disabled a specific output type
+// via the status dock checkbox, it stays disabled even after a restartOutput()
+// triggered by settings changes.
 void BranchOutputFilter::startOutput(obs_data_t *settings)
 {
     // Force release references
@@ -220,373 +589,40 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
     {
         OBSMutexAutoUnlock locked(&outputMutex);
 
-        // Abort when obs initializing or filter disabled.
-        if (!obs_initialized() || !obs_source_enabled(filterSource) || countActiveStreamings() > 0 || recordingActive ||
-            replayBufferActive) {
+        // Abort if outputs already active
+        if (countActiveStreamings() > 0 || recordingActive || replayBufferActive) {
             obs_log(LOG_ERROR, "%s: Ignore unavailable filter", qUtf8Printable(name));
             return;
         }
 
-        // Retrieve filter source
-        auto parent = obs_filter_get_parent(filterSource);
-        if (!parent) {
-            obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
+        // Skip infrastructure setup if the user has disabled all output types
+        // via the status dock checkboxes. Without this check, interlock modes like
+        // ALWAYS_ON would rebuild and immediately tear down infrastructure every tick.
+        // Note: isAnyStreamingUserEnabled(settings) only checks configured service
+        // slots (service_count), not all MAX_SERVICES, because unconfigured slots
+        // are not visible in the status dock and their checkboxes cannot be toggled.
+        if (!isAnyStreamingUserEnabled(settings) && !isRecordingUserEnabled() && !isReplayBufferUserEnabled()) {
             return;
         }
 
-        // Ignore private sources
-        if (sourceIsPrivate(parent)) {
-            obs_log(LOG_ERROR, "%s: Ignore private source", qUtf8Printable(name));
+        if (!ensureInfrastructure(settings)) {
             return;
         }
 
-        // Mandatory paramters
-        if (!isStreamingGroupEnabled(settings) && !isRecordingEnabled(settings) && !isReplayBufferEnabled(settings)) {
-            obs_log(LOG_ERROR, "%s: Nothing to do", qUtf8Printable(name));
-            return;
+        bool anyStarted = false;
+        if (isRecordingUserEnabled()) {
+            anyStarted |= createAndStartRecordingOutputChecked(settings);
+        }
+        if (isReplayBufferUserEnabled()) {
+            anyStarted |= createAndStartReplayBufferChecked(settings);
+        }
+        if (isAnyStreamingUserEnabled(settings)) {
+            anyStarted |= createAndStartStreamingOutputs(settings);
         }
 
-        bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
-        bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
-
-        obs_video_info ovi = {0};
-        if (!obs_get_video_info(&ovi)) {
-            // Abort when no video situation
-            obs_log(LOG_ERROR, "%s: No video", qUtf8Printable(name));
-            return;
-        }
-
-        // Determine video source type first to choose correct resolution source
-        auto videoSourceType = obs_data_get_string(settings, "video_source_type");
-        useFilterInput = videoSourceType && !strcmp(videoSourceType, "filter_input");
-
-        // Resolve input resolution based on video source type
-        // sourceWidth/sourceHeight represent the actual input resolution for this filter,
-        // used both for video capture and for collapsed-source detection (recording pending).
-        uint32_t sourceWidth;
-        uint32_t sourceHeight;
-        getSourceResolution(sourceWidth, sourceHeight);
-
-        width = sourceWidth;
-        height = sourceHeight;
-
-        if (width == 0 || height == 0) {
-            // Default to canvas size
-            width = ovi.base_width;
-            height = ovi.base_height;
-        }
-
-        // Treat 0x0 crop result as source collapse — abort silently so that
-        // the interval timer can retry when the resolution becomes compatible.
-        auto crop = calculateCrop(width, height, settings);
-        if (!crop) {
-            // Abort when crop produces invalid resolution (0x0)
-            obs_log(LOG_DEBUG, "%s: Crop produces invalid resolution, treat as collapsed source", qUtf8Printable(name));
-            return;
-        }
-
-        determineOutputResolution(settings, &ovi, *crop);
-
-        if (ovi.output_width == 0 || ovi.output_height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
-            // Abort when invalid video parameters situation
-            obs_log(LOG_DEBUG, "%s: Invalid video spec", qUtf8Printable(name));
-            return;
-        }
-
-        // Update active revision with stored settings.
-        activeSettingsRev = storedSettingsRev;
-
-        //--- Create service and open streaming output ---//
-        if (isStreamingGroupEnabled(settings)) {
-            auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
-            for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
-                streamings[i] = createSreamingOutput(settings, i);
-            }
-        }
-
-        //--- Open video output ---//
-        if (useFilterInput) {
-            // Filter input mode: capture via texrender + proxy source + obs_view.
-            // The proxy source renders the captured texrender texture on the GPU.
-            // obs_view creates a video_t* registered in OBS's mix list, allowing
-            // GPU encoders (NVENC, QSV, AMF, etc.) to work directly.
-            filterVideoCapture = new FilterVideoCapture(filterSource, parent, width, height);
-            if (!filterVideoCapture->getProxySource()) {
-                obs_log(LOG_ERROR, "%s: Filter video capture creation failed", qUtf8Printable(name));
-                delete filterVideoCapture;
-                filterVideoCapture = nullptr;
-                return;
-            }
-
-            if (crop->width != width || crop->height != height) {
-                filterVideoCapture->setCrop(*crop);
-            }
-
-            view = obs_view_create();
-            obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
-
-            videoOutput = obs_view_add2(view, &ovi);
-            if (!videoOutput) {
-                obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
-                delete filterVideoCapture;
-                filterVideoCapture = nullptr;
-                return;
-            }
-            filterVideoCapture->setActive(true);
-        } else {
-            // Source output mode (default): use obs_view for the parent source
-            view = obs_view_create();
-
-            if (crop->width != width || crop->height != height) {
-                cropScene = obs_scene_create_private("branch_output_crop");
-                obs_sceneitem_t *item = obs_scene_add(cropScene, parent);
-
-                struct obs_sceneitem_crop itemCrop;
-                itemCrop.left = (int)crop->left;
-                itemCrop.top = (int)crop->top;
-                itemCrop.right = (int)(width - crop->left - crop->width);
-                itemCrop.bottom = (int)(height - crop->top - crop->height);
-                obs_sceneitem_set_crop(item, &itemCrop);
-
-                obs_view_set_source(view, 0, obs_scene_get_source(cropScene));
-            } else {
-                obs_view_set_source(view, 0, parent);
-            }
-
-            videoOutput = obs_view_add2(view, &ovi);
-            if (!videoOutput) {
-                obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
-                return;
-            }
-        }
-
-        //--- Open audio output(s) ---//
-        // Do not use memset
-        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-            audios[i] = {0};
-        }
-
-        obs_audio_info ai = {0};
-        if (!obs_get_audio_info(&ai)) {
-            obs_log(LOG_ERROR, "%s: Failed to get audio info", qUtf8Printable(name));
-            return;
-        }
-
-        if (obs_data_get_bool(settings, "custom_audio_source")) {
-            // Apply custom audio source
-            bool multitrack = obs_data_get_bool(settings, "multitrack_audio");
-
-            for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-                auto audioContext = &audios[i];
-                if (!multitrack && i > 0) {
-                    // Signle track mode
-                    break;
-                }
-
-                size_t track = i + 1;
-                auto propNameFormat = getIndexedPropNameFormat(track, 1);
-
-                auto audioDest = obs_data_get_string(settings, qUtf8Printable(propNameFormat.arg("audio_dest")));
-                audioContext->streaming = !strcmp(audioDest, "streaming") || !strcmp(audioDest, "both");
-                audioContext->recording = !strcmp(audioDest, "recording") || !strcmp(audioDest, "both");
-
-                auto audioSourceUuid =
-                    obs_data_get_string(settings, qUtf8Printable(propNameFormat.arg("audio_source")));
-                if (!strcmp(audioSourceUuid, "disabled")) {
-                    // Disabled track
-                    obs_log(LOG_INFO, "%s: Track %d is disabled", qUtf8Printable(name), track);
-                    continue;
-
-                } else if (!strcmp(audioSourceUuid, "no_audio")) {
-                    // Silence audio
-                    obs_log(LOG_INFO, "%s: Use silence for track %d (%s)", qUtf8Printable(name), track, audioDest);
-
-                    audioContext->capture = new AudioCapture(
-                        "Silence", ai.samples_per_sec, ai.speakers, AudioCapture::silenceCapture, this
-                    );
-                    audioContext->audio = audioContext->capture->getAudio();
-                    audioContext->name = audioContext->capture->getName();
-
-                } else if (!strcmp(audioSourceUuid, "master_track")) {
-                    // Master audio
-                    auto masterTrack = obs_data_get_int(settings, qUtf8Printable(propNameFormat.arg("audio_track")));
-                    if (masterTrack < 1 || masterTrack > MAX_AUDIO_MIXES) {
-                        obs_log(
-                            LOG_ERROR, "%s: Invalid master audio track No.%d for track %d", qUtf8Printable(name),
-                            masterTrack, track
-                        );
-                        return;
-                    }
-                    obs_log(
-                        LOG_INFO, "%s: Use master audio track No.%d for track %d (%s)", qUtf8Printable(name),
-                        masterTrack, track, audioDest
-                    );
-
-                    if (blankWhenHidden && muteWhenHidden) {
-                        audioContext->capture =
-                            new MasterAudioCapture(masterTrack - 1, ai.samples_per_sec, ai.speakers, this);
-                        audioContext->audio = audioContext->capture->getAudio();
-                        audioContext->mixIndex = 0;
-                        audioContext->name = audioContext->capture->getName();
-                    } else {
-                        audioContext->mixIndex = masterTrack - 1;
-                        audioContext->audio = obs_get_audio();
-                        audioContext->name = QTStr("MasterTrack%1").arg(masterTrack);
-                    }
-
-                } else if (!strcmp(audioSourceUuid, "filter")) {
-                    // Filter pipline's audio
-                    obs_log(LOG_INFO, "%s: Use filter audio for track %d (%s)", qUtf8Printable(name), track, audioDest);
-
-                    audioContext->capture =
-                        new FilterAudioCapture(qUtf8Printable(name), ai.samples_per_sec, ai.speakers, this);
-                    audioContext->audio = audioContext->capture->getAudio();
-                    audioContext->name = audioContext->capture->getName();
-
-                } else {
-                    // Specific source's audio
-                    OBSSourceAutoRelease source = obs_get_source_by_uuid(audioSourceUuid);
-                    if (!source) {
-                        // Non-stopping error
-                        obs_log(
-                            LOG_WARNING, "%s: Ignore audio source for track %d (%s)", qUtf8Printable(name), track,
-                            audioDest
-                        );
-                        continue;
-                    }
-
-                    // Use custom audio source
-                    obs_log(
-                        LOG_INFO, "%s: Use %s audio for track %d", qUtf8Printable(name), obs_source_get_name(source),
-                        track
-                    );
-
-                    audioContext->capture = new SourceAudioCapture(source, ai.samples_per_sec, ai.speakers, this);
-                    audioContext->audio = audioContext->capture->getAudio();
-                    audioContext->name = audioContext->capture->getName();
-                }
-
-                if (!audioContext->audio) {
-                    obs_log(
-                        LOG_ERROR, "%s: Audio creation failed for track %d (%s)", qUtf8Printable(name), track, audioDest
-                    );
-                    if (audioContext->capture) {
-                        delete audioContext->capture;
-                        audioContext->capture = nullptr;
-                    }
-                    return;
-                }
-            }
-        } else {
-            // Filter pipeline's audio
-            obs_log(LOG_INFO, "%s: Use filter audio for track 1", qUtf8Printable(name));
-            auto audioContext = &audios[0];
-            audioContext->capture = new FilterAudioCapture(qUtf8Printable(name), ai.samples_per_sec, ai.speakers, this);
-            audioContext->audio = audioContext->capture->getAudio();
-            audioContext->streaming = true;
-            audioContext->recording = true;
-            audioContext->name = audioContext->capture->getName();
-
-            if (!audioContext->audio) {
-                obs_log(LOG_ERROR, "%s: Audio creation failed", qUtf8Printable(name));
-                delete audioContext->capture;
-                audioContext->capture = nullptr;
-                return;
-            }
-        }
-
-        //--- Setup video encoder ---//
-        auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
-
-        videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), settings, nullptr);
-        if (!videoEncoder) {
-            obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));
-            return;
-        }
-
-        // Apply frame rate divisor
-        auto fpsDivider = (uint32_t)obs_data_get_int(settings, "fps_divider");
-        if (fpsDivider > 1) {
-            // Validate: fps_num must be evenly divisible by the divisor
-            // This ensures clean frame rate for both integer (60, 30, 24) and
-            // NTSC (60000/1001, 30000/1001) source rates.
-            bool valid = (ovi.fps_num % fpsDivider) == 0;
-
-            if (!valid) {
-                // Fallback: search downward for nearest valid divisor
-                uint32_t originalDivider = fpsDivider;
-                fpsDivider = 1;
-                for (uint32_t d = originalDivider - 1; d > 1; d--) {
-                    if ((ovi.fps_num % d) == 0) {
-                        fpsDivider = d;
-                        break;
-                    }
-                }
-                obs_log(
-                    LOG_WARNING, "%s: Frame rate divider 1/%u invalid for %u/%u fps, falling back to 1/%u",
-                    qUtf8Printable(name), originalDivider, ovi.fps_num, ovi.fps_den, fpsDivider
-                );
-            }
-
-            if (fpsDivider > 1) {
-                if (!obs_encoder_set_frame_rate_divisor(videoEncoder, fpsDivider)) {
-                    obs_log(LOG_WARNING, "%s: Failed to set frame rate divisor to %u", qUtf8Printable(name), fpsDivider);
-                } else {
-                    obs_log(LOG_INFO, "%s: Frame rate divisor set to 1/%u", qUtf8Printable(name), fpsDivider);
-                }
-            }
-        }
-
-        obs_encoder_set_scaled_size(videoEncoder, 0, 0); // No scaling
-        obs_encoder_set_video(videoEncoder, videoOutput);
-
-        //--- Setup audio encoder ---//
-        auto audio_encoder_id = obs_data_get_string(settings, "audio_encoder");
-        auto audio_bitrate = obs_data_get_int(settings, "audio_bitrate");
-        OBSDataAutoRelease audio_encoder_settings = obs_encoder_defaults(audio_encoder_id);
-        obs_data_set_int(audio_encoder_settings, "bitrate", audio_bitrate);
-
-        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-            auto audioContext = &audios[i];
-            if (!audioContext->audio) {
-                continue;
-            }
-
-            audioContext->encoder = obs_audio_encoder_create(
-                audio_encoder_id, qUtf8Printable(audioContext->name), audio_encoder_settings, audioContext->mixIndex,
-                nullptr
-            );
-            if (!audioContext->encoder) {
-                obs_log(LOG_ERROR, "%s: Audio encoder creation failed for track %d", qUtf8Printable(name), i + 1);
-                return;
-            }
-            obs_encoder_set_audio(audioContext->encoder, audioContext->audio);
-        }
-
-        if (blankWhenHidden) {
-            bool visibleInProgram = sourceVisibleInProgram(parent);
-            setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
-        }
-
-        //--- Start recording output (if requested) ---//
-        if (isRecordingEnabled(settings)) {
-            recordingPending = (sourceWidth == 0 || sourceHeight == 0) &&
-                               obs_data_get_bool(settings, "suspend_recording_when_source_collapsed");
-            if (!recordingPending) {
-                createAndStartRecordingOutput(settings);
-            } else {
-                obs_log(LOG_INFO, "%s: The recording output pending until source is uncollapsed", qUtf8Printable(name));
-            }
-        }
-
-        //--- Start replay buffer (if requested) ---//
-        if (isReplayBufferEnabled(settings)) {
-            createAndStartReplayBuffer(settings);
-        }
-
-        //--- Start streaming output (if requested) ---//
-        for (size_t i = 0; i < MAX_SERVICES; i++) {
-            startStreamingOutput(i);
+        // Release infrastructure if all outputs failed to start
+        if (!anyStarted) {
+            releaseInfrastructureIfIdle();
         }
     }
 }
@@ -655,6 +691,7 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
 
         obs_data_erase(recently_settings, "stream_recording");
         obs_data_erase(recently_settings, "streaming_enabled");
+        obs_data_erase(recently_settings, "replay_buffer");
         obs_data_erase(recently_settings, "custom_audio_source");
         obs_data_erase(recently_settings, "multitrack_audio");
 
@@ -676,18 +713,18 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
     obs_log(LOG_INFO, "Recently settings loaded");
 }
 
-void BranchOutputFilter::stopOutput()
+// Caller must hold outputMutex.
+// Releases shared infrastructure (view, encoders, audio) if all outputs are idle.
+void BranchOutputFilter::releaseInfrastructureIfIdle()
 {
-    stopRecordingOutput();
-    stopReplayBufferOutput();
+    // Only release if all outputs are stopped
+    if (countActiveStreamings() > 0 || recordingActive || recordingPending || replayBufferActive) {
+        return;
+    }
 
-    pthread_mutex_lock(&outputMutex);
+    pthread_mutex_lock(&audioMutex);
     {
-        OBSMutexAutoUnlock locked(&outputMutex);
-
-        for (size_t i = 0; i < MAX_SERVICES; i++) {
-            stopStreamingOutput(i);
-        }
+        OBSMutexAutoUnlock audioLocked(&audioMutex);
 
         for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
             auto audioContext = &audios[i];
@@ -698,27 +735,49 @@ void BranchOutputFilter::stopOutput()
                 audioContext->capture = nullptr;
             }
         }
+    }
 
-        videoEncoder = nullptr;
+    videoEncoder = nullptr;
 
-        if (filterVideoCapture) {
-            filterVideoCapture->setActive(false);
-            delete filterVideoCapture;
-            filterVideoCapture = nullptr;
+    if (filterVideoCapture) {
+        filterVideoCapture->setActive(false);
+        delete filterVideoCapture;
+        filterVideoCapture = nullptr;
+    }
+
+    cropScene = nullptr;
+
+    if (view) {
+        obs_view_set_source(view, 0, nullptr);
+        obs_view_remove(view);
+    }
+
+    view = nullptr;
+    videoOutput = nullptr;
+    useFilterInput = false;
+    blankingOutputActive = false;
+    blankingAudioMuted = false;
+}
+
+void BranchOutputFilter::stopOutput()
+{
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        stopRecordingOutput();
+        stopReplayBufferOutput();
+
+        for (size_t i = 0; i < MAX_SERVICES; i++) {
+            stopStreamingOutput(i);
         }
 
-        cropScene = nullptr;
+        // Reset individual stopping flag so it does not persist across
+        // full stop/restart cycles (e.g., filter eye-icon toggle while
+        // streamingIndividualStopping is still true).
+        streamingIndividualStopping = false;
 
-        if (view) {
-            obs_view_set_source(view, 0, nullptr);
-            obs_view_remove(view);
-        }
-
-        view = nullptr;
-        videoOutput = nullptr;
-        useFilterInput = false;
-        blankingOutputActive = false;
-        blankingAudioMuted = false;
+        releaseInfrastructureIfIdle();
     }
 }
 
@@ -736,12 +795,27 @@ void BranchOutputFilter::restartOutput()
 
 void BranchOutputFilter::setAudioCapturesActive(bool active)
 {
-    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-        auto audioContext = &audios[i];
-        if (audioContext->capture) {
-            audioContext->capture->setActive(active);
+    pthread_mutex_lock(&audioMutex);
+    {
+        OBSMutexAutoUnlock locked(&audioMutex);
+
+        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
+            auto audioContext = &audios[i];
+            if (audioContext->capture) {
+                audioContext->capture->setActive(active);
+            }
         }
     }
+}
+
+void BranchOutputFilter::saveCallback(obs_data_t *settings)
+{
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        auto key = QString("streaming_output_enabled_%1").arg(i);
+        obs_data_set_bool(settings, qUtf8Printable(key), isStreamingUserEnabled(i));
+    }
+    obs_data_set_bool(settings, "recording_output_enabled", isRecordingUserEnabled());
+    obs_data_set_bool(settings, "replay_buffer_output_enabled", isReplayBufferUserEnabled());
 }
 
 void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_source_t *parent)
@@ -808,8 +882,8 @@ void BranchOutputFilter::onIntervalTimerTimeout()
         return;
     }
 
-    if (streamingStopping) {
-        onStopOutputGracefully();
+    if (outputGracefullyStopping) {
+        stopOutputGracefully();
         return;
     }
 
@@ -826,7 +900,6 @@ void BranchOutputFilter::onIntervalTimerTimeout()
         }
 
         if (sourceEnabled) {
-            // Clicked filter's "Eye" icon (Show)
             // Check interlock condition
             if (interlockType == INTERLOCK_TYPE_ALWAYS_OFF) {
                 // Never start output
@@ -855,6 +928,27 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     restartOutput();
                     return;
                 }
+            } else if (interlockType == INTERLOCK_TYPE_INDIVIDUAL) {
+                // Individual start: follow OBS frontend state per output type.
+                // Check both the user toggle (dock checkbox) and the filter setting
+                // (whether the output type is configured) to avoid blocking subsequent
+                // outputs when an unconfigured type matches first.
+                OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+                bool anyStarted = false;
+                if (isAnyStreamingUserEnabled(settings) && obs_frontend_streaming_active() &&
+                    isStreamingGroupEnabled(settings)) {
+                    anyStarted |= startStreamingIndividual();
+                }
+                if (isRecordingUserEnabled() && obs_frontend_recording_active() && isRecordingEnabled(settings)) {
+                    anyStarted |= startRecordingIndividual();
+                }
+                if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() &&
+                    isReplayBufferEnabled(settings)) {
+                    anyStarted |= startReplayBufferIndividual();
+                }
+                if (anyStarted) {
+                    return;
+                }
             } else {
                 restartOutput();
                 return;
@@ -872,42 +966,156 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             }
 
             OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+
+            // Start all eligible streaming slots as a single output group.
+            // Returns true if any slot was started.
+            // Guarded by streamingIndividualStopping to prevent starting slots while
+            // a graceful stop is still in progress.
+            auto startEligibleStreamings = [&]() -> bool {
+                if (streamingIndividualStopping) {
+                    return false;
+                }
+                bool anyStarted = false;
+                for (size_t i = 0; i < MAX_SERVICES; i++) {
+                    if (isStreamingUserEnabled(i) && !streamings[i].active && isStreamingEnabled(settings, i) &&
+                        isStreamingGroupEnabled(settings)) {
+                        if (startSingleStreamingIndividual(i)) {
+                            anyStarted = true;
+                        }
+                    }
+                }
+                return anyStarted;
+            };
             bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
             bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
 
             // Check interlock condition
             if (interlockType == INTERLOCK_TYPE_ALWAYS_OFF) {
                 // Always OFF: Stop output immediately
-                onStopOutputGracefully();
+                stopOutputGracefully();
                 return;
             } else if (interlockType == INTERLOCK_TYPE_STREAMING) {
                 if (!obs_frontend_streaming_active()) {
                     // Stop output when streaming is not active
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_RECORDING) {
                 if (!obs_frontend_recording_active()) {
                     // Stop output when recording is not active
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_STREAMING_RECORDING) {
                 if (!obs_frontend_streaming_active() && !obs_frontend_recording_active()) {
                     // Stop output when streaming and recording are not active
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
                 if (!obs_frontend_virtualcam_active()) {
                     // Stop output when virtual cam is not active
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_REPLAY_BUFFER) {
                 if (!obs_frontend_replay_buffer_active()) {
                     // Stop output when replay buffer is not active
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
+                    return;
+                }
+            } else if (interlockType == INTERLOCK_TYPE_INDIVIDUAL) {
+                // Individual stop: follow OBS frontend state per output type.
+                // Only checks the OBS frontend state here; user toggle (per-output checkbox)
+                // is handled separately in the common per-output toggle block below.
+                {
+                    bool anyStopped = false;
+                    if (!obs_frontend_streaming_active() && streamingActive) {
+                        anyStopped |= stopStreamingIndividual();
+                    }
+                    if (!obs_frontend_recording_active() && (recordingActive || recordingPending)) {
+                        anyStopped |= stopRecordingIndividual();
+                    }
+                    if (!obs_frontend_replay_buffer_active() && replayBufferActive) {
+                        anyStopped |= stopReplayBufferIndividual();
+                    }
+                    if (anyStopped) {
+                        return;
+                    }
+                }
+
+                // Individual start for additional outputs while some are already active.
+                {
+                    bool anyStarted = false;
+                    if (obs_frontend_streaming_active()) {
+                        anyStarted |= startEligibleStreamings();
+                    }
+                    if (isRecordingUserEnabled() && obs_frontend_recording_active() && !recordingActive &&
+                        !recordingPending && isRecordingEnabled(settings)) {
+                        anyStarted |= startRecordingIndividual();
+                    }
+                    if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() && !replayBufferActive &&
+                        isReplayBufferEnabled(settings)) {
+                        anyStarted |= startReplayBufferIndividual();
+                    }
+                    if (anyStarted) {
+                        return;
+                    }
+                }
+            }
+
+            // Per-output toggle check (all interlock modes including non-Individual)
+            // Users can explicitly enable/disable each output type (streaming, recording,
+            // replay buffer) via the status dock's output column checkbox, regardless of
+            // the current interlock mode. This allows, for example, stopping recording
+            // while keeping streaming active even in "Always ON" mode.
+            // Only one start/stop per tick to avoid crash from rapid state transitions.
+            // Streaming slots are treated as a single output group.
+            {
+                bool anyStopped = false;
+                for (size_t i = 0; i < MAX_SERVICES; i++) {
+                    if (!isStreamingUserEnabled(i) && streamings[i].active) {
+                        anyStopped |= stopSingleStreamingIndividual(i);
+                    }
+                }
+                if (!isRecordingUserEnabled() && (recordingActive || recordingPending)) {
+                    anyStopped |= stopRecordingIndividual();
+                }
+                if (!isReplayBufferUserEnabled() && replayBufferActive) {
+                    anyStopped |= stopReplayBufferIndividual();
+                }
+                if (anyStopped) {
+                    return;
+                }
+            }
+
+            // Retry graceful streaming stop if still in progress.
+            // Placed after per-output toggle stops so recording/replay buffer stops
+            // are not blocked during streaming graceful stop.
+            if (streamingIndividualStopping) {
+                stopStreamingIndividual();
+                return;
+            }
+
+            // Per-output toggle re-enable check.
+            // Only re-enable an output if the current interlock condition is met.
+            // For ALWAYS_OFF, we never reach here (returned above).
+            // For INDIVIDUAL, per-output start is handled in the Individual block above.
+            // For other modes, re-enable only when the interlock condition is currently satisfied.
+            // Note: No explicit interlock recheck is needed here because this code is only
+            // reachable within the "outputs active" block, which means the interlock condition
+            // was already satisfied when outputs were started and has not been violated (the
+            // interlock stop checks above would have returned before reaching this point).
+            if (interlockType != INTERLOCK_TYPE_INDIVIDUAL) {
+                bool anyStarted = false;
+                anyStarted |= startEligibleStreamings();
+                if (isRecordingUserEnabled() && !recordingActive && !recordingPending && isRecordingEnabled(settings)) {
+                    anyStarted |= startRecordingIndividual();
+                }
+                if (isReplayBufferUserEnabled() && !replayBufferActive && isReplayBufferEnabled(settings)) {
+                    anyStarted |= startReplayBufferIndividual();
+                }
+                if (anyStarted) {
                     return;
                 }
             }
@@ -930,7 +1138,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
                 if (!sourceInFrontend(parent)) {
                     // Stop output when source had been removed
-                    onStopOutputGracefully();
+                    stopOutputGracefully();
                     return;
                 }
 
@@ -1054,20 +1262,19 @@ void BranchOutputFilter::onIntervalTimerTimeout()
         } else {
             if (streamingActive || recordingActive || recordingPending || replayBufferActive) {
                 // Clicked filter's "Eye" icon (Hide)
-                onStopOutputGracefully();
+                stopOutputGracefully();
                 return;
             }
         }
     }
 }
 
-void BranchOutputFilter::onStopOutputGracefully()
+void BranchOutputFilter::stopOutputGracefully()
 {
-    // Stop recording and replay buffer immediately first
-    stopRecordingOutput();
-    stopReplayBufferOutput();
+    outputGracefullyStopping = true;
 
-    // Lock out other output thread to prevent crash
+    // Lock out other output thread to prevent crash.
+    // Lock order: pluginMutex -> outputMutex (consistent with stopOutput() and Individual stop functions).
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);
@@ -1076,33 +1283,18 @@ void BranchOutputFilter::onStopOutputGracefully()
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-            streamingStopping = true;
+            // Stop recording and replay buffer immediately first (under outputMutex)
+            stopRecordingOutput();
+            stopReplayBufferOutput();
 
-            for (size_t i = 0; i < MAX_SERVICES; i++) {
-                if (streamings[i].output && streamings[i].active) {
-                    if (streamings[i].stopping) {
-                        if (reconnectAttemptingTimedOut(i)) {
-                            // stop streaming safely
-                            stopStreamingOutput(i);
-                        }
-                    } else if (obs_output_reconnecting(streamings[i].output)) {
-                        // Waiting few seconds to avoid crash due to stoppoing during reconnecting
-                        streamings[i].stopping = true;
-                    } else {
-                        // Stop immediately
-                        stopStreamingOutput(i);
-                    }
-                }
-            }
-
-            if (countActiveStreamings() > 0) {
+            if (!stopAllStreamingOutputsGracefully()) {
                 return;
             }
-
-            // All streaming has been stopped
-            streamingStopping = false;
         }
     }
+
+    // All streaming has been stopped
+    outputGracefullyStopping = false;
 
     // Finalize termination
     stopOutput();
@@ -1512,10 +1704,15 @@ obs_audio_data *BranchOutputFilter::audioFilterCallback(void *param, obs_audio_d
 {
     auto filter = static_cast<BranchOutputFilter *>(param);
 
-    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-        auto audioContext = &filter->audios[i];
-        if (audioContext->capture && !audioContext->capture->hasSource()) {
-            audioContext->capture->pushAudio(audioData);
+    pthread_mutex_lock(&filter->audioMutex);
+    {
+        OBSMutexAutoUnlock locked(&filter->audioMutex);
+
+        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
+            auto audioContext = &filter->audios[i];
+            if (audioContext->capture && !audioContext->capture->hasSource()) {
+                audioContext->capture->pushAudio(audioData);
+            }
         }
     }
 
@@ -1562,6 +1759,10 @@ obs_source_info BranchOutputFilter::createFilterInfo()
         filter->destroyCallback();
     };
 
+    info.save = [](void *data, obs_data_t *settings) {
+        auto filter = static_cast<BranchOutputFilter *>(data);
+        filter->saveCallback(settings);
+    };
     info.get_properties = [](void *data) -> obs_properties_t * {
         auto filter = static_cast<BranchOutputFilter *>(data);
         return filter->getProperties();
@@ -1586,7 +1787,7 @@ bool obs_module_load()
     proxySourceInfo = FilterVideoCapture::createProxySourceInfo();
     obs_register_source(&proxySourceInfo);
 
-    pthread_mutex_init(&pluginMutex, nullptr);
+    pthread_mutex_init_recursive(&pluginMutex);
 
     obs_log(LOG_INFO, "Plugin loaded successfully (version %s)", PLUGIN_VERSION);
     return true;
