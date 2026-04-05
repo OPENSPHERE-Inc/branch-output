@@ -25,12 +25,16 @@ The user may optionally specify an output base path. If the argument is `$ARGUME
 
 ## Review Document Naming
 
-- **Format:** `{base-path}/{branch-name}/review-round{N}.md`
+- **Format:** `{base-path}/{branch-dir}/review-round{N}.md`
 - **Branch name:** Obtained via `git branch --show-current`.
 - **Branch name is used as a directory path** — the entire branch name (including `/`) becomes the directory hierarchy.
-  - Example: branch `feat/add-replay` → `{base-path}/feat/add-replay/review-round1.md`
-  - Example: branch `fix/audio/buffer-leak` → `{base-path}/fix/audio/buffer-leak/review-round1.md`
-  - Example: branch `dev` → `{base-path}/dev/review-round1.md`
+- **Sequential suffix for re-runs on the same branch:** If the directory `{base-path}/{branch-name}` already exists, append a sequential suffix: `{branch-name}_1`, `{branch-name}_2`, etc. This prevents overwriting results from previous runs.
+  - To determine the suffix: check `{branch-name}_1` first, then `_2`, etc., and use the smallest number whose directory does not yet exist.
+- **Examples:**
+  - First run: branch `feat/add-replay` → `{base-path}/feat/add-replay/review-round1.md`
+  - Second run: `feat/add-replay` already exists → `{base-path}/feat/add-replay_1/review-round1.md`
+  - Third run: `feat/add-replay_1` also exists → `{base-path}/feat/add-replay_2/review-round1.md`
+  - Branch `dev` → `{base-path}/dev/review-round1.md` (first run), `{base-path}/dev_1/review-round1.md` (second run)
 - **Default base-path:** `.claude/tmp/`
 - Create directories as needed.
 - Retain all round review documents — do not overwrite.
@@ -194,7 +198,7 @@ Increment the round counter and return to Step 2.1.
 
 ## Step 3 — Final Report
 
-After all rounds complete, generate a final report. File path: `{base-path}/{branch-name}/final-report.md`
+After all rounds complete, generate a final report. File path: `{base-path}/{branch-dir}/final-report.md`
 
 The final report must be written by **you (the orchestrator)** by reading all round review documents and verification reports. Do not delegate to an agent.
 
