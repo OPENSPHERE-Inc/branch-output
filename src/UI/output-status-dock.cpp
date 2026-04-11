@@ -31,6 +31,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHBoxLayout>
 #include <QMouseEvent>
 #include <QDesktopServices>
+#include <QSet>
 
 #include "../plugin-main.hpp"
 #include "output-status-dock.hpp"
@@ -152,6 +153,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     interlockComboBox->addItem(QTStr("StreamingOrRecording"), BranchOutputFilter::INTERLOCK_TYPE_STREAMING_RECORDING);
     interlockComboBox->addItem(QTStr("ReplayBuffer"), BranchOutputFilter::INTERLOCK_TYPE_REPLAY_BUFFER);
     interlockComboBox->addItem(QTStr("VirtualCam"), BranchOutputFilter::INTERLOCK_TYPE_VIRTUAL_CAM);
+    interlockComboBox->addItem(QTStr("Individual"), BranchOutputFilter::INTERLOCK_TYPE_INDIVIDUAL);
     interlockComboBox->addItem(QTStr("AlwaysOff"), BranchOutputFilter::INTERLOCK_TYPE_ALWAYS_OFF);
 
     auto buttonsContainerLayout = new QHBoxLayout();
@@ -370,6 +372,13 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     // Ensure filter removed
     removeFilter(filter);
 
+    // Immediate checkbox sync when output user-enabled state changes (e.g. from hotkeys)
+    connect(
+        filter, &BranchOutputFilter::outputUserEnabledChanged, this,
+        &BranchOutputStatusDock::onOutputUserEnabledChanged,
+        static_cast<Qt::ConnectionType>(Qt::UniqueConnection | Qt::QueuedConnection)
+    );
+
     OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
 
     auto groupIndex = 0;
@@ -386,8 +395,7 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 
     // Streaming rows
     if (filter->isStreamingGroupEnabled(settings)) {
-        auto serviceCount = (size_t)obs_data_get_int(settings, "service_count");
-        for (size_t i = 0; i < MAX_SERVICES && i < serviceCount; i++) {
+        for (size_t i = 0; i < MAX_SERVICES; i++) {
             if (filter->isStreamingEnabled(settings, i)) {
                 addRow(filter, i, ROW_OUTPUT_STREAMING, groupIndex++);
             }
@@ -435,6 +443,23 @@ void BranchOutputStatusDock::update()
     applyAddChapterToRecordingAllButtonEnabled();
     applySaveReplayBufferAllButtonEnabled();
     sort();
+}
+
+void BranchOutputStatusDock::updateOutputToggles(BranchOutputFilter *filter)
+{
+    foreach (auto row, outputTableRows) {
+        if (row->filter == filter) {
+            row->updateOutputToggle();
+        }
+    }
+}
+
+void BranchOutputStatusDock::onOutputUserEnabledChanged()
+{
+    auto filter = qobject_cast<BranchOutputFilter *>(sender());
+    if (filter) {
+        updateOutputToggles(filter);
+    }
 }
 
 void BranchOutputStatusDock::applyEnableAllButtonEnabled()
@@ -725,17 +750,46 @@ OutputTableRow::OutputTableRow(
 
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
-        outputName = new LabelCell(rowId, QTStr("Streaming%1").arg(streamingIndex + 1), parent);
+        outputName = new OutputCell(
+            rowId, QTStr("Streaming%1").arg(streamingIndex + 1), filter->isStreamingUserEnabled(streamingIndex),
+            ROW_OUTPUT_STREAMING, nullptr, parent
+        );
+        outputName->setToolTip(QTStr("StreamingToggleTooltip"));
         break;
     case ROW_OUTPUT_RECORDING:
-        outputName = new RecordingOutputCell(rowId, QTStr("Recording"), filter->filterSource, parent);
+        outputName = new OutputCell(
+            rowId, QTStr("Recording"), filter->isRecordingUserEnabled(), ROW_OUTPUT_RECORDING, filter->filterSource,
+            parent
+        );
+        outputName->setToolTip(QTStr("RecordingToggleTooltip"));
         break;
     case ROW_OUTPUT_REPLAY_BUFFER:
-        outputName = new ReplayBufferOutputCell(rowId, QTStr("ReplayBuffer"), filter->filterSource, parent);
+        outputName = new OutputCell(
+            rowId, QTStr("ReplayBuffer"), filter->isReplayBufferUserEnabled(), ROW_OUTPUT_REPLAY_BUFFER,
+            filter->filterSource, parent
+        );
+        outputName->setToolTip(QTStr("ReplayBufferToggleTooltip"));
         break;
     default:
-        outputName = new LabelCell(rowId, QTStr("None"), parent);
+        outputName = new OutputCell(rowId, QTStr("None"), true, ROW_OUTPUT_NONE, nullptr, parent);
     }
+
+    // Connect per-output toggle to filter's user-enabled flags
+    connect(outputName, &OutputCell::toggled, this, [this](bool checked) {
+        switch (outputType) {
+        case ROW_OUTPUT_STREAMING:
+            filter->setStreamingUserEnabled(streamingIndex, checked);
+            break;
+        case ROW_OUTPUT_RECORDING:
+            filter->setRecordingUserEnabled(checked);
+            break;
+        case ROW_OUTPUT_REPLAY_BUFFER:
+            filter->setReplayBufferUserEnabled(checked);
+            break;
+        default:
+            break;
+        }
+    });
 
     droppedFrames = new LabelCell(rowId, "", parent);
     megabytesSent = new LabelCell(rowId, "", parent);
@@ -798,9 +852,35 @@ OutputTableRow::~OutputTableRow()
     disconnect(this);
 }
 
+void OutputTableRow::updateOutputToggle()
+{
+    // Sync per-output toggle checkbox with filter's user-enabled flags.
+    // Only update when the state has actually changed to avoid unnecessary work
+    // and prevent potential UI glitch if the user is clicking the checkbox.
+    bool desiredChecked = false;
+    switch (outputType) {
+    case ROW_OUTPUT_STREAMING:
+        desiredChecked = filter->isStreamingUserEnabled(streamingIndex);
+        break;
+    case ROW_OUTPUT_RECORDING:
+        desiredChecked = filter->isRecordingUserEnabled();
+        break;
+    case ROW_OUTPUT_REPLAY_BUFFER:
+        desiredChecked = filter->isReplayBufferUserEnabled();
+        break;
+    default:
+        break;
+    }
+    if (outputName->isChecked() != desiredChecked) {
+        outputName->setChecked(desiredChecked);
+    }
+}
+
 // Imitate UI/window-basic-stats.cpp
 void OutputTableRow::update()
 {
+    updateOutputToggle();
+
     obs_output_t *output;
 
     switch (outputType) {
@@ -1244,78 +1324,110 @@ void ParentCell::mousePressEvent(QMouseEvent *event)
     }
 }
 
-//--- RecordingOutputCell class ---//
+//--- OutputCell class ---//
 
-RecordingOutputCell::RecordingOutputCell(
-    const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent
+OutputCell::OutputCell(
+    const QString &rowId, const QString &textValue, bool checked, RowOutputType _outputType, obs_source_t *_source,
+    QWidget *parent
 )
-    : LabelCell(rowId, parent),
-      source(_source)
+    : QWidget(parent),
+      // _item ownership is transferred to QTableWidget via setItem(); QTableWidget
+      // deletes it when the table is destroyed. Do not delete _item in ~OutputCell().
+      _item(new OutputTableCellItem(rowId, "")),
+      outputType(_outputType),
+      weakSource(obs_source_get_weak_source(_source))
 {
-    // Markup as link
-    setTextFormat(Qt::RichText);
-    setCursor(Qt::PointingHandCursor);
+    setMinimumHeight(27);
+
+    outputToggleCheckbox = new QCheckBox(this);
+    outputToggleCheckbox->setProperty("visibilityCheckBox", true);      // Until OBS 30
+    outputToggleCheckbox->setProperty("class", "indicator-visibility"); // Since OBS 31
+    outputToggleCheckbox->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+    outputToggleCheckbox->setChecked(checked);
+    outputToggleCheckbox->setCursor(Qt::PointingHandCursor);
+
+    connect(outputToggleCheckbox, &QCheckBox::clicked, this, [this](bool value) { emit toggled(value); });
+
+    // ROW_OUTPUT_NONE has no associated output to toggle
+    if (outputType == ROW_OUTPUT_NONE) {
+        outputToggleCheckbox->setVisible(false);
+    }
+
+    name = new QLabel(this);
+
+    // Recording and Replay Buffer labels are clickable links to open the output folder
+    if (outputType == ROW_OUTPUT_RECORDING || outputType == ROW_OUTPUT_REPLAY_BUFFER) {
+        name->setTextFormat(Qt::RichText);
+        name->setCursor(Qt::PointingHandCursor);
+        name->installEventFilter(this);
+    }
+
+    auto checkboxLayout = new QHBoxLayout();
+    checkboxLayout->setContentsMargins(0, 0, 0, 0);
+    checkboxLayout->addWidget(outputToggleCheckbox);
+    checkboxLayout->addWidget(name);
+    setLayout(checkboxLayout);
 
     setTextValue(textValue);
 }
 
-RecordingOutputCell::~RecordingOutputCell() {}
+OutputCell::~OutputCell() {}
 
-void RecordingOutputCell::setTextValue(const QString &textValue)
+void OutputCell::setTextValue(const QString &value)
 {
-    // Markup as link
-    LabelCell::setValue(textValue);
-    LabelCell::setText(QString("<u>%1</u>").arg(textValue));
+    if (outputType == ROW_OUTPUT_RECORDING || outputType == ROW_OUTPUT_REPLAY_BUFFER) {
+        name->setText(QString("<u>%1</u>").arg(value));
+    } else {
+        name->setText(value);
+    }
+    _item->setData(Qt::UserRole, value);
 }
 
-void RecordingOutputCell::mousePressEvent(QMouseEvent *event)
+void OutputCell::setChecked(bool checked)
 {
-    if (event->button() == Qt::LeftButton) {
-        // Open OS file browser
-        OBSDataAutoRelease settings = obs_source_get_settings(source);
-        auto path = obs_data_get_bool(settings, "use_profile_recording_path")
-                        ? getProfileRecordingPath(obs_frontend_get_profile_config())
-                        : obs_data_get_string(settings, "path");
+    // Block signals to prevent re-entrant toggled() emission from programmatic updates.
+    // Currently OutputCell::toggled is connected to QCheckBox::clicked (which is not emitted
+    // by setChecked), but blockSignals provides defense against future signal changes.
+    outputToggleCheckbox->blockSignals(true);
+    outputToggleCheckbox->setChecked(checked);
+    outputToggleCheckbox->blockSignals(false);
+}
+
+void OutputCell::openOutputFolder()
+{
+    OBSSourceAutoRelease source = obs_weak_source_get_source(weakSource);
+    if (!source) {
+        return;
+    }
+    OBSDataAutoRelease settings = obs_source_get_settings(source);
+    const char *path = nullptr;
+
+    if (outputType == ROW_OUTPUT_RECORDING) {
+        path = obs_data_get_bool(settings, "use_profile_recording_path")
+                   ? getProfileRecordingPath(obs_frontend_get_profile_config())
+                   : obs_data_get_string(settings, "path");
+    } else if (outputType == ROW_OUTPUT_REPLAY_BUFFER) {
+        path = obs_data_get_bool(settings, "replay_buffer_use_profile_path")
+                   ? getProfileRecordingPath(obs_frontend_get_profile_config())
+                   : obs_data_get_string(settings, "replay_buffer_path");
+    }
+
+    if (path) {
         obs_log(LOG_DEBUG, "path=%s", path);
         QDesktopServices::openUrl(QUrl::fromLocalFile(path));
     }
 }
 
-//--- ReplayBufferOutputCell class ---//
-
-ReplayBufferOutputCell::ReplayBufferOutputCell(
-    const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent
-)
-    : LabelCell(rowId, parent),
-      source(_source)
+bool OutputCell::eventFilter(QObject *obj, QEvent *event)
 {
-    // Markup as link
-    setTextFormat(Qt::RichText);
-    setCursor(Qt::PointingHandCursor);
-
-    setTextValue(textValue);
-}
-
-ReplayBufferOutputCell::~ReplayBufferOutputCell() {}
-
-void ReplayBufferOutputCell::setTextValue(const QString &textValue)
-{
-    // Markup as link
-    LabelCell::setValue(textValue);
-    LabelCell::setText(QString("<u>%1</u>").arg(textValue));
-}
-
-void ReplayBufferOutputCell::mousePressEvent(QMouseEvent *event)
-{
-    if (event->button() == Qt::LeftButton) {
-        // Open OS file browser
-        OBSDataAutoRelease settings = obs_source_get_settings(source);
-        auto path = obs_data_get_bool(settings, "replay_buffer_use_profile_path")
-                        ? getProfileRecordingPath(obs_frontend_get_profile_config())
-                        : obs_data_get_string(settings, "replay_buffer_path");
-        obs_log(LOG_DEBUG, "path=%s", path);
-        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    if (obj == name && event->type() == QEvent::MouseButtonPress) {
+        auto mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton) {
+            openOutputFolder();
+            return true;
+        }
     }
+    return QWidget::eventFilter(obj, event);
 }
 
 //--- StatusCell class ---//
@@ -1437,4 +1549,32 @@ void StatusCell::setTextValue(const QString &textValue)
 {
     statusText->setText(textValue);
     _item->setData(Qt::UserRole, textValue);
+}
+
+QList<BranchOutputFilterInfo> BranchOutputStatusDock::getFilterList() const
+{
+    QList<BranchOutputFilterInfo> list;
+    QSet<obs_source_t *> seen;
+
+    foreach (auto row, outputTableRows) {
+        auto filter = row->filter;
+        if (seen.contains(filter->filterSource)) {
+            continue;
+        }
+        seen.insert(filter->filterSource);
+
+        auto parent = obs_filter_get_parent(filter->filterSource);
+        if (!parent) {
+            continue;
+        }
+
+        list.append({
+            QString(obs_source_get_name(parent)),
+            QString(obs_source_get_uuid(parent)),
+            QString(obs_source_get_name(filter->filterSource)),
+            QString(obs_source_get_uuid(filter->filterSource)),
+        });
+    }
+
+    return list;
 }

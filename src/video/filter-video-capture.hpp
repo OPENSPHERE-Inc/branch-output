@@ -23,6 +23,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <atomic>
 
+#include "../utils.hpp"
+
 #define PROXY_SOURCE_ID "osi_branch_output_proxy"
 
 // FilterVideoCapture: Captures filter input via gs_texrender and provides
@@ -62,6 +64,9 @@ class FilterVideoCapture {
     uint32_t captureWidth;
     uint32_t captureHeight;
 
+    // Crop region (nullopt = no crop)
+    std::optional<CropRect> crop;
+
     // State
     std::atomic_bool active;
     std::atomic_bool textureReady;
@@ -99,9 +104,12 @@ public:
     // Reset the per-frame capture flag (called from video_tick before rendering)
     inline void resetCapturedFlag() { capturedThisFrame.store(false); }
 
+    // Set crop region for output rendering (nullopt = no crop)
+    void setCrop(const std::optional<CropRect> &crop);
+
     // Get capture dimensions
-    inline uint32_t getCaptureWidth() const { return captureWidth; }
-    inline uint32_t getCaptureHeight() const { return captureHeight; }
+    inline uint32_t getCaptureWidth() const { return crop ? crop->width : captureWidth; }
+    inline uint32_t getCaptureHeight() const { return crop ? crop->height : captureHeight; }
 
     // Create obs_source_info for the proxy source type (register at module load)
     static obs_source_info createProxySourceInfo();

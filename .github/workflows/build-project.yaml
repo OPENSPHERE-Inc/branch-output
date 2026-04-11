@@ -108,6 +108,29 @@ jobs:
           print "pluginName=${product_name}" >> $GITHUB_OUTPUT
           print "pluginVersion=${product_version}" >> $GITHUB_OUTPUT
 
+      - name: Restore CMake Cache ♻️
+        uses: actions/cache@v4
+        id: cmake-cache
+        with:
+          path: /opt/cmake
+          key: macos-cmake-3.31.6
+
+      - name: Install CMake 3.31.6 🔨
+        if: steps.cmake-cache.outputs.cache-hit != 'true'
+        shell: zsh --no-rcs --errexit --pipefail {0}
+        run: |
+          : Install CMake 3.31.6 🔨
+          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-macos-universal.tar.gz -o cmake.tar.gz
+          sudo mkdir -p /opt/cmake
+          sudo tar xzf cmake.tar.gz --strip-components=1 -C /opt/cmake
+          rm cmake.tar.gz
+
+      - name: Add CMake to PATH 🛤️
+        shell: zsh --no-rcs --errexit --pipefail {0}
+        run: |
+          : Add CMake to PATH 🛤️
+          print "/opt/cmake/CMake.app/Contents/bin" >> $GITHUB_PATH
+
       - uses: actions/cache@v4
         id: ccache-cache
         with:

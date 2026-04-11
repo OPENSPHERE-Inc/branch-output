@@ -187,6 +187,16 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_bool(defaults, "blank_when_not_visible", false);
     obs_data_set_default_bool(defaults, "mute_audio_when_blank", false);
     obs_data_set_default_string(defaults, "video_source_type", "source");
+    obs_data_set_default_string(defaults, "crop_type", "none");
+    obs_data_set_default_int(defaults, "crop_rel_top", 0);
+    obs_data_set_default_int(defaults, "crop_rel_right", 0);
+    obs_data_set_default_int(defaults, "crop_rel_bottom", 0);
+    obs_data_set_default_int(defaults, "crop_rel_left", 0);
+    obs_data_set_default_int(defaults, "crop_abs_x", 0);
+    obs_data_set_default_int(defaults, "crop_abs_y", 0);
+    obs_data_set_default_int(defaults, "crop_abs_width", 0);
+    obs_data_set_default_int(defaults, "crop_abs_height", 0);
+    obs_data_set_default_int(defaults, "fps_divider", 1);
     obs_data_set_default_string(defaults, "rec_muxer_custom", mux);
 
     auto path = getProfileRecordingPath(config);
@@ -204,6 +214,14 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_data_set_default_string(defaults, "replay_buffer_filename_formatting", qUtf8Printable(filenameFormatting));
     obs_data_set_default_bool(defaults, "replay_buffer_no_space_filename", fileNameWithoutSpace);
     obs_data_set_default_string(defaults, "replay_buffer_format", recFormat);
+
+    // Per-output user intent defaults (not shown in UI, persisted in settings)
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        auto key = QString("streaming_output_enabled_%1").arg(i);
+        obs_data_set_default_bool(defaults, qUtf8Printable(key), true);
+    }
+    obs_data_set_default_bool(defaults, "recording_output_enabled", true);
+    obs_data_set_default_bool(defaults, "replay_buffer_output_enabled", true);
 
     obs_log(LOG_INFO, "Default settings applied.");
 }
@@ -530,6 +548,30 @@ void BranchOutputFilter::addAdvancedSettingsGroup(obs_properties_t *props)
     );
 }
 
+static void updateReplayBufferEstimate(obs_properties_t *props, obs_data_t *settings)
+{
+    auto estimateProp = obs_properties_get(props, "replay_buffer_estimate");
+    if (!estimateProp) {
+        return;
+    }
+
+    auto seconds = obs_data_get_int(settings, "replay_buffer_duration");
+    auto vbitrate = obs_data_get_int(settings, "bitrate");
+    auto abitrate = obs_data_get_int(settings, "audio_bitrate");
+
+    if (vbitrate > 0 || abitrate > 0) {
+        int64_t memMB = int64_t(seconds) * int64_t(vbitrate + abitrate) * 1000 / 8 / 1024 / 1024;
+        if (memMB < 1) {
+            memMB = 1;
+        }
+        char buf[256];
+        snprintf(buf, sizeof(buf), obs_module_text("ReplayBufferEstimate"), static_cast<int>(memMB));
+        obs_property_set_description(estimateProp, buf);
+    } else {
+        obs_property_set_description(estimateProp, obs_module_text("ReplayBufferEstimateUnknown"));
+    }
+}
+
 void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
 {
     auto replayBufferGroup = obs_properties_create();
@@ -541,6 +583,26 @@ void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
 
     obs_properties_add_int(
         replayBufferGroup, "replay_buffer_duration", obs_module_text("ReplayBufferDuration"), 1, 21600, 1
+    );
+
+    // Estimated memory usage checkbox (checking triggers recalculation)
+    auto rbEstimate = obs_properties_add_bool(
+        replayBufferGroup, "replay_buffer_estimate", obs_module_text("ReplayBufferEstimate.Show")
+    );
+    obs_property_set_long_description(rbEstimate, obs_module_text("ReplayBufferEstimate.ToolTip"));
+    obs_property_set_modified_callback2(
+        rbEstimate,
+        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            if (obs_data_get_bool(settings, "replay_buffer_estimate")) {
+                updateReplayBufferEstimate(_props, settings);
+            } else {
+                obs_property_set_description(
+                    obs_properties_get(_props, "replay_buffer_estimate"), obs_module_text("ReplayBufferEstimate.Show")
+                );
+            }
+            return true;
+        },
+        nullptr
     );
 
     //--- Replay buffer path settings ---//
@@ -593,6 +655,7 @@ void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
             auto _replayBufferEnabled = obs_data_get_bool(settings, "replay_buffer");
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_description"), !_replayBufferEnabled);
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_duration"), _replayBufferEnabled);
+            obs_property_set_visible(obs_properties_get(_props, "replay_buffer_estimate"), _replayBufferEnabled);
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_use_profile_path"), _replayBufferEnabled);
             obs_property_set_visible(obs_properties_get(_props, "replay_buffer_path"), _replayBufferEnabled);
             obs_property_set_visible(
@@ -904,6 +967,123 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.Source"), "source");
     obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.FilterInput"), "filter_input");
 
+    // Cropping prop
+    auto croppingList = obs_properties_add_list(
+        videoEncoderGroup, "crop_type", obs_module_text("Cropping"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
+    );
+    obs_property_list_add_string(croppingList, obs_module_text("Cropping.None"), "none");
+    obs_property_list_add_string(croppingList, obs_module_text("Cropping.Relative"), "relative");
+    obs_property_list_add_string(croppingList, obs_module_text("Cropping.Absolute"), "absolute");
+
+    obs_property_set_modified_callback2(
+        croppingList,
+        [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+            auto filter = static_cast<BranchOutputFilter *>(param);
+            auto cropType = obs_data_get_string(settings, "crop_type");
+            bool isRelative = cropType && !strcmp(cropType, "relative");
+            bool isAbsolute = cropType && !strcmp(cropType, "absolute");
+
+            obs_property_set_visible(obs_properties_get(_props, "crop_relative_group"), isRelative);
+            obs_property_set_visible(obs_properties_get(_props, "crop_absolute_group"), isAbsolute);
+
+            // Sync preview checkbox state between crop modes
+            bool previewOn = obs_data_get_bool(settings, "preview_crop_rect_rel") ||
+                             obs_data_get_bool(settings, "preview_crop_rect_abs");
+            obs_data_set_bool(settings, "preview_crop_rect_rel", previewOn);
+            obs_data_set_bool(settings, "preview_crop_rect_abs", previewOn);
+
+            if ((isRelative || isAbsolute) && previewOn) {
+                uint32_t srcWidth, srcHeight;
+                filter->getSourceResolution(srcWidth, srcHeight);
+                if (srcWidth > 0 && srcHeight > 0) {
+                    filter->cropPreview.show(filter->calculateCrop(srcWidth, srcHeight, settings), srcWidth, srcHeight);
+                }
+            } else {
+                filter->cropPreview.hide();
+            }
+
+            return true;
+        },
+        this
+    );
+
+    // Crop value modified callback: updates preview rectangle in real-time
+    auto cropValueModified = [](void *param, obs_properties_t *, obs_property_t *, obs_data_t *settings) {
+        auto filter = static_cast<BranchOutputFilter *>(param);
+        // Check the preview checkbox for the active crop type (not isVisible, which may be false
+        // due to previous invalid crop values)
+        auto cropType = obs_data_get_string(settings, "crop_type");
+        bool previewOn = false;
+        if (cropType && !strcmp(cropType, "relative")) {
+            previewOn = obs_data_get_bool(settings, "preview_crop_rect_rel");
+        } else if (cropType && !strcmp(cropType, "absolute")) {
+            previewOn = obs_data_get_bool(settings, "preview_crop_rect_abs");
+        }
+        if (previewOn) {
+            uint32_t srcWidth, srcHeight;
+            filter->getSourceResolution(srcWidth, srcHeight);
+            if (srcWidth > 0 && srcHeight > 0) {
+                filter->cropPreview.show(filter->calculateCrop(srcWidth, srcHeight, settings), srcWidth, srcHeight);
+            }
+        }
+        return false;
+    };
+
+    // Crop preview checkbox callback
+    auto previewCropModified = [](void *param, obs_properties_t *, obs_property_t *prop, obs_data_t *settings) {
+        auto filter = static_cast<BranchOutputFilter *>(param);
+        bool checked = obs_data_get_bool(settings, obs_property_name(prop));
+
+        // Sync both checkboxes so the preview state persists across crop type switches
+        obs_data_set_bool(settings, "preview_crop_rect_rel", checked);
+        obs_data_set_bool(settings, "preview_crop_rect_abs", checked);
+
+        if (checked) {
+            uint32_t srcWidth, srcHeight;
+            filter->getSourceResolution(srcWidth, srcHeight);
+            if (srcWidth > 0 && srcHeight > 0) {
+                filter->cropPreview.show(filter->calculateCrop(srcWidth, srcHeight, settings), srcWidth, srcHeight);
+            }
+        } else {
+            filter->cropPreview.hide();
+        }
+        return false;
+    };
+
+    // Relative crop group
+    auto cropRelativeGroup = obs_properties_create();
+    const char *relProps[] = {"crop_rel_top", "crop_rel_right", "crop_rel_bottom", "crop_rel_left"};
+    const char *relLabels[] = {"CropRelative.Top", "CropRelative.Right", "CropRelative.Bottom", "CropRelative.Left"};
+    for (int i = 0; i < 4; i++) {
+        auto prop = obs_properties_add_int(cropRelativeGroup, relProps[i], obs_module_text(relLabels[i]), 0, 8192, 2);
+        obs_property_set_modified_callback2(prop, cropValueModified, this);
+    }
+    auto previewCropRel =
+        obs_properties_add_bool(cropRelativeGroup, "preview_crop_rect_rel", obs_module_text("PreviewCropRect"));
+    obs_property_set_long_description(previewCropRel, obs_module_text("PreviewCropRect.LongDescription"));
+    obs_property_set_modified_callback2(previewCropRel, previewCropModified, this);
+
+    obs_properties_add_group(
+        videoEncoderGroup, "crop_relative_group", obs_module_text("CropRelative"), OBS_GROUP_NORMAL, cropRelativeGroup
+    );
+
+    // Absolute crop group
+    auto cropAbsoluteGroup = obs_properties_create();
+    const char *absProps[] = {"crop_abs_x", "crop_abs_y", "crop_abs_width", "crop_abs_height"};
+    const char *absLabels[] = {"CropAbsolute.X", "CropAbsolute.Y", "CropAbsolute.Width", "CropAbsolute.Height"};
+    for (int i = 0; i < 4; i++) {
+        auto prop = obs_properties_add_int(cropAbsoluteGroup, absProps[i], obs_module_text(absLabels[i]), 0, 8192, 2);
+        obs_property_set_modified_callback2(prop, cropValueModified, this);
+    }
+    auto previewCropAbs =
+        obs_properties_add_bool(cropAbsoluteGroup, "preview_crop_rect_abs", obs_module_text("PreviewCropRect"));
+    obs_property_set_long_description(previewCropAbs, obs_module_text("PreviewCropRect.LongDescription"));
+    obs_property_set_modified_callback2(previewCropAbs, previewCropModified, this);
+
+    obs_properties_add_group(
+        videoEncoderGroup, "crop_absolute_group", obs_module_text("CropAbsolute"), OBS_GROUP_NORMAL, cropAbsoluteGroup
+    );
+
     // Resolution prop
     auto resolutionList = obs_properties_add_list(
         videoEncoderGroup, "resolution", obs_module_text("Resolution"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
@@ -951,6 +1131,18 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Area"), "area");
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Bicubic"), "bicubic");
     obs_property_list_add_string(downscaleFilterList, obs_module_text("DownscaleFilter.Lanczos"), "lanczos");
+
+    // "Frame Rate Divider" prop
+    auto fpsDividerList = obs_properties_add_list(
+        videoEncoderGroup, "fps_divider", obs_module_text("FpsDiv"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT
+    );
+    obs_property_set_long_description(fpsDividerList, obs_module_text("FpsDiv.LongDescription"));
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.None"), 1);
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.Half"), 2);
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.Third"), 3);
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.Quarter"), 4);
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.Fifth"), 5);
+    obs_property_list_add_int(fpsDividerList, obs_module_text("FpsDiv.Sixth"), 6);
 
     // "Video Encoder" prop
     auto videoEncoderList = obs_properties_add_list(
@@ -1023,6 +1215,18 @@ obs_properties_t *BranchOutputFilter::getProperties()
 {
     auto props = obs_properties_create();
     obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
+
+    // Ensure transient checkboxes start unchecked
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+    obs_data_set_bool(settings, "preview_crop_rect_rel", false);
+    obs_data_set_bool(settings, "preview_crop_rect_abs", false);
+    obs_data_set_bool(settings, "replay_buffer_estimate", false);
+
+    // Reset crop preview when properties dialog is closed
+    obs_properties_set_param(props, this, [](void *param) {
+        auto filter = static_cast<BranchOutputFilter *>(param);
+        filter->cropPreview.hide();
+    });
 
     //--- "Streaming" group ---//
     addStreamingGroup(props);

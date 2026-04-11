@@ -29,31 +29,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "plugin-main.hpp"
 #include "utils.hpp"
 
-void BranchOutputFilter::stopReplayBufferOutput()
-{
-    pthread_mutex_lock(&outputMutex);
-    {
-        OBSMutexAutoUnlock locked(&outputMutex);
-
-        if (replayBufferOutput) {
-            if (replayBufferActive) {
-                obs_source_t *parent = obs_filter_get_parent(filterSource);
-                if (parent) {
-                    obs_source_dec_showing(parent);
-                }
-                obs_output_stop(replayBufferOutput);
-            }
-        }
-        replayBufferSavedSignal.Disconnect();
-        replayBufferOutput = nullptr;
-
-        if (replayBufferActive) {
-            replayBufferActive = false;
-            obs_log(LOG_INFO, "%s: Stopping replay buffer succeeded", qUtf8Printable(name));
-        }
-    }
-}
-
 obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
 {
     auto replaySettings = obs_data_create();
@@ -79,10 +54,15 @@ obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
         return nullptr;
     }
 
-    // Replay buffer specific filename format
-    QString filenameFormat = obs_data_get_string(settings, "replay_buffer_filename_formatting");
-    if (filenameFormat.isEmpty()) {
-        filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
+    // Replay buffer specific filename format (override takes precedence)
+    QString filenameFormat;
+    if (!replayBufferFilenameFormatOverride.isEmpty()) {
+        filenameFormat = replayBufferFilenameFormatOverride;
+    } else {
+        filenameFormat = obs_data_get_string(settings, "replay_buffer_filename_formatting");
+        if (filenameFormat.isEmpty()) {
+            filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
+        }
     }
 
     // Sanitize filename
@@ -94,18 +74,15 @@ obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
     // TODO: Add filtering for other platforms
 #endif
 
-    QString sourceName = obs_source_get_name(obs_filter_get_parent(filterSource));
-    QString filterName = qUtf8Printable(name);
     bool noSpace = obs_data_get_bool(settings, "replay_buffer_no_space_filename");
-    auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
-    filenameFormat = filenameFormat.arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
+    filenameFormat = applyFilenameFormatArgs(filenameFormat, noSpace);
 
     obs_data_set_string(replaySettings, "directory", path);
     obs_data_set_string(replaySettings, "format", qUtf8Printable(filenameFormat));
     obs_data_set_string(replaySettings, "extension", qUtf8Printable(getFormatExt(rbFormat)));
     obs_data_set_bool(replaySettings, "allow_spaces", !noSpace);
     obs_data_set_int(replaySettings, "max_time_sec", obs_data_get_int(settings, "replay_buffer_duration"));
-    obs_data_set_int(replaySettings, "max_size_mb", 512);
+    obs_data_set_int(replaySettings, "max_size_mb", 0);
 
     // Fragmented MP4/MOV support
     bool isFragmented = strncmp(rbFormat, "fragmented", 10) == 0;
@@ -183,6 +160,39 @@ void BranchOutputFilter::createAndStartReplayBuffer(obs_data_t *settings)
     }
 }
 
+void BranchOutputFilter::stopReplayBufferOutput()
+{
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        if (replayBufferOutput) {
+            if (replayBufferActive) {
+                obs_source_t *parent = obs_filter_get_parent(filterSource);
+                if (parent) {
+                    obs_source_dec_showing(parent);
+                }
+                obs_output_stop(replayBufferOutput);
+            }
+        }
+        replayBufferSavedSignal.Disconnect();
+        replayBufferOutput = nullptr;
+
+        if (replayBufferActive) {
+            replayBufferActive = false;
+            obs_log(LOG_INFO, "%s: Stopping replay buffer succeeded", qUtf8Printable(name));
+        }
+    }
+}
+
+void BranchOutputFilter::setReplayBufferUserEnabled(bool enabled)
+{
+    bool previous = replayBufferUserEnabled.exchange(enabled, std::memory_order_relaxed);
+    if (previous != enabled) {
+        emit outputUserEnabledChanged();
+    }
+}
+
 bool BranchOutputFilter::isReplayBufferEnabled(obs_data_t *settings)
 {
     return obs_data_get_bool(settings, "replay_buffer");
@@ -214,6 +224,59 @@ void BranchOutputFilter::onReplayBufferSaved(void *data, calldata_t *)
     obs_log(LOG_INFO, "%s: Replay buffer saved", qUtf8Printable(filter->name));
 }
 
+void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd)
+{
+    auto filter = static_cast<BranchOutputFilter *>(data);
+
+    const char *format = calldata_string(cd, "format");
+
+    pthread_mutex_lock(&filter->outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&filter->outputMutex);
+
+        if (!format || !format[0]) {
+            // Empty format -> clear override (revert to filter settings)
+            filter->replayBufferFilenameFormatOverride.clear();
+            obs_log(LOG_INFO, "%s: Replay buffer filename format override cleared", qUtf8Printable(filter->name));
+        } else {
+            // Store the override for next output start
+            filter->replayBufferFilenameFormatOverride = QString(format);
+            obs_log(
+                LOG_INFO, "%s: Replay buffer filename format override stored: %s", qUtf8Printable(filter->name), format
+            );
+        }
+
+        if (filter->replayBufferActive && filter->replayBufferOutput) {
+            // Apply immediately to active replay buffer
+            OBSDataAutoRelease filterSettings = obs_source_get_settings(filter->filterSource);
+
+            // Determine the effective format
+            QString effectiveFormat;
+            if (!filter->replayBufferFilenameFormatOverride.isEmpty()) {
+                effectiveFormat = filter->replayBufferFilenameFormatOverride;
+            } else {
+                effectiveFormat = obs_data_get_string(filterSettings, "replay_buffer_filename_formatting");
+                if (effectiveFormat.isEmpty()) {
+                    auto config = obs_frontend_get_profile_config();
+                    effectiveFormat = config_get_string(config, "Output", "FilenameFormatting");
+                }
+            }
+
+            bool noSpace = obs_data_get_bool(filterSettings, "replay_buffer_no_space_filename");
+            QString appliedFormat = filter->applyFilenameFormatArgs(effectiveFormat, noSpace);
+
+            OBSDataAutoRelease settings = obs_data_create();
+            obs_data_set_string(settings, "format", qUtf8Printable(appliedFormat));
+            obs_output_update(filter->replayBufferOutput, settings);
+
+            obs_log(
+                LOG_INFO, "%s: Replay buffer filename format changed to: %s", qUtf8Printable(filter->name),
+                qUtf8Printable(appliedFormat)
+            );
+        }
+    }
+}
+
 void BranchOutputFilter::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
@@ -222,4 +285,110 @@ void BranchOutputFilter::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_
 
     auto filter = static_cast<BranchOutputFilter *>(data);
     filter->saveReplayBuffer();
+}
+
+// Internal helper: caller must hold outputMutex.
+// Caller must call ensureInfrastructure() before this function to set up
+// the view, video/audio encoders, and related infrastructure.
+bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
+{
+    if (!isReplayBufferEnabled(settings)) {
+        return false;
+    }
+    if (replayBufferActive) {
+        return true;
+    }
+
+    createAndStartReplayBuffer(settings);
+
+    return replayBufferActive;
+}
+
+bool BranchOutputFilter::startReplayBufferIndividual()
+{
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+
+    pthread_mutex_lock(&pluginMutex);
+    {
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            if (!ensureInfrastructure(settings)) {
+                return false;
+            }
+
+            bool started = createAndStartReplayBufferChecked(settings);
+            if (!started) {
+                releaseInfrastructureIfIdle();
+            }
+            return started;
+        }
+    }
+}
+
+bool BranchOutputFilter::stopReplayBufferIndividual()
+{
+    bool wasActive = false;
+
+    pthread_mutex_lock(&pluginMutex);
+    {
+        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+        pthread_mutex_lock(&outputMutex);
+        {
+            OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            // Read shared state under lock to avoid data race on non-atomic booleans.
+            wasActive = replayBufferActive;
+
+            stopReplayBufferOutput();
+            releaseInfrastructureIfIdle();
+        }
+    }
+    return wasActive;
+}
+
+bool BranchOutputFilter::onEnableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    if (!obs_source_enabled(filter->filterSource)) {
+        return false;
+    }
+
+    if (filter->isReplayBufferUserEnabled()) {
+        // Already enabled
+        return false;
+    }
+
+    filter->setReplayBufferUserEnabled(true);
+
+    return true;
+}
+
+bool BranchOutputFilter::onDisableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    auto filter = static_cast<BranchOutputFilter *>(data);
+    if (!obs_source_enabled(filter->filterSource)) {
+        return false;
+    }
+
+    if (!filter->isReplayBufferUserEnabled()) {
+        // Already disabled
+        return false;
+    }
+
+    filter->setReplayBufferUserEnabled(false);
+
+    return true;
 }

@@ -37,11 +37,14 @@ endif()
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE src/plugin-main.cpp
+          src/plugin-streaming.cpp
+          src/plugin-stream-recording.cpp
           src/plugin-replay-buffer.cpp
           src/plugin-ui.cpp
           src/utils.cpp
           src/audio/audio-capture.cpp
           src/video/filter-video-capture.cpp
+          src/video/crop-rect-preview-renderer.cpp
           src/UI/output-status-dock.cpp
           src/UI/resources.qrc)
 
