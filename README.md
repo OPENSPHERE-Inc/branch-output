@@ -39,8 +39,8 @@ More reliable and proper audio handling.
 - Video cropping with relative (margin) and absolute (region) modes, including a live preview rectangle (Since 1.0.9)
 - Frame rate divider to reduce output frame rate (1/2, 1/3, 1/4, 1/5, 1/6) (Since 1.0.9)
 - Individual start/stop control per output type via "Individual" interlock mode and per-output enable/disable checkboxes in the Status Dock (Since 1.0.9)
-- Proc handler to override recording save file name format from scripts (Since 1.0.9)
-- Proc handler to override replay buffer save file name format from scripts (Since 1.0.9)
+- Proc handler to override recording save file name format from scripts ([API reference](./API.md)) (Since 1.0.9)
+- Proc handler to override replay buffer save file name format from scripts ([API reference](./API.md)) (Since 1.0.9)
 - Various hotkeys
   - Enable/Disable the filter
   - Manual recording splitting, Pause/Unpause, Adding chapters (Since 1.0.5)
@@ -112,6 +112,14 @@ You can also create multiple scenes for streaming and layer additional sources t
 For example, you might want to display Twitch comments on Twitch and YouTube comments on YouTube.
 
 However, this method adds sources but does not reduce them.
+
+## 3. To dynamically override recording / replay buffer filenames
+
+Branch Output exposes public procedures that let external scripts override the stream recording and replay buffer save filename formats at runtime. This is useful when you want filenames to reflect the current scene, a text input value, or other external data for organized file output.
+
+Sample Python scripts (`recording-filename-from-text.py` and `replay-buffer-filename-from-text.py`) are bundled with the plugin and can be loaded from OBS Tools → Scripts.
+
+See the [API reference](./API.md) for procedure signatures, sample code, and usage instructions for the bundled scripts.
 
 # Development
 
