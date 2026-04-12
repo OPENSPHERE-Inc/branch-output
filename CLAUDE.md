@@ -29,11 +29,14 @@ branch-output/
 ├── cmake/                   # CMake helpers & platform-specific modules
 ├── build-aux/               # Auxiliary build scripts (format runners)
 ├── data/
-│   └── locale/              # Translation files (en-US, ja-JP, zh-CN, ko-KR, etc.)
+│   ├── locale/              # Translation files (en-US, ja-JP, zh-CN, ko-KR, etc.)
+│   └── scripts/             # Sample Python scripts for OBS Script (file name override, etc.)
 ├── src/
-│   ├── plugin-main.cpp      # Plugin entry point, BranchOutputFilter implementation
+│   ├── plugin-main.cpp      # Plugin entry point, BranchOutputFilter core logic
 │   ├── plugin-main.hpp      # BranchOutputFilter class declaration
-│   ├── plugin-replay-buffer.cpp  # Replay buffer output logic
+│   ├── plugin-streaming.cpp # Streaming output logic (individual start/stop, per-slot control)
+│   ├── plugin-stream-recording.cpp  # Stream recording output logic (individual start/stop)
+│   ├── plugin-replay-buffer.cpp  # Replay buffer output logic (individual start/stop)
 │   ├── plugin-ui.cpp        # OBS properties UI, filter settings UI
 │   ├── plugin-support.h     # Auto-generated plugin support header
 │   ├── plugin-support.c.in  # Template for plugin-support.c
@@ -41,7 +44,8 @@ branch-output/
 │   ├── audio/
 │   │   └── audio-capture.cpp / .hpp  # Audio capture abstraction
 │   ├── video/
-│   │   └── filter-video-capture.cpp / .hpp  # Filter input video capture (GPU texrender proxy)
+│   │   ├── filter-video-capture.cpp / .hpp  # Filter input video capture (GPU texrender proxy)
+│   │   └── crop-rect-preview-renderer.cpp / .hpp  # Crop rectangle preview overlay renderer
 │   └── UI/
 │       ├── output-status-dock.cpp / .hpp  # Status dock widget
 │       ├── resources.qrc    # Qt resource file
@@ -170,15 +174,19 @@ The main class is `BranchOutputFilter` (declared in `plugin-main.hpp`), which is
 | **Audio** | Manages up to `MAX_AUDIO_MIXES` audio contexts via `AudioCapture` class. Supports filter audio, per-source audio, and audio track selection. |
 | **Video** | Creates an OBS view (`obs_view_t`) with a private video output for per-filter encoding and resolution control. Supports **filter input mode** via `FilterVideoCapture` class, which captures the filter's input using GPU `gs_texrender` and provides a private proxy source for the `obs_view`, avoiding CPU roundtrips and enabling GPU encoder compatibility (NVENC, QSV, AMF, etc.). |
 | **UI** | Properties panel built via OBS properties API (`plugin-ui.cpp`). Status dock (`BranchOutputStatusDock`) shows live statistics for all filters, including replay buffer save buttons. |
-| **Hotkeys** | Registers hotkey pairs for enable/disable, split recording, pause/unpause, chapter markers, and save replay buffer. |
-| **Interlock** | Can link filter activation to OBS streaming, recording, virtual camera, or replay buffer states. |
+| **Hotkeys** | Registers hotkey pairs for enable/disable, split recording, pause/unpause, chapter markers, save replay buffer, and per-output enable/disable (streaming per-slot, recording, replay buffer). |
+| **Interlock** | Can link filter activation to OBS streaming, recording, virtual camera, replay buffer, or individual (per-output-type) states. The "Individual" mode maps each Branch Output type to its OBS counterpart independently. |
+| **Individual Start/Stop** | Allows streaming, recording, and replay buffer to be started/stopped independently via `ensureInfrastructure()` / `releaseInfrastructureIfIdle()` to separate shared resource lifecycle from individual output lifecycle. Per-output user intent is tracked via atomic flags (`streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`). |
+| **Cropping** | Supports relative (margin) and absolute (region) video cropping with `CropRect` struct. Live preview via `CropRectPreviewRenderer`. |
 | **Blanking** | Uses a private solid-color source to blank output when the parent source is inactive. |
 
 ### Threading Model
 
 - OBS callbacks (video render, audio filter, video tick) may run on **different threads** from the UI thread.
-- `pthread_mutex_t outputMutex` protects streaming/recording output state.
+- Three recursive mutexes (`pluginMutex`, `outputMutex`, `audioMutex`) initialized via `pthread_mutex_init_recursive()`. Lock ordering: `pluginMutex` → `outputMutex`.
+- `audioMutex` protects audio capture pointers against concurrent release in `releaseInfrastructureIfIdle()`.
 - `QMutex` protects audio buffers in `AudioCapture`.
+- Atomic fields (`std::atomic<bool>` for `outputStarting`, `streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`; `std::atomic<uint64_t>` for `reconnectAttemptingAt`) eliminate data races from OBS signal callbacks.
 - UI updates use `QMetaObject::invokeMethod` with `Qt::QueuedConnection` for thread safety.
 - Settings changes are tracked via revision counters (`storedSettingsRev` / `activeSettingsRev`) to defer restarts.
 
@@ -228,7 +236,7 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 
 ### Naming Conventions
 
-- **Classes**: PascalCase (`BranchOutputFilter`, `AudioCapture`, `FilterVideoCapture`, `OutputTableRow`)
+- **Classes**: PascalCase (`BranchOutputFilter`, `AudioCapture`, `FilterVideoCapture`, `CropRectPreviewRenderer`, `OutputCell`, `OutputTableRow`)
 - **Methods**: camelCase (`startOutput`, `stopRecordingOutput`, `onIntervalTimerTimeout`)
 - **Constants/Macros**: UPPER_SNAKE_CASE (`MAX_SERVICES`, `FILTER_ID`, `OUTPUT_MAX_RETRIES`)
 - **Member variables**: camelCase, no prefix (`filterSource`, `videoEncoder`, `recordingActive`)
@@ -264,6 +272,11 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - Verify that no memory leaks are logged on OBS shutdown.
 - Verify that mutex does not cause deadlocks.
 - Verify that blanking mode does not leak video or audio unintentionally — when the source is not visible in the main output (Program) and blanking is enabled, the Branch Output must emit a black frame (no source imagery). If audio muting is also enabled, all audio tracks (including master track) must be silenced.
+- Verify that Individual interlock mode correctly starts/stops each output type independently following its OBS counterpart.
+- Verify that per-output checkboxes in the Status Dock correctly enable/disable individual outputs in all interlock modes.
+- Verify that per-output hotkeys toggle the correct output and that the Status Dock checkboxes sync immediately.
+- Verify that video cropping (both relative and absolute modes) produces the correct output resolution and content.
+- Verify that the crop preview rectangle displays correctly and is hidden when the properties dialog closes.
 
 ---
 
@@ -306,16 +319,18 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 ### Modifying the Status Dock
 
 - `BranchOutputStatusDock` in `src/UI/` is a `QFrame`-based dock widget.
-- It uses a `QTableWidget` with custom cell classes (`OutputTableCellItem`, `LabelCell`, `FilterCell`, `ReplayBufferOutputCell`).
+- It uses a `QTableWidget` with custom cell classes (`OutputTableCellItem`, `LabelCell`, `FilterCell`, `OutputCell`).
+- `OutputCell` provides per-output enable/disable checkboxes (eye icon) and folder-open click for recording/replay buffer rows.
+- The `outputUserEnabledChanged` signal provides immediate checkbox sync when state changes from hotkeys or other sources.
 - Thread-safe updates via `QMetaObject::invokeMethod`.
 
 ### Modifying Replay Buffer
 
 - Replay buffer logic is implemented in `src/plugin-replay-buffer.cpp`.
-- `BranchOutputFilter` manages replay buffer lifecycle (`createAndStartReplayBuffer`, `stopReplayBufferOutput`, `saveReplayBuffer`).
+- `BranchOutputFilter` manages replay buffer lifecycle (`createAndStartReplayBuffer`, `stopReplayBufferOutput`, `saveReplayBuffer`), plus individual start/stop (`startReplayBufferIndividual`, `stopReplayBufferIndividual`).
 - Settings creation is handled by `createReplayBufferSettings()`.
-- The status dock includes `ReplayBufferOutputCell` with a save button and a global "Save All Replay Buffers" button.
-- Replay buffer can be linked to filter activation via `INTERLOCK_TYPE_REPLAY_BUFFER`.
+- The status dock includes a save button per replay buffer row and a global "Save All Replay Buffers" button.
+- Replay buffer can be linked to filter activation via `INTERLOCK_TYPE_REPLAY_BUFFER` or `INTERLOCK_TYPE_INDIVIDUAL`.
 
 ### Modifying Filter Video Capture
 
@@ -324,6 +339,27 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - The proxy source renders the captured texrender texture directly on the GPU, avoiding CPU roundtrips and enabling GPU encoder compatibility.
 - Lifecycle: created/destroyed in `startOutput()` / `stopOutput()` when filter input mode (`useFilterInput`) is enabled.
 - Key methods: `captureFilterInput()` (called from `video_render`), `renderTexture()` (called from proxy source's `video_render`), `drawCapturedTexture()` (passthrough to main output).
+
+### Modifying Video Cropping
+
+- Cropping is configured via settings (`crop_type`, `crop_relative_*`, `crop_absolute_*`) in `plugin-ui.cpp`.
+- `CropRect` struct (defined in `utils.hpp`) holds resolved crop parameters.
+- `calculateCrop()` in `plugin-main.cpp` resolves relative/absolute crop settings into a `CropRect`.
+- `determineOutputResolution()` accounts for cropping when computing the final output resolution.
+- `CropRectPreviewRenderer` in `src/video/` draws a live preview rectangle overlay in the filter's `video_render` callback. The preview is transient (not saved to settings) and automatically hidden when the properties dialog is closed.
+
+### Modifying Streaming
+
+- Streaming logic is implemented in `src/plugin-streaming.cpp`.
+- Supports up to `MAX_SERVICES` (8) independent streaming slots via `BranchOutputStreamingContext`.
+- Individual start/stop per slot via `startSingleStreamingIndividual()` / `stopSingleStreamingIndividual()`, and batch via `startStreamingIndividual()` / `stopStreamingIndividual()`.
+- Per-slot user intent flags (`streamingUserEnabled[]`) are atomic and persisted via `saveCallback`.
+
+### Modifying Stream Recording
+
+- Stream recording logic is implemented in `src/plugin-stream-recording.cpp`.
+- Supports individual start/stop via `startRecordingIndividual()` / `stopRecordingIndividual()`.
+- Proc handlers for file name format override are registered here (`override_recording_file_name_format`, `clear_recording_file_name_format_override`).
 
 ---
 
