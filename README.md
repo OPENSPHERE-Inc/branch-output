@@ -36,6 +36,9 @@ More reliable and proper audio handling.
 - Filter input mode to capture and output video from the filter chain (Experimental, Since 1.0.8)
 - Blanking and muting when the source is not visible in the program output (Since 1.0.8)
 - Per-profile Status Dock settings (Since 1.0.8)
+- Video cropping with relative (margin) and absolute (region) modes, including a live preview rectangle (Since 1.0.9)
+- Frame rate divider to reduce output frame rate (1/2, 1/3, 1/4, 1/5, 1/6) (Since 1.0.9)
+- Individual start/stop control per output type via "Individual" interlock mode and per-output enable/disable checkboxes in the Status Dock (Since 1.0.9)
 - Proc handler to override recording save file name format from scripts (Since 1.0.9)
 - Proc handler to override replay buffer save file name format from scripts (Since 1.0.9)
 - Various hotkeys
@@ -44,6 +47,7 @@ More reliable and proper audio handling.
   - Enable/Disable all
   - Split all recordings, Pause/Unpause all recordings, Add chapter to all reacordings (Since 1.0.5)
   - Save replay buffer, Save all replay buffers (Since 1.0.8)
+  - Per-output enable/disable for streaming (all slots / per-slot), recording, and replay buffer (Since 1.0.9)
 - Also available in Studio Mode
   - **Branch Output ignore studio mode's program out and always outputs preview's one**
 
