@@ -56,6 +56,34 @@ if bo_filter:
     obs.obs_source_release(bo_filter)
 ```
 
+**Lua sample code**
+
+```lua
+local obs = obslua
+
+-- Get the target Branch Output filter by UUID
+local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
+if bo_filter ~= nil then
+    local ph = obs.obs_source_get_proc_handler(bo_filter)
+    local cd = obs.calldata_create()
+    obs.calldata_set_string(cd, "format", "MyShow %CCYY-%MM-%DD %hh-%mm-%ss")
+    obs.proc_handler_call(ph, "override_recording_filename_format", cd)
+    obs.calldata_free(cd)
+    obs.obs_source_release(bo_filter)
+end
+
+-- Clear the override (pass an empty string)
+local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
+if bo_filter ~= nil then
+    local ph = obs.obs_source_get_proc_handler(bo_filter)
+    local cd = obs.calldata_create()
+    obs.calldata_set_string(cd, "format", "")
+    obs.proc_handler_call(ph, "override_recording_filename_format", cd)
+    obs.calldata_free(cd)
+    obs.obs_source_release(bo_filter)
+end
+```
+
 ### Overriding the Replay Buffer Save Filename Format
 
 A procedure registered on the Branch Output filter source that overrides the output filename format used when the replay buffer is saved.
@@ -94,6 +122,34 @@ if bo_filter:
     obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
     obs.calldata_free(cd)
     obs.obs_source_release(bo_filter)
+```
+
+**Lua sample code**
+
+```lua
+local obs = obslua
+
+-- Get the target Branch Output filter by UUID
+local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
+if bo_filter ~= nil then
+    local ph = obs.obs_source_get_proc_handler(bo_filter)
+    local cd = obs.calldata_create()
+    obs.calldata_set_string(cd, "format", "Replay %CCYY-%MM-%DD %hh-%mm-%ss")
+    obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
+    obs.calldata_free(cd)
+    obs.obs_source_release(bo_filter)
+end
+
+-- Clear the override (pass an empty string)
+local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
+if bo_filter ~= nil then
+    local ph = obs.obs_source_get_proc_handler(bo_filter)
+    local cd = obs.calldata_create()
+    obs.calldata_set_string(cd, "format", "")
+    obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
+    obs.calldata_free(cd)
+    obs.obs_source_release(bo_filter)
+end
 ```
 
 ### Retrieving the Branch Output Filter List
@@ -159,6 +215,44 @@ def get_branch_output_filters():
 
     obs.calldata_free(cd)
     return filters
+```
+
+**Lua sample code**
+
+Since Lua does not have a built-in JSON parser, we use OBS's `obs_data_create_from_json()` to parse the returned JSON string.
+
+```lua
+local obs = obslua
+
+function get_branch_output_filters()
+    local filters = {}
+    local ph = obs.obs_get_proc_handler()
+    local cd = obs.calldata_create()
+
+    if obs.proc_handler_call(ph, "osi_branch_output_get_filter_list", cd) then
+        local json_str = obs.calldata_string(cd, "json")
+        if json_str and json_str ~= "" then
+            local data = obs.obs_data_create_from_json(json_str)
+            local array = obs.obs_data_get_array(data, "filters")
+            local count = obs.obs_data_array_count(array)
+            for i = 0, count - 1 do
+                local item = obs.obs_data_array_item(array, i)
+                table.insert(filters, {
+                    source_name = obs.obs_data_get_string(item, "source_name"),
+                    source_uuid = obs.obs_data_get_string(item, "source_uuid"),
+                    filter_name = obs.obs_data_get_string(item, "filter_name"),
+                    filter_uuid = obs.obs_data_get_string(item, "filter_uuid"),
+                })
+                obs.obs_data_release(item)
+            end
+            obs.obs_data_array_release(array)
+            obs.obs_data_release(data)
+        end
+    end
+
+    obs.calldata_free(cd)
+    return filters
+end
 ```
 
 ### Using the Sample Scripts
