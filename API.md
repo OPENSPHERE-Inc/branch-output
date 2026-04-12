@@ -16,7 +16,7 @@ This feature was implemented in response to production requirements where record
 
 All procedures in this API follow these threading rules:
 
-- **Thread safety**: The override procedures may be called from any thread. They briefly acquire the filter's internal `outputMutex` and return quickly.
+- **Thread safety**: The override procedures may be called from any thread. Internally they acquire the filter's `outputMutex` and, depending on the current recording state, may call `obs_output_update()` (when file splitting is enabled) or defer work to the next interval-timer tick (which performs a recording restart). The call is therefore not guaranteed to be constant-time — avoid calling it on latency-sensitive hot paths.
 - **Callback safety**: Calling these procedures from OBS signal callbacks or frontend event callbacks is **discouraged** — if the calling thread already holds (or may indirectly acquire) the filter's `outputMutex`, a deadlock is possible. Prefer calling them from script timer callbacks or UI event handlers instead.
 - **Deferred application during pending states**: When recording is in `recordingPending` or a split/restart is in progress, the override is stored and applied on the next interval tick (via the internal 1-second `intervalTimer`) rather than taking effect synchronously. The proc call still returns immediately; there is no indication when the new filename format becomes active.
 
@@ -190,6 +190,7 @@ A global procedure that returns the list of Branch Output filters currently load
 - The procedure is registered during `obs_module_post_load()`. Calling it before this point (e.g., during early OBS Studio module load) returns an empty list.
 - Filters applied to **private sources** (sources not visible in the OBS frontend) are intentionally excluded from the returned list, matching the Status Dock's visibility rules.
 - The returned list is a snapshot taken at call time. Callers that need to react to filter additions/removals should poll periodically or refresh on demand.
+- **Thread safety**: This procedure may be called from any thread. Internally, the implementation reads the Status Dock's filter table, which must be accessed from the Qt UI thread. When called from a non-UI thread (e.g., an obs-websocket worker), the read is dispatched to the UI thread via a blocking queued connection. When called from the UI thread itself (e.g., a frontend plugin or a hotkey handler), the read is performed directly to avoid self-deadlock. Callers do not need to worry about the distinction.
 
 **Returned JSON structure**
 

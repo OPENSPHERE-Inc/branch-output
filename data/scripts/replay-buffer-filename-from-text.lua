@@ -123,7 +123,12 @@ local function sanitize_filename(text)
     local trimmed = cleaned:match("^%s*(.-)%s*$") or ""
     local sanitized = trimmed:gsub('[<>:"|?*/\\]', "-")
     sanitized = sanitized:gsub("[%.%s]+$", "")
-    if WINDOWS_RESERVED[sanitized:upper()] then
+    -- Windows treats reserved device names as reserved even when followed by
+    -- an extension (e.g. "CON.txt"). Since this prefix will have the base
+    -- format appended after a dot+space, check the portion before the first
+    -- dot as well.
+    local base_before_dot = sanitized:match("^([^%.]*)") or sanitized
+    if WINDOWS_RESERVED[sanitized:upper()] or WINDOWS_RESERVED[base_before_dot:upper()] then
         sanitized = "_" .. sanitized
     end
     return sanitized
@@ -139,6 +144,8 @@ local function read_text_from_source(text_source)
     if read_from_file then
         local file_path = obs.obs_data_get_string(settings, "file")
         if file_path == "" then
+            obs.script_log(obs.LOG_WARNING,
+                "Text source is set to 'read from file' but no file path is configured; clearing override")
             ok = false
         else
             -- Open in binary mode so BOM bytes are not translated.
@@ -267,6 +274,10 @@ clear_override = function()
     -- Sets override_cleared = true to suppress redundant proc calls on
     -- subsequent timer ticks until a new format is applied or the
     -- selection changes.
+    -- Also reset last_text so that if the text source reappears later
+    -- with the same content as before, the override is re-applied.
+    last_text = nil
+
     if selected_filter == "" then
         override_cleared = true
         return

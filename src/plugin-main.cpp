@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 
 #include <QRegularExpression>
+#include <QThread>
 
 #include "audio/audio-capture.hpp"
 #include "video/filter-video-capture.hpp"
@@ -1854,7 +1855,25 @@ static void onGetFilterList(void *, calldata_t *cd)
     OBSDataArrayAutoRelease array = obs_data_array_create();
 
     if (statusDock) {
-        for (const auto &info : statusDock->getFilterList()) {
+        // BranchOutputStatusDock is a QFrame subclass and, like any QWidget, must be
+        // accessed only from the UI (Qt) thread. Dispatch the read to the UI thread so
+        // this proc handler is safe to call from any thread, as documented in API.md.
+        //
+        // Qt::BlockingQueuedConnection deadlocks (or asserts) when the caller already
+        // lives on the target object's thread, so detect that case and call directly.
+        // This keeps the proc usable from both background threads (e.g. obs-websocket
+        // worker threads) and the UI thread itself (e.g. frontend plugins / hotkeys).
+        QList<BranchOutputFilterInfo> filterList;
+        if (QThread::currentThread() == statusDock->thread()) {
+            filterList = statusDock->getFilterList();
+        } else {
+            QMetaObject::invokeMethod(
+                statusDock, "getFilterList", Qt::BlockingQueuedConnection,
+                Q_RETURN_ARG(QList<BranchOutputFilterInfo>, filterList)
+            );
+        }
+
+        for (const auto &info : filterList) {
             OBSDataAutoRelease entry = obs_data_create();
             obs_data_set_string(entry, "source_name", qUtf8Printable(info.sourceName));
             obs_data_set_string(entry, "source_uuid", qUtf8Printable(info.sourceUuid));
@@ -1866,12 +1885,20 @@ static void onGetFilterList(void *, calldata_t *cd)
 
     obs_data_set_array(wrapper, "filters", array);
 
-    calldata_set_string(cd, "json", obs_data_get_json(wrapper));
+    // obs_data_get_json() returns a pointer into an internal buffer owned by
+    // `wrapper`, which remains alive for the rest of this scope. calldata_set_string()
+    // copies the string into the calldata, so the pointer's lifetime is sufficient.
+    // Defensive NULL fallback: obs_data_get_json should not return NULL in practice,
+    // but guarantee callers always see a valid (non-NULL) value.
+    const char *json = obs_data_get_json(wrapper);
+    calldata_set_string(cd, "json", json ? json : "");
 }
 
 void obs_module_post_load()
 {
     qRegisterMetaType<BranchOutputFilter *>();
+    qRegisterMetaType<BranchOutputFilterInfo>();
+    qRegisterMetaType<QList<BranchOutputFilterInfo>>();
 
     statusDock = BranchOutputFilter::createOutputStatusDock();
 
@@ -1882,9 +1909,13 @@ void obs_module_post_load()
 
 void obs_module_unload()
 {
-    // Remove and destroy status dock to avoid leaks (hotkeys, timers, widgets)
+    // Remove and destroy status dock to avoid leaks (hotkeys, timers, widgets).
+    // Null out the pointer immediately so that any residual proc handler invocation
+    // (libobs has no proc_handler_remove) observes the dock as gone and returns an
+    // empty result instead of dereferencing a dangling QObject pointer.
     if (statusDock) {
         obs_frontend_remove_dock("BranchOutputStatusDock");
+        statusDock = nullptr;
     }
 
     pthread_mutex_destroy(&pluginMutex);

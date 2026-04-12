@@ -106,8 +106,11 @@ def sanitize_filename(text):
         sanitized = sanitized.replace(ch, '-')
     # Strip trailing dots/spaces
     sanitized = sanitized.rstrip(". ")
-    # Prefix underscore for Windows reserved names
-    if sanitized.upper() in WINDOWS_RESERVED:
+    # Prefix underscore for Windows reserved names. Windows treats reserved
+    # device names as reserved even when followed by an extension
+    # (e.g. "CON.txt"), so also check the portion before the first dot.
+    base_before_dot = sanitized.split(".", 1)[0]
+    if sanitized.upper() in WINDOWS_RESERVED or base_before_dot.upper() in WINDOWS_RESERVED:
         sanitized = "_" + sanitized
     return sanitized
 
@@ -126,6 +129,8 @@ def read_text_from_source(text_source):
         if read_from_file:
             file_path = obs.obs_data_get_string(settings, "file")
             if not file_path:
+                obs.script_log(obs.LOG_WARNING,
+                               "Text source is set to 'read from file' but no file path is configured; clearing override")
                 ok = False
             else:
                 try:
@@ -340,9 +345,13 @@ def clear_override():
 
     Sets override_cleared = True to suppress redundant proc calls on
     subsequent timer ticks until a new format is applied or the
-    selection changes.
+    selection changes. Also reset last_text so that if the text source
+    reappears later with the same content as before, the override is
+    re-applied.
     """
-    global override_cleared
+    global override_cleared, last_text
+
+    last_text = None
 
     if not selected_filter:
         override_cleared = True

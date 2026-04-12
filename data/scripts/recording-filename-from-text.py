@@ -107,8 +107,11 @@ def sanitize_filename(text):
         sanitized = sanitized.replace(ch, '-')
     # Strip trailing dots/spaces
     sanitized = sanitized.rstrip(". ")
-    # Prefix underscore for Windows reserved names
-    if sanitized.upper() in WINDOWS_RESERVED:
+    # Prefix underscore for Windows reserved names. Windows treats reserved
+    # device names as reserved even when followed by an extension
+    # (e.g. "CON.txt"), so also check the portion before the first dot.
+    base_before_dot = sanitized.split(".", 1)[0]
+    if sanitized.upper() in WINDOWS_RESERVED or base_before_dot.upper() in WINDOWS_RESERVED:
         sanitized = "_" + sanitized
     return sanitized
 
@@ -127,6 +130,8 @@ def read_text_from_source(text_source):
         if read_from_file:
             file_path = obs.obs_data_get_string(settings, "file")
             if not file_path:
+                obs.script_log(obs.LOG_WARNING,
+                               "Text source is set to 'read from file' but no file path is configured; clearing override")
                 ok = False
             else:
                 try:
@@ -356,9 +361,23 @@ def clear_override():
 
     Sets override_cleared = True to suppress redundant proc calls on
     subsequent timer ticks until a new format is applied or the
-    selection changes.
+    selection changes. Also reset the cached text state so that if the
+    text source reappears later with the same content as before, the
+    override is re-applied rather than being suppressed by the early-
+    return "same text" check in update_recording_format().
+
+    Note: resetting last_applied_time to 0.0 intentionally bypasses the
+    THROTTLE_SECONDS window on the next successful apply. This is the
+    desired behavior so that a source that disappears and returns can
+    re-apply its override immediately rather than waiting out the
+    throttle. If the text source flaps rapidly, the throttle will not
+    suppress those transitions.
     """
-    global override_cleared
+    global override_cleared, last_text, last_applied_text, last_applied_time
+
+    last_text = None
+    last_applied_text = None
+    last_applied_time = 0.0
 
     if not selected_filter:
         override_cleared = True
