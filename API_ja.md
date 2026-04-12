@@ -12,6 +12,27 @@
 
 この機能は、たとえば現在のシーンやテキストインプットの値、その他の外部データによってファイル名をオーバーライドすることで、録画ファイルを整理した状態で保存したいというプロダクションの要請で実装されました。
 
+### スレッド・呼び出しコンテキスト
+
+本 API のすべてのプロシージャは以下のスレッドルールに従います。
+
+- **スレッド安全性**: オーバーライドプロシージャは任意のスレッドから呼び出し可能です。内部的にフィルターの `outputMutex` を短時間取得してすぐに返却します。
+- **コールバックからの呼び出し**: OBS のシグナルコールバック・フロントエンドイベントコールバック内からの呼び出しは **非推奨** です。呼び出し側スレッドが既に（あるいは間接的に）フィルターの `outputMutex` を保持している場合、デッドロックの可能性があります。スクリプトのタイマーコールバックや UI イベントハンドラからの呼び出しを推奨します。
+- **pending 状態中の遅延反映**: 録画が `recordingPending` 状態、またはスプリット／リスタート処理中の場合、オーバーライドは保存され、内部の 1秒間隔タイマー（`intervalTimer`）経由で次のティックで反映されます。プロシージャ呼び出し自体は即座に返却しますが、新しいファイル名フォーマットがいつ有効になったかを示す通知はありません。
+
+### フィルターソースの取得方法
+
+フィルターごとのオーバーライドプロシージャ（`override_recording_filename_format`, `override_replay_buffer_filename_format`）は、**個々の Branch Output フィルターソース**に登録されています — 親ソース・シーンではありません。呼び出すには親ソースではなくフィルターソース自体への参照が必要です。
+
+典型的な取得フローは以下のとおりです。
+
+1. グローバルプロシージャ `osi_branch_output_get_filter_list` を呼び出して、現在ロードされているすべての Branch Output フィルターの UUID を取得
+2. `obs_get_source_by_uuid(filter_uuid)` でフィルターソースへの参照を取得
+3. `obs_source_get_proc_handler(filter_source)` でプロシージャハンドラを取得
+4. 使用後は必ず `obs_source_release()` でソースを解放
+
+または、親ソースへの参照が既にある場合は `obs_source_get_filter_by_name(parent, filter_name)` を使用することもできます。
+
 ### ストリーム録画ファイル名フォーマットのオーバーライド
 
 Branch Output フィルターソースに登録されたプロシージャで、ストリーム録画の出力ファイル名フォーマットを実行時にオーバーライドします。
@@ -164,6 +185,12 @@ OBS にロードされている Branch Output フィルターの一覧を取得�
 | パラメータ | `json` (out string) — Branch Output フィルター一覧を表す JSON 文字列 |
 | 戻り値 | なし |
 
+**注意事項**
+
+- このプロシージャは `obs_module_post_load()` で登録されます。それ以前（OBS Studio モジュールロード初期段階など）に呼び出すと空のリストが返ります。
+- **プライベートソース**（OBS フロントエンドに表示されないソース）に適用されたフィルターは、ステータスドックの表示ルールと整合させるため意図的に結果から除外されます。
+- 返されるリストは呼び出し時点でのスナップショットです。フィルターの追加・削除に反応する必要がある場合は、定期的にポーリングするか、必要に応じてリフレッシュしてください。
+
 **返される JSON の構造**
 
 ```json
@@ -257,22 +284,26 @@ end
 
 ### サンプルスクリプトの使い方
 
-サンプルスクリプトは Python で書かれていますので、使用する前に OBS メニューの Tools → Scripts で Python Settings が正しく設定されているか確認してください。
+各サンプルスクリプトは **Python**（`.py`）版と **Lua**（`.lua`）版の 2 種類がプラグインに同梱されています。両者は同じ機能を実装しているため、お好みの言語を選択してください。
 
-#### recording-filename-from-text.py
+- Python スクリプトを使用する場合は、OBS メニューの **Tools → Scripts** で Python Settings が正しく設定されている必要があります。
+- Lua スクリプトは追加設定不要です — Lua サポートは OBS に組み込まれています。
+
+Windows の場合、スクリプトは OBS インストールパスの `data\obs-plugins\osi-branch-output\scripts\` にインストールされます。macOS および Linux では、標準的な OBS プラグインデータディレクトリ規則に従います。
+
+#### recording-filename-from-text.py / recording-filename-from-text.lua
 
 テキストインプットの値を読み取って、ストリーム録画ファイル名フォーマットに反映するスクリプトです。
 
 1. OBS のメニューから Tools → Scripts を開く
 2. Scripts ダイアログ下部のプラスボタンをクリック
-3. スクリプトファイルを選択。
-   通常、OBSインストールパスの `data\obs-plugins\osi-branch-output/scripts/recording-filename-from-text.py` にインストールされています（Windowsの場合）
+3. スクリプトファイルを選択（`.py` または `.lua` のどちらか）
 4. Loaded Scripts でスクリプトを選択すると、Description で各種設定が行えます。
    - **Text Source** - テキストインプットを選択
    - **Branch Output Filter** - オーバーライドする Branch Output フィルターを選択
    - **Base Filename Format** - ベースとなるファイル名フォーマットを指定。これらのフォーマットはファイル名の末尾に付与されます。
 5. 設定を行った時点でオーバーライドが有効です。Script Log をクリックするとスクリプトの動作状況を確認できます。
-   例： `[recording-filename-from-text.py] Recording filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
+   例： `[recording-filename-from-text.lua] Recording filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
 6. オーバーライド有効の状態で録画するとファイル名はオーバーライドされたものが優先使用されます。
 7. オーバーライドを無効化したい場合はスクリプトをゴミ箱ボタンで Loaded Scripts から削除してください。
 
@@ -284,20 +315,19 @@ end
 
 **注意:** オーバーライドが有効な状態で、フィルタープロパティ設定のファイル名は使用されません。
 
-#### replay-buffer-filename-from-text.py
+#### replay-buffer-filename-from-text.py / replay-buffer-filename-from-text.lua
 
 テキストインプットの値を読み取って、リプレイバッファー保存ファイル名フォーマットに反映するスクリプトです。
 
 1. OBS のメニューから Tools → Scripts を開く
 2. Scripts ダイアログ下部のプラスボタンをクリック
-3. スクリプトファイルを選択。
-   通常、OBSインストールパスの `data\obs-plugins\osi-branch-output/scripts/replay-buffer-filename-from-text.py` にインストールされています（Windowsの場合）
+3. スクリプトファイルを選択（`.py` または `.lua` のどちらか）
 4. Loaded Scripts でスクリプトを選択すると、Description で各種設定が行えます。
    - **Text Source** - テキストインプットを選択
    - **Branch Output Filter** - オーバーライドする Branch Output フィルターを選択
    - **Base Filename Format** - ベースとなるファイル名フォーマットを指定。これらのフォーマットはファイル名の末尾に付与されます。
 5. 設定を行った時点でオーバーライドが有効です。Script Log をクリックするとスクリプトの動作状況を確認できます。
-   例： `[replay-buffer-filename-from-text.py] Replay buffer filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
+   例： `[replay-buffer-filename-from-text.lua] Replay buffer filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
 6. オーバーライド有効の状態で保存するとファイル名はオーバーライドされたものが優先使用されます。
 7. オーバーライドを無効化したい場合はスクリプトをゴミ箱ボタンで Loaded Scripts から削除してください。
 

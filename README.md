@@ -117,7 +117,7 @@ However, this method adds sources but does not reduce them.
 
 Branch Output exposes public procedures that let external scripts override the stream recording and replay buffer save filename formats at runtime. This is useful when you want filenames to reflect the current scene, a text input value, or other external data for organized file output.
 
-Sample Python scripts (`recording-filename-from-text.py` and `replay-buffer-filename-from-text.py`) are bundled with the plugin and can be loaded from OBS Tools → Scripts.
+Sample scripts (`recording-filename-from-text` and `replay-buffer-filename-from-text`) are bundled with the plugin in both **Python** (`.py`) and **Lua** (`.lua`) variants, and can be loaded from OBS Tools → Scripts.
 
 See the [API reference](./API.md) for procedure signatures, sample code, and usage instructions for the bundled scripts.
 
