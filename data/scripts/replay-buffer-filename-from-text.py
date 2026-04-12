@@ -277,6 +277,11 @@ def script_properties():
     if sources:
         for source in sources:
             source_id = obs.obs_source_get_unversioned_id(source)
+            # text_gdiplus_v3 / text_ft2_source_v2 are listed as a forward-
+            # compatibility reserve; OBS 30.1.x currently only ships up to
+            # text_gdiplus_v2 and text_ft2_source_v2. Kept as an explicit
+            # allowlist (rather than a startswith("text_") match) so that new
+            # unrelated source types cannot be picked up accidentally.
             if source_id in ("text_gdiplus", "text_gdiplus_v2", "text_gdiplus_v3",
                              "text_ft2_source", "text_ft2_source_v2"):
                 name = obs.obs_source_get_name(source)
