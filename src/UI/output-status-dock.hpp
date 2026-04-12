@@ -53,6 +53,11 @@ struct BranchOutputFilterInfo {
     QString filterName;
     QString filterUuid;
 };
+Q_DECLARE_METATYPE(BranchOutputFilterInfo)
+// NOTE: Qt 6 automatically provides metatype support for QList<T> when T itself
+// has been declared via Q_DECLARE_METATYPE, so declaring QList<BranchOutputFilterInfo>
+// explicitly is redundant. qRegisterMetaType<QList<BranchOutputFilterInfo>>() in
+// obs_module_post_load() is sufficient for QMetaObject::invokeMethod / Q_RETURN_ARG.
 
 class OutputTableCellItem : public QTableWidgetItem {
     enum ItemRole {
@@ -297,7 +302,7 @@ public slots:
     void sort();
 
     inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
-    QList<BranchOutputFilterInfo> getFilterList() const;
+    Q_INVOKABLE QList<BranchOutputFilterInfo> getFilterList() const;
 };
 
 class OutputTableRow : public QObject {
