@@ -10,8 +10,15 @@ The filter's own property settings are NOT modified.
 When this script is unloaded, the override is cleared and
 the filter reverts to its original filename format setting.
 
+Note on throttling:
+  Unlike the recording variant, this script does NOT throttle updates.
+  Replay buffer saves are on-demand (triggered by user), so the override
+  only takes effect at the next save operation. Applying an override more
+  frequently has no cost beyond a cheap proc call, so throttling would
+  only add latency without benefit.
+
 Requirements:
-  - Branch Output plugin v1.1.0+ (with override_replay_buffer_filename_format proc)
+  - Branch Output plugin v1.0.9+ (with override_replay_buffer_filename_format proc)
   - A Text (GDI+) source whose "text" property will be used as the filename prefix
 
 Usage:
@@ -24,11 +31,25 @@ Usage:
 import json
 import obspython as obs
 
+# Proc and filter constants
+OVERRIDE_PROC = "override_replay_buffer_filename_format"
+BRANCH_OUTPUT_FILTER_ID = "osi_branch_output"
+LOG_LABEL = "Replay buffer filename format"
+MAX_READ_SIZE = 4096  # 4 KB read limit to prevent performance issues on large files
+
+# Windows reserved device names (case-insensitive).
+WINDOWS_RESERVED = {
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+}
+
 # Script settings
 text_source_uuid = ""
 selected_filter = ""  # "source_uuid::filter_uuid" format
 base_format = "%CCYY-%MM-%DD %hh-%mm-%ss"
 last_text = None
+override_cleared = False
 
 
 def get_branch_output_filters():
@@ -64,76 +85,159 @@ def parse_selected_filter(value):
     return "", ""
 
 
+def sanitize_filename(text):
+    """Produce a filesystem-safe prefix.
+
+    1. Replace all control characters (incl. CR/LF/TAB) with a single space
+    2. Collapse runs of whitespace to a single space and trim
+    3. Replace filesystem-unsafe characters with "-"
+    4. Strip trailing dots/spaces (Windows disallows these at end of filename)
+    5. Prefix an underscore if the result collides with a Windows reserved name
+    """
+    if text is None:
+        return ""
+    # Replace control characters with a space
+    cleaned = "".join(ch if ch.isprintable() or ch == " " else " " for ch in text)
+    # Collapse runs of whitespace and trim
+    trimmed = " ".join(cleaned.split())
+    # Replace filesystem-unsafe characters
+    sanitized = trimmed
+    for ch in ('<', '>', ':', '"', '|', '?', '*', '/', '\\'):
+        sanitized = sanitized.replace(ch, '-')
+    # Strip trailing dots/spaces
+    sanitized = sanitized.rstrip(". ")
+    # Prefix underscore for Windows reserved names
+    if sanitized.upper() in WINDOWS_RESERVED:
+        sanitized = "_" + sanitized
+    return sanitized
+
+
+def read_text_from_source(text_source):
+    """Read text from a Text (GDI+) source.
+
+    Returns (text, ok). ok = False means the caller should clear the override.
+    """
+    settings = obs.obs_source_get_settings(text_source)
+    result_text = None
+    ok = True
+
+    try:
+        read_from_file = obs.obs_data_get_bool(settings, "read_from_file")
+        if read_from_file:
+            file_path = obs.obs_data_get_string(settings, "file")
+            if not file_path:
+                ok = False
+            else:
+                try:
+                    # Open in binary mode so BOM bytes are not translated.
+                    # Limit read size to prevent performance issues on accidental large-file selection.
+                    with open(file_path, "rb") as f:
+                        data = f.read(MAX_READ_SIZE)
+                    # UTF-8 BOM: strip it.
+                    if data[:3] == b"\xef\xbb\xbf":
+                        data = data[3:]
+                    # UTF-16 LE/BE BOM: not supported by this sample; warn and clear.
+                    elif data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+                        obs.script_log(obs.LOG_WARNING,
+                                       "UTF-16 text files are not supported; please save the text file as UTF-8")
+                        ok = False
+                    if ok:
+                        try:
+                            result_text = data.decode("utf-8")
+                        except UnicodeDecodeError as e:
+                            obs.script_log(obs.LOG_WARNING, f"Failed to decode text file as UTF-8: {e}")
+                            ok = False
+                except OSError as e:
+                    obs.script_log(obs.LOG_WARNING, f"Failed to read text file: {e}")
+                    ok = False
+        else:
+            result_text = obs.obs_data_get_string(settings, "text")
+    finally:
+        obs.obs_data_release(settings)
+
+    return result_text, ok
+
+
+def call_override_proc(filter_uuid, format_value):
+    """Call the override proc on the specified Branch Output filter.
+
+    Verifies that the target is actually a Branch Output filter and logs proc result.
+    Returns True on success, False otherwise.
+    """
+    if not filter_uuid:
+        return False
+
+    bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
+    if not bo_filter:
+        obs.script_log(obs.LOG_WARNING, f"Filter (uuid: {filter_uuid}) not found")
+        return False
+
+    try:
+        filter_id = obs.obs_source_get_id(bo_filter)
+        if filter_id != BRANCH_OUTPUT_FILTER_ID:
+            obs.script_log(obs.LOG_WARNING,
+                           f"Source (uuid: {filter_uuid}) is not a Branch Output filter (id: {filter_id})")
+            return False
+
+        ph = obs.obs_source_get_proc_handler(bo_filter)
+        cd = obs.calldata_create()
+        obs.calldata_set_string(cd, "format", format_value)
+        result = obs.proc_handler_call(ph, OVERRIDE_PROC, cd)
+        obs.calldata_free(cd)
+
+        if not result:
+            obs.script_log(obs.LOG_WARNING,
+                           f"proc_handler_call for {OVERRIDE_PROC} failed — is the Branch Output plugin up to date?")
+            return False
+        return True
+    finally:
+        obs.obs_source_release(bo_filter)
+
+
 def update_replay_buffer_format():
     """Read text source and update Branch Output replay buffer filename format."""
-    global last_text
+    global last_text, override_cleared
 
     if not text_source_uuid or not selected_filter:
         return
 
-    source_uuid, filter_uuid = parse_selected_filter(selected_filter)
-    if not source_uuid or not filter_uuid:
+    _, filter_uuid = parse_selected_filter(selected_filter)
+    if not filter_uuid:
         return
 
-    # Get the Branch Output filter by UUID first
-    bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-    if not bo_filter:
-        obs.script_log(obs.LOG_WARNING, f"Filter (uuid: {filter_uuid}) not found")
+    # Get text from the text source
+    text_source = obs.obs_get_source_by_uuid(text_source_uuid)
+    if not text_source:
+        # Text source not available: clear override (only once per state change)
+        if not override_cleared:
+            clear_override()
         return
 
     try:
-        # Get text from the text source
-        text_source = obs.obs_get_source_by_uuid(text_source_uuid)
-        if not text_source:
-            clear_override()
-            return
-
-        settings = obs.obs_source_get_settings(text_source)
-        try:
-            read_from_file = obs.obs_data_get_bool(settings, "read_from_file")
-            if read_from_file:
-                file_path = obs.obs_data_get_string(settings, "file")
-                if not file_path:
-                    clear_override()
-                    return
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        current_text = f.read()
-                except (OSError, UnicodeDecodeError) as e:
-                    obs.script_log(obs.LOG_WARNING, f"Failed to read text file: {e}")
-                    clear_override()
-                    return
-            else:
-                current_text = obs.obs_data_get_string(settings, "text")
-        finally:
-            obs.obs_data_release(settings)
-            obs.obs_source_release(text_source)
-
-        # Skip if text hasn't changed
-        if current_text == last_text:
-            return
-        last_text = current_text
-
-        # Sanitize the text for use in filenames
-        sanitized = current_text.strip()
-        for ch in ['<', '>', ':', '"', '|', '?', '*', '/', '\\']:
-            sanitized = sanitized.replace(ch, '-')
-
-        # Build the new format string
-        if sanitized:
-            new_format = f"{sanitized} {base_format}"
-        else:
-            new_format = base_format
-
-        ph = obs.obs_source_get_proc_handler(bo_filter)
-        cd = obs.calldata_create()
-        obs.calldata_set_string(cd, "format", new_format)
-        obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
-        obs.calldata_free(cd)
-
-        obs.script_log(obs.LOG_INFO, f"Replay buffer filename format updated: {new_format}")
+        current_text, ok = read_text_from_source(text_source)
     finally:
-        obs.obs_source_release(bo_filter)
+        obs.obs_source_release(text_source)
+
+    if not ok or current_text is None:
+        if not override_cleared:
+            clear_override()
+        return
+
+    # Skip if text hasn't changed
+    if current_text == last_text:
+        return
+    last_text = current_text
+
+    # Build the new format string
+    sanitized = sanitize_filename(current_text)
+    if sanitized:
+        new_format = f"{sanitized} {base_format}"
+    else:
+        new_format = base_format
+
+    if call_override_proc(filter_uuid, new_format):
+        override_cleared = False
+        obs.script_log(obs.LOG_INFO, f"{LOG_LABEL} updated: {new_format}")
 
 
 def timer_callback():
@@ -200,42 +304,58 @@ def script_defaults(settings):
 
 
 def script_update(settings):
-    global text_source_uuid, selected_filter, base_format, last_text
+    global text_source_uuid, selected_filter, base_format, last_text, override_cleared
+
+    # Remember the previously selected filter so we can clear its override
+    # if the user changed the selection.
+    _, old_filter_uuid = parse_selected_filter(selected_filter)
 
     text_source_uuid = obs.obs_data_get_string(settings, "text_source")
     selected_filter = obs.obs_data_get_string(settings, "selected_filter")
     base_format = obs.obs_data_get_string(settings, "base_format")
 
-    # Reset last_text to force update on next tick
+    _, new_filter_uuid = parse_selected_filter(selected_filter)
+    if old_filter_uuid and old_filter_uuid != new_filter_uuid:
+        # Clear override on the previously selected filter so it does not
+        # remain overridden after the user switched to a different filter.
+        if call_override_proc(old_filter_uuid, ""):
+            obs.script_log(obs.LOG_INFO,
+                           f"{LOG_LABEL} override cleared on previous filter (uuid: {old_filter_uuid})")
+
+    # Reset state to force update on next tick
     last_text = None
+    override_cleared = False
 
 
 def script_load(settings):
+    # Defensive timer_remove in case of script reload.
+    obs.timer_remove(timer_callback)
+    # script_update(settings) is called automatically by OBS after
+    # script_load, so we don't need to invoke it explicitly here.
     obs.timer_add(timer_callback, 1000)
 
 
 def clear_override():
-    """Clear the filename format override by sending empty string."""
+    """Clear the filename format override by sending empty string.
+
+    Sets override_cleared = True to suppress redundant proc calls on
+    subsequent timer ticks until a new format is applied or the
+    selection changes.
+    """
+    global override_cleared
+
     if not selected_filter:
+        override_cleared = True
         return
 
-    source_uuid, filter_uuid = parse_selected_filter(selected_filter)
+    _, filter_uuid = parse_selected_filter(selected_filter)
     if not filter_uuid:
+        override_cleared = True
         return
 
-    bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-    if not bo_filter:
-        return
-
-    ph = obs.obs_source_get_proc_handler(bo_filter)
-    cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "")
-    obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
-    obs.calldata_free(cd)
-
-    obs.obs_source_release(bo_filter)
-
-    obs.script_log(obs.LOG_INFO, "Replay buffer filename format override cleared")
+    if call_override_proc(filter_uuid, ""):
+        obs.script_log(obs.LOG_INFO, f"{LOG_LABEL} override cleared")
+    override_cleared = True
 
 
 def script_unload():
