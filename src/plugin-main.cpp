@@ -24,6 +24,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include <obs.hpp>
 
+#include <atomic>
+
 #include <QRegularExpression>
 #include <QThread>
 
@@ -41,7 +43,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-BranchOutputStatusDock *statusDock = nullptr;
+// Use std::atomic for the status dock pointer so that:
+//   * obs_module_unload() can publish the nullptr store before (or after, with
+//     acquire/release semantics) obs_frontend_remove_dock() destroys the widget
+//   * asynchronous proc-handler callers (e.g. onGetFilterList invoked from
+//     obs-websocket worker threads) can safely load the pointer without a
+//     data race, even on weakly-ordered architectures such as ARM64.
+// Loads/stores default to sequential consistency which is fine for the low
+// call frequency at plugin load/unload.
+std::atomic<BranchOutputStatusDock *> statusDock{nullptr};
 pthread_mutex_t pluginMutex;
 
 //--- BranchOutputFilter class ---//
@@ -133,7 +143,21 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     initialized = isStreamingGroupEnabled(settings) || obs_data_get_bool(settings, "stream_recording") ||
                   obs_data_get_bool(settings, "replay_buffer");
 
-    // Register proc handlers for external script access
+    // Register proc handlers for external script access.
+    //
+    // Lifetime note: libobs does not expose proc_handler_remove(), so these
+    // handlers remain registered on filterSource for as long as filterSource
+    // itself is alive. That is intentionally safe here because the proc
+    // handler is owned by filterSource and is destroyed together with it:
+    // OBS tears down a filter by first severing it from its parent (so no
+    // new proc calls can arrive from script threads via
+    // obs_get_source_by_uuid -> obs_source_get_proc_handler), then calling
+    // the filter's destroy callback (which deletes this BranchOutputFilter),
+    // and only after that freeing the source's proc_handler_t. The `this`
+    // pointer captured above therefore remains valid for the full window in
+    // which a call can actually dispatch. If libobs ever adds a
+    // proc_handler_remove() API, pair the removal with ~BranchOutputFilter()
+    // to close the theoretical race window explicitly.
     proc_handler_t *ph = obs_source_get_proc_handler(filterSource);
     proc_handler_add(
         ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat, this
@@ -1005,7 +1029,8 @@ void BranchOutputFilter::onIntervalTimerTimeout()
         return;
     }
 
-    auto interlockType = statusDock ? statusDock->getInterlockType() : INTERLOCK_TYPE_ALWAYS_ON;
+    auto *dock = statusDock.load();
+    auto interlockType = dock ? dock->getInterlockType() : INTERLOCK_TYPE_ALWAYS_ON;
     auto sourceEnabled = obs_source_enabled(filterSource);
     auto streamingActive = countActiveStreamings() > 0;
 
@@ -1585,9 +1610,9 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
     connect(intervalTimer, SIGNAL(timeout()), this, SLOT(onIntervalTimerTimeout()));
 
     // Register to status dock
-    if (statusDock) {
+    if (auto *dock = statusDock.load()) {
         // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+        QMetaObject::invokeMethod(dock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
     }
 
     // Register hotkeys
@@ -1635,9 +1660,9 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
     registerHotkey();
 
     // Update status dock
-    if (statusDock) {
+    if (auto *dock = statusDock.load()) {
         // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+        QMetaObject::invokeMethod(dock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
     }
 
     obs_log(LOG_INFO, "%s: Filter updated", qUtf8Printable(name));
@@ -1699,9 +1724,9 @@ void BranchOutputFilter::removeCallback()
 
     // Do not call stopOutput() here as this will cause a crash.
 
-    if (statusDock) {
+    if (auto *dock = statusDock.load()) {
         // Unregister from output status dock (In proper thread)
-        QMetaObject::invokeMethod(statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+        QMetaObject::invokeMethod(dock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
     }
 
     // Unregister hotkeys
@@ -1854,7 +1879,12 @@ static void onGetFilterList(void *, calldata_t *cd)
     OBSDataAutoRelease wrapper = obs_data_create();
     OBSDataArrayAutoRelease array = obs_data_array_create();
 
-    if (statusDock) {
+    // Load the atomic pointer once so we observe a consistent value for the
+    // duration of this invocation. obs_module_unload() stores nullptr before
+    // calling obs_frontend_remove_dock(), so any non-null load here also
+    // happens-before the dock's destruction (see obs_module_unload()).
+    auto *dock = statusDock.load();
+    if (dock) {
         // BranchOutputStatusDock is a QFrame subclass and, like any QWidget, must be
         // accessed only from the UI (Qt) thread. Dispatch the read to the UI thread so
         // this proc handler is safe to call from any thread, as documented in API.md.
@@ -1864,11 +1894,11 @@ static void onGetFilterList(void *, calldata_t *cd)
         // This keeps the proc usable from both background threads (e.g. obs-websocket
         // worker threads) and the UI thread itself (e.g. frontend plugins / hotkeys).
         QList<BranchOutputFilterInfo> filterList;
-        if (QThread::currentThread() == statusDock->thread()) {
-            filterList = statusDock->getFilterList();
+        if (QThread::currentThread() == dock->thread()) {
+            filterList = dock->getFilterList();
         } else {
             QMetaObject::invokeMethod(
-                statusDock, "getFilterList", Qt::BlockingQueuedConnection,
+                dock, "getFilterList", Qt::BlockingQueuedConnection,
                 Q_RETURN_ARG(QList<BranchOutputFilterInfo>, filterList)
             );
         }
@@ -1910,12 +1940,27 @@ void obs_module_post_load()
 void obs_module_unload()
 {
     // Remove and destroy status dock to avoid leaks (hotkeys, timers, widgets).
-    // Null out the pointer immediately so that any residual proc handler invocation
-    // (libobs has no proc_handler_remove) observes the dock as gone and returns an
-    // empty result instead of dereferencing a dangling QObject pointer.
-    if (statusDock) {
+    //
+    // Order matters: publish nullptr **before** obs_frontend_remove_dock()
+    // destroys the widget. Because libobs has no proc_handler_remove, a
+    // concurrent call to onGetFilterList() could already be in flight on
+    // another thread (e.g. an obs-websocket worker). By nulling first, any
+    // subsequent load in onGetFilterList() sees nullptr and bails out.
+    //
+    // A load that happened *before* our store still observes the live dock
+    // pointer; in that case getFilterList() routes through the Qt UI thread
+    // via BlockingQueuedConnection. Since obs_module_unload() itself runs on
+    // the UI thread at shutdown, such an in-flight worker may briefly block
+    // until the UI thread services the queued event after
+    // obs_frontend_remove_dock() returns. The window is bounded by dock
+    // teardown and no dangling reference can reach the widget, but it is
+    // not strictly lock-free; a future improvement could drain in-flight
+    // callers explicitly (e.g. an inflight counter) before tearing down.
+    // std::atomic (seq_cst) enforces the ordering on weakly-ordered targets
+    // such as ARM64.
+    if (auto *dock = statusDock.exchange(nullptr)) {
+        Q_UNUSED(dock);
         obs_frontend_remove_dock("BranchOutputStatusDock");
-        statusDock = nullptr;
     }
 
     pthread_mutex_destroy(&pluginMutex);
