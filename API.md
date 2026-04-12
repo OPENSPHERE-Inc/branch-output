@@ -12,6 +12,27 @@ The overridden filename format is stored separately from the filter's property s
 
 This feature was implemented in response to production requirements where recorded files need to be organized according to the current scene, the value of a text input, or other external data — by overriding the filename at runtime.
 
+### Threading and Call Context
+
+All procedures in this API follow these threading rules:
+
+- **Thread safety**: The override procedures may be called from any thread. They briefly acquire the filter's internal `outputMutex` and return quickly.
+- **Callback safety**: Calling these procedures from OBS signal callbacks or frontend event callbacks is **discouraged** — if the calling thread already holds (or may indirectly acquire) the filter's `outputMutex`, a deadlock is possible. Prefer calling them from script timer callbacks or UI event handlers instead.
+- **Deferred application during pending states**: When recording is in `recordingPending` or a split/restart is in progress, the override is stored and applied on the next interval tick (via the internal 1-second `intervalTimer`) rather than taking effect synchronously. The proc call still returns immediately; there is no indication when the new filename format becomes active.
+
+### Obtaining the Filter Source
+
+The per-filter override procedures (`override_recording_filename_format`, `override_replay_buffer_filename_format`) are registered on **each individual Branch Output filter source** — not on the parent source/scene. To call them, you need a reference to the filter source itself, not its parent.
+
+The typical acquisition flow is:
+
+1. Call the global procedure `osi_branch_output_get_filter_list` to obtain the UUIDs of all Branch Output filters currently loaded.
+2. Use `obs_get_source_by_uuid(filter_uuid)` to get a reference to the filter source.
+3. Call `obs_source_get_proc_handler(filter_source)` to get the proc handler.
+4. Always release the source with `obs_source_release()` after use.
+
+Alternatively, if you already have a reference to the parent source, you can use `obs_source_get_filter_by_name(parent, filter_name)`.
+
 ### Overriding the Stream Recording Filename Format
 
 A procedure registered on the Branch Output filter source that overrides the output filename format for stream recording at runtime.
@@ -164,6 +185,12 @@ A global procedure that returns the list of Branch Output filters currently load
 | Parameters | `json` (out string) — JSON string representing the list of Branch Output filters |
 | Returns | None |
 
+**Notes**
+
+- The procedure is registered during `obs_module_post_load()`. Calling it before this point (e.g., during early OBS Studio module load) returns an empty list.
+- Filters applied to **private sources** (sources not visible in the OBS frontend) are intentionally excluded from the returned list, matching the Status Dock's visibility rules.
+- The returned list is a snapshot taken at call time. Callers that need to react to filter additions/removals should poll periodically or refresh on demand.
+
 **Returned JSON structure**
 
 ```json
@@ -257,22 +284,26 @@ end
 
 ### Using the Sample Scripts
 
-The sample scripts are written in Python. Before using them, make sure that Python Settings are properly configured in OBS under Tools → Scripts.
+Two variants of each sample script are bundled with the plugin: **Python** (`.py`) and **Lua** (`.lua`). Both variants implement the same functionality; choose whichever language you prefer.
 
-#### recording-filename-from-text.py
+- Python scripts require Python Settings to be properly configured in OBS under **Tools → Scripts**.
+- Lua scripts do not require any additional configuration — Lua support is built into OBS.
+
+On Windows, the scripts are installed at `data\obs-plugins\osi-branch-output\scripts\` under the OBS installation path. On macOS and Linux, the path follows the standard OBS plugin data directory convention.
+
+#### recording-filename-from-text.py / recording-filename-from-text.lua
 
 A script that reads the value of a text input and applies it to the stream recording filename format.
 
 1. Open OBS menu → Tools → Scripts
 2. Click the plus (+) button at the bottom of the Scripts dialog
-3. Select the script file.
-   On Windows, it is typically installed at `data\obs-plugins\osi-branch-output/scripts/recording-filename-from-text.py` under the OBS installation path.
+3. Select the script file — either the `.py` or the `.lua` variant.
 4. When you select the script in Loaded Scripts, various settings can be configured in the Description panel:
    - **Text Source** — Select the text input
    - **Branch Output Filter** — Select the Branch Output filter to override
    - **Base Filename Format** — Specify the base filename format. This format is appended to the end of the filename.
 5. The override becomes active as soon as you configure these settings. Click Script Log to see the script's activity.
-   Example: `[recording-filename-from-text.py] Recording filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
+   Example: `[recording-filename-from-text.lua] Recording filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
 6. When recording with the override active, the overridden filename takes precedence.
 7. To disable the override, remove the script from Loaded Scripts using the trash button.
 
@@ -284,20 +315,19 @@ A script that reads the value of a text input and applies it to the stream recor
 
 **Note:** While the override is active, the filename setting in the filter properties is not used.
 
-#### replay-buffer-filename-from-text.py
+#### replay-buffer-filename-from-text.py / replay-buffer-filename-from-text.lua
 
 A script that reads the value of a text input and applies it to the replay buffer save filename format.
 
 1. Open OBS menu → Tools → Scripts
 2. Click the plus (+) button at the bottom of the Scripts dialog
-3. Select the script file.
-   On Windows, it is typically installed at `data\obs-plugins\osi-branch-output/scripts/replay-buffer-filename-from-text.py` under the OBS installation path.
+3. Select the script file — either the `.py` or the `.lua` variant.
 4. When you select the script in Loaded Scripts, various settings can be configured in the Description panel:
    - **Text Source** — Select the text input
    - **Branch Output Filter** — Select the Branch Output filter to override
    - **Base Filename Format** — Specify the base filename format. This format is appended to the end of the filename.
 5. The override becomes active as soon as you configure these settings. Click Script Log to see the script's activity.
-   Example: `[replay-buffer-filename-from-text.py] Replay buffer filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
+   Example: `[replay-buffer-filename-from-text.lua] Replay buffer filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
 6. When saving with the override active, the overridden filename takes precedence.
 7. To disable the override, remove the script from Loaded Scripts using the trash button.
 
