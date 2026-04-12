@@ -21,6 +21,18 @@ Requirements:
   - Branch Output plugin v1.0.9+ (with override_replay_buffer_filename_format proc)
   - A Text (GDI+) source whose "text" property will be used as the filename prefix
 
+Known limitation (Windows + "Read from file" mode):
+  Lua's io.open() ultimately calls the CRT fopen(), which on Windows
+  interprets the path in the current system ANSI code page (e.g. CP932 on
+  Japanese locale). OBS stores settings as UTF-8, so a "Read from file"
+  path that contains characters not representable in the ANSI code page
+  (e.g. some Japanese / Chinese / Korean characters in a non-matching
+  locale) may fail to open from this Lua script. In that case the script
+  logs a "Failed to read text file" warning and clears the override.
+  The Python variant (replay-buffer-filename-from-text.py) is not affected
+  because CPython uses wide-character Windows APIs internally — use the
+  Python variant if you need full UTF-8 path support on Windows.
+
 Usage:
   1. Add this script via OBS > Tools > Scripts
   2. Select the text source and the Branch Output filter from the dropdown lists
@@ -111,14 +123,45 @@ local WINDOWS_RESERVED = {
 local function sanitize_filename(text)
     -- Produce a filesystem-safe prefix:
     --   1. Replace all control characters (incl. CR/LF/TAB) with a single space
-    --   2. Collapse runs of whitespace to a single space and trim
-    --   3. Replace filesystem-unsafe characters with "-"
-    --   4. Strip trailing dots/spaces (Windows disallows these at end of filename)
-    --   5. Prefix an underscore if the result collides with a Windows reserved name
+    --   2. Normalize common non-ASCII whitespace-like code points to a regular
+    --      ASCII space so they participate in the trim/collapse below. Lua
+    --      patterns operate on bytes, so %s only matches ASCII whitespace and
+    --      would otherwise leave NBSP / ideographic space / BOM intact at the
+    --      end of the filename (Windows disallows trailing spaces).
+    --      Covered: NBSP (U+00A0), ideographic space (U+3000), BOM / ZWNBSP
+    --      (U+FEFF), zero-width space (U+200B), line separator (U+2028),
+    --      paragraph separator (U+2029). The Python variant relies on
+    --      str.isprintable()/str.split() for equivalent behavior on a broader
+    --      set of Unicode whitespace — keeping this list in sync with the
+    --      Python behavior is the reason this block exists at all.
+    --      IMPORTANT: each gsub target must be the **complete** multi-byte
+    --      UTF-8 sequence. Lua patterns operate on bytes and treat the first
+    --      byte of a multi-byte code point as a plain literal, so do NOT try
+    --      to escape/group these via character classes — use one gsub call
+    --      per exact byte sequence instead. Several of the bytes below
+    --      (e.g. 0xE2, 0xEF) would be Lua pattern magic characters only when
+    --      prefixed with `%`, so the raw decimal escapes are safe as-is.
+    --   3. Collapse runs of whitespace to a single space and trim
+    --   4. Replace filesystem-unsafe characters with "-"
+    --   5. Strip trailing dots/spaces (Windows disallows these at end of filename)
+    --   6. Prefix an underscore if the result collides with a Windows reserved name
     if text == nil then
         return ""
     end
     local cleaned = text:gsub("%c", " ")
+    -- NBSP U+00A0 -> 0xC2 0xA0
+    cleaned = cleaned:gsub("\194\160", " ")
+    -- Ideographic space U+3000 -> 0xE3 0x80 0x80
+    cleaned = cleaned:gsub("\227\128\128", " ")
+    -- Zero-width space U+200B -> 0xE2 0x80 0x8B (strip; common invisible
+    -- contaminant from Word/Excel/SNS copy-paste in ja/zh/ko workflows)
+    cleaned = cleaned:gsub("\226\128\139", "")
+    -- Line separator U+2028 -> 0xE2 0x80 0xA8
+    cleaned = cleaned:gsub("\226\128\168", " ")
+    -- Paragraph separator U+2029 -> 0xE2 0x80 0xA9
+    cleaned = cleaned:gsub("\226\128\169", " ")
+    -- BOM / ZWNBSP U+FEFF -> 0xEF 0xBB 0xBF (strip any occurrence, not only leading)
+    cleaned = cleaned:gsub("\239\187\191", "")
     cleaned = cleaned:gsub("%s+", " ")
     local trimmed = cleaned:match("^%s*(.-)%s*$") or ""
     local sanitized = trimmed:gsub('[<>:"|?*/\\]', "-")
@@ -321,6 +364,11 @@ function script_properties()
     if sources ~= nil then
         for _, source in ipairs(sources) do
             local source_id = obs.obs_source_get_unversioned_id(source)
+            -- text_gdiplus_v3 / text_ft2_source_v2 are listed as a forward-
+            -- compatibility reserve; OBS 30.1.x currently only ships up to
+            -- text_gdiplus_v2 and text_ft2_source_v2. Kept as an explicit
+            -- allowlist (rather than a "^text_" prefix match) so that new
+            -- unrelated source types cannot be picked up accidentally.
             if source_id == "text_gdiplus" or source_id == "text_gdiplus_v2"
                 or source_id == "text_gdiplus_v3"
                 or source_id == "text_ft2_source" or source_id == "text_ft2_source_v2" then
