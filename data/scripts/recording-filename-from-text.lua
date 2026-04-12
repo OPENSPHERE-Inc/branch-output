@@ -40,6 +40,7 @@ local base_format = "%CCYY-%MM-%DD %hh-%mm-%ss"
 local last_text = nil
 local last_applied_text = nil
 local last_applied_time = 0
+local override_cleared = false
 local THROTTLE_SECONDS = 30
 
 -- Forward declaration so update_recording_format() can call clear_override()
@@ -224,8 +225,10 @@ local function update_recording_format()
     -- Get text from the text source
     local text_source = obs.obs_get_source_by_uuid(text_source_uuid)
     if text_source == nil then
-        -- Text source not available: clear override
-        clear_override()
+        -- Text source not available: clear override (only once per state change)
+        if not override_cleared then
+            clear_override()
+        end
         return
     end
 
@@ -233,7 +236,9 @@ local function update_recording_format()
     obs.obs_source_release(text_source)
 
     if not ok or current_text == nil then
-        clear_override()
+        if not override_cleared then
+            clear_override()
+        end
         return
     end
 
@@ -261,24 +266,31 @@ local function update_recording_format()
     if call_override_proc(filter_uuid, new_format) then
         last_applied_text = current_text
         last_applied_time = now
+        override_cleared = false
         obs.script_log(obs.LOG_INFO, LOG_LABEL .. " updated: " .. new_format)
     end
 end
 
 clear_override = function()
     -- Clear the filename format override by sending an empty string.
+    -- Sets override_cleared = true to suppress redundant proc calls on
+    -- subsequent timer ticks until a new format is applied or the
+    -- selection changes.
     if selected_filter == "" then
+        override_cleared = true
         return
     end
 
     local _, filter_uuid = parse_selected_filter(selected_filter)
     if filter_uuid == "" then
+        override_cleared = true
         return
     end
 
     if call_override_proc(filter_uuid, "") then
         obs.script_log(obs.LOG_INFO, LOG_LABEL .. " override cleared")
     end
+    override_cleared = true
 end
 
 local function timer_callback()
@@ -313,6 +325,7 @@ function script_properties()
         for _, source in ipairs(sources) do
             local source_id = obs.obs_source_get_unversioned_id(source)
             if source_id == "text_gdiplus" or source_id == "text_gdiplus_v2"
+                or source_id == "text_gdiplus_v3"
                 or source_id == "text_ft2_source" or source_id == "text_ft2_source_v2" then
                 local name = obs.obs_source_get_name(source)
                 local uuid = obs.obs_source_get_uuid(source)
@@ -370,13 +383,14 @@ function script_update(settings)
     last_text = nil
     last_applied_text = nil
     last_applied_time = 0
+    override_cleared = false
 end
 
 function script_load(settings)
     -- Defensive timer_remove in case of script reload.
     obs.timer_remove(timer_callback)
-    -- Apply initial settings so the first tick has valid state.
-    script_update(settings)
+    -- script_update(settings) is called automatically by OBS after
+    -- script_load, so we don't need to invoke it explicitly here.
     obs.timer_add(timer_callback, 1000)
 end
 
