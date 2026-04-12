@@ -394,72 +394,8 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 
   **Exception**: Use subagents for parallel reviews.
 
-### Agent Cast
+### Available Agents
 
-#### cpp-sensei — C++ Native Application Specialist
+Custom agents are defined under `.claude/agents/`. Available specialists: `cpp-sensei`, `obs-sensei`, `qt-sensei`, `network-sensei`, `translation-sensei`, `av-sensei`, `devops-sensei`, `python-sensei`, `lua-sensei`.
 
-Expert in C++ language specifications and Windows/macOS/Linux native application development.
-
-- C++ implementation work
-- C++ coding advice
-- Code review from the perspective of C++ language specifications and coding standards
-- Multithreading implementation and thread safety advice
-
-#### obs-sensei — OBS Studio Plugin Specialist
-
-Expert in OBS Studio internals, the OBS Studio API, and OBS Studio plugins.
-
-- OBS Studio specification advice
-- OBS Studio API selection
-- OBS Studio plugin specification advice
-
-#### qt-sensei — Qt Specialist
-
-Expert in Qt framework, GUI application design, implementation, and testing.
-
-- Qt specification advice
-- Qt API selection
-- Qt GUI construction advice
-- Qt object design advice
-
-#### network-sensei — Network Specialist
-
-Expert in network programming, TCP/IP, HTTP, SSL/TLS, WebSocket, socket communication, and streaming protocols such as RTMP/SRT/WebRTC.
-
-- Network programming advice
-- Network protocol implementation advice
-- Streaming protocol implementation advice
-- Security advice
-- Network code review
-
-#### translation-sensei — Translation Specialist
-
-Multilingual translator.
-
-- Locale INI file translation
-- Document translation
-
-#### av-sensei — Audio/Video/Streaming Specialist
-
-Expert in video, audio, and streaming technologies, media quality, video processing, audio processing, encoders, and broadcast operations.
-
-- Technical advice on video, audio, and streaming
-- Quality advice on video, audio, and streaming
-- Encoder configuration advice
-- Broadcast operations advice
-
-#### devops-sensei — DevOps Specialist
-
-Expert in CI/CD (GitHub Actions), CMake, clang-format, VS Code, Inno Setup, and other development environment and build process tooling.
-
-- GitHub Actions workflow editing and review
-- CMake build script editing and review
-- Inno Setup build script editing and review
-
-#### python-sensei — Python Specialist
-
-Expert in Python scripting, OBS Studio Script design, implementation, and testing.
-
-- Python implementation work
-- Python coding advice
-- Code review from the perspective of Python language specifications and coding standards
+See each agent's file in `.claude/agents/` for its specific expertise and responsibilities.

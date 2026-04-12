@@ -104,6 +104,10 @@ For each "Will Fix" finding, delegate the fix to the most appropriate specialist
 | **qt-sensei** | Qt API usage, signal/slot, object lifetime, thread affinity, UI thread safety |
 | **obs-sensei** | OBS API correctness, plugin lifecycle, source/filter/output, OBS threading model |
 | **network-sensei** | Network programming, protocols, connection lifecycle, security |
+| **av-sensei** | Video/audio/streaming quality, encoder configuration, media processing |
+| **devops-sensei** | CI/CD, CMake, build scripts, formatters, packaging |
+| **python-sensei** | Python scripts, OBS Python Script |
+| **lua-sensei** | Lua scripts, OBS Lua Script |
 
 ### Agent Prompt Template
 

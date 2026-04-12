@@ -63,6 +63,7 @@ The user can specify the base branch with `--base {branch}`. When not specified,
 | **av-sensei** | Video/audio/streaming quality, encoder configuration, media processing, codec behavior, broadcast operations | Review involves encoder settings, media pipelines, A/V quality, or streaming output configuration |
 | **devops-sensei** | CI/CD (GitHub Actions), CMake, clang-format, build scripts, Inno Setup, development tooling | Review involves build system, CI workflows, packaging, or tooling changes |
 | **python-sensei** | Python scripting, OBS Studio Script design and conventions | Review involves Python scripts or OBS Script files |
+| **lua-sensei** | Lua scripting, OBS Studio Script (Lua) design and conventions | Review involves Lua scripts or OBS Lua Script files |
 
 ## Step 1 — Identify Review Scope
 

@@ -82,7 +82,11 @@ Repeat while the round counter is ≤ `--max-rounds`.
 
 Regardless of the round, always review the entire target scope. Do not pass prior round review documents to the review agent. Deduplication against prior rounds is handled by the orchestrator (Step 2.2).
 
-However, **findings that have been raised in 2 or more prior rounds and rejected each time (Won't Fix / No Action Needed)** may be explicitly listed as exclusions in the review agent's prompt. This prevents the same finding from being repeatedly raised and rejected.
+However, **findings that have been raised and rejected 2 or more times across prior rounds (Won't Fix / No Action Needed in each case)** may be explicitly listed as exclusions in the review agent's prompt.
+
+**Important constraints:**
+- **Do NOT exclude findings rejected only once.** The judgment may change on the second review, so the finding must be surfaced again.
+- A finding is only eligible for exclusion when it has been repeatedly rejected across multiple rounds (**2 or more total rejections**).
 
 **Agent launch procedure:**
 
@@ -99,8 +103,8 @@ Additional instructions:
 - Review target: Commits unique to the current branch and working tree changes (default review target)
 - Review document language: {user's chat language}
 - Write the report to the following file: {current round file path}
-{if there are findings rejected in 2+ prior rounds:}
-- The following findings have been repeatedly rejected in prior rounds. Exclude them from the review:
+{include only if there are findings rejected 2 or more times (do NOT include findings rejected only once):}
+- The following findings have been rejected 2 or more times in prior rounds. Exclude them from the review:
   - {summary of each finding and the round numbers where it was rejected}
 ```
 
