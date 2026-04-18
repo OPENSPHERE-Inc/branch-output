@@ -1,4 +1,5 @@
 ---
+name: parallel-review
 description: Launch parallel code review with multiple specialist reviewers
 allowed-tools: Agent, Read, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*)
 ---
@@ -114,7 +115,7 @@ After all reviewers complete, consolidate their findings into a single report:
 
 Output the final report in this format:
 
-```
+```markdown
 # Parallel Code Review Report — Round {N}
 
 - **Date:** YYYY-MM-DD
@@ -124,27 +125,53 @@ Output the final report in this format:
 
 ## Critical
 
-| # | Location | Finding | Reviewer(s) | Action |
-|---|----------|---------|-------------|--------|
-| C-1 | file:line | Description | cpp-sensei, obs-sensei | [Action Required] Reason |
+### C-1 — `file.cpp:42`
+
+- **Reviewer(s):** cpp-sensei, obs-sensei
+
+**Finding:**
+
+Description of the issue. May span multiple paragraphs and include code snippets, rationale, and references.
+
+**Action:** **[Action Required]** Reason why it should be fixed (or dismissed).
+
+---
+
+### C-2 — `file.cpp:88`
+
+...
+
+---
 
 ## Major
 
-| # | Location | Finding | Reviewer(s) | Action |
-|---|----------|---------|-------------|--------|
-| M-1 | ... | ... | ... | ... |
+### M-1 — `other.cpp:120`
+
+- **Reviewer(s):** qt-sensei
+
+**Finding:**
+
+...
+
+**Action:** **[Action Required]** ...
+
+---
 
 ## Minor
 
-| # | Location | Finding | Reviewer(s) | Action |
-|---|----------|---------|-------------|--------|
-| m-1 | ... | ... | ... | ... |
+### m-1 — `foo.cpp:15`
+
+...
+
+---
 
 ## Info
 
-| # | Location | Finding | Reviewer(s) | Action |
-|---|----------|---------|-------------|--------|
-| I-1 | ... | ... | ... | ... |
+### I-1 — `bar.cpp:7`
+
+...
+
+---
 
 ## Summary
 
@@ -154,3 +181,10 @@ Output the final report in this format:
 - **Info:** N findings
 - **Total:** N findings from K reviewers (D duplicates merged)
 ```
+
+### Format Rules
+
+- Each finding is its own `###` subsection with heading `{finding-id} — `{location}``.
+- Under each finding, list metadata (Reviewer(s)) as a bullet list, then the Finding description and Action on their own lines with bold labels.
+- Separate findings with `---` horizontal rules so downstream tools (review-respond, review-resolve) can append status lines after the Action but before the `---` separator.
+- Severity sections (`## Critical` / `## Major` / `## Minor` / `## Info`) may be omitted entirely if they contain no findings.

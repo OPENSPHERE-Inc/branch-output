@@ -1,4 +1,5 @@
 ---
+name: review-respond
 description: Respond to review findings by triaging, fixing, self-reviewing, and updating the review document
 allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*), Bash(clang-format:*), Bash(cmake-format:*)
 ---
@@ -51,21 +52,27 @@ adding a reference, risking use-after-free.
 
 ## Review Document Format
 
-The review document uses markdown tables grouped by severity. Each severity section has a table with these columns:
+The review document is organized into severity sections (`## Critical`, `## Major`, `## Minor`, `## Info`). Each finding is a `###` subsection with this structure:
 
-| Column | Description |
-|--------|-------------|
-| `#` | Finding ID (e.g., `C-1`, `M-1`, `m-1`) |
-| Location | File path and line numbers |
-| Description | Description of the issue |
-| Reviewer | Reviewer name(s) |
-| Action | Triage decision: `**[Action Required]**` or `**[No Action Needed]**` with rationale |
+```markdown
+### {finding-id} — `{location}`
 
-Severity sections: `## Critical`, `## Major`, `## Minor`, `## Info`.
+- **Reviewer(s):** {reviewer names}
 
-The document may also contain:
-- An actionable findings summary table at the end listing items that require fixes.
-- A carry-over tracking table from prior review rounds.
+**Finding:**
+
+{Description of the issue, possibly multi-paragraph with code snippets.}
+
+**Action:** **[Action Required]** or **[No Action Needed]** — {rationale}
+
+---
+```
+
+- Finding ID examples: `C-1` (Critical), `M-1` (Major), `m-1` (Minor), `I-1` (Info).
+- Each finding ends with a `---` horizontal rule.
+- Status lines added later (by review-respond) appear as blockquote lines between the Action line and the `---` separator.
+
+The document may also contain a carry-over tracking section or summary section from prior review rounds.
 
 ## Step 1 — Parse the Review Document
 
@@ -164,34 +171,33 @@ After all fixes are complete, verify code formatting and run a build to ensure q
 
 ## Step 5 — Update the Review Document
 
-After all fixes are complete, update the review document. Since the document uses markdown tables, status annotations are appended as blockquote lines **after the table, before the `---` section separator**.
+After all fixes are complete, update the review document. Status annotations are appended as blockquote lines **after each finding's Action line, before the `---` section separator**.
 
 ### Status line format
 
 For fixed findings:
 
 ```
-> - **{finding-id} Status: Fixed** — {Brief description of the fix.}
+> **{finding-id} Status: Fixed** — {Brief description of the fix.}
 ```
 
 For "Won't Fix" decisions (triaged by you during Step 2):
 
 ```
-> - **{finding-id} Status: Won't Fix** — {Reason why no action is needed.}
+> **{finding-id} Status: Won't Fix** — {Reason why no action is needed.}
 ```
 
 For findings already marked `[No Action Needed]` by the reviewer — add your assessment of the reviewer's rationale:
 
 ```
-> - **{finding-id} Status: Acknowledged** — {Your assessment: agree/disagree with the reviewer's rationale and why.}
+> **{finding-id} Status: Acknowledged** — {Your assessment: agree/disagree with the reviewer's rationale and why.}
 ```
 
 ### Rules
 
 - Each status line starts with the finding ID for traceability.
-- Insert status blockquotes after the table in that section, before the `---` separator.
+- Insert the status blockquote line immediately after the finding's `**Action:** ...` line, before the `---` separator.
 - Preserve all existing content — only add status lines.
-- Update the actionable findings summary table if present: add a status column or append status notes.
 - Write status descriptions in the same language as the review document.
 
 ### Example
@@ -201,9 +207,15 @@ Before:
 ```markdown
 ## Critical
 
-| # | Location | Finding | Reviewer(s) | Action |
-|---|----------|---------|-------------|--------|
-| C-1 | `file.cpp:42` | Use-after-free risk... | cpp-sensei | **[Action Required]** Add ref counting. |
+### C-1 — `file.cpp:42`
+
+- **Reviewer(s):** cpp-sensei
+
+**Finding:**
+
+Use-after-free risk: the lambda captures a raw `obs_data_t *` without adding a reference.
+
+**Action:** **[Action Required]** Add ref counting.
 
 ---
 ```
@@ -213,9 +225,15 @@ After:
 ```markdown
 ## Critical
 
-| # | Location | Finding | Reviewer(s) | Action |
-|---|----------|---------|-------------|--------|
-| C-1 | `file.cpp:42` | Use-after-free risk... | cpp-sensei | **[Action Required]** Add ref counting. |
+### C-1 — `file.cpp:42`
+
+- **Reviewer(s):** cpp-sensei
+
+**Finding:**
+
+Use-after-free risk: the lambda captures a raw `obs_data_t *` without adding a reference.
+
+**Action:** **[Action Required]** Add ref counting.
 
 > **C-1 Status: Fixed** — Added `obs_data_addref()` and wrapped with `OBSDataAutoRelease` for RAII protection inside the lambda.
 
@@ -223,12 +241,30 @@ After:
 
 ## Major
 
-| # | Location | Finding | Reviewer(s) | Action |
-|---|----------|---------|-------------|--------|
-| M-1 | `output.cpp:80` | Missing error check... | obs-sensei | **[Action Required]** Add return value check. |
-| M-2 | `client.cpp:120` | Redundant copy... | cpp-sensei | **[No Action Needed]** Existing code, not introduced in this change. |
+### M-1 — `output.cpp:80`
+
+- **Reviewer(s):** obs-sensei
+
+**Finding:**
+
+Missing error check on the return value of `obs_output_start()`.
+
+**Action:** **[Action Required]** Add return value check.
 
 > **M-1 Status: Fixed** — Added `if (!output)` guard with `LOG_ERROR` before proceeding.
+
+---
+
+### M-2 — `client.cpp:120`
+
+- **Reviewer(s):** cpp-sensei
+
+**Finding:**
+
+Redundant copy of the settings object.
+
+**Action:** **[No Action Needed]** Existing code, not introduced in this change.
+
 > **M-2 Status: Acknowledged** — Agree. This is pre-existing code outside the scope of this change. Tracked for future cleanup.
 
 ---

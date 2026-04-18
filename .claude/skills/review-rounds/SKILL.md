@@ -1,4 +1,5 @@
 ---
+name: review-rounds
 description: Automatically iterate parallel review, respond, and resolve across multiple rounds until no actionable findings remain
 allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git branch:*), Bash(mkdir:*)
 ---
@@ -43,26 +44,36 @@ The user may optionally specify an output base path. If the argument is `$ARGUME
 
 Write review documents in the **user's chat language**. If the user is communicating in Japanese, write in Japanese; if in English, write in English.
 
-## Agent Context Isolation Rules
+## Subagent Usage Rules
 
-- **Review, respond, and resolve must each run in a separate agent context.** Never reuse agents.
-- Agent reuse across rounds is also prohibited.
-- Information sharing between agent contexts is done **only through review documents**. No verbal handoffs or context summaries.
+- **Subagent nesting is prohibited** — If you are running as a subagent yourself, you cannot launch further subagents from within.
+- Therefore, the following roles must be **performed by the orchestrator (you) directly**:
+  - **Parallel-review role (Step 2.1)** — You may launch reviewer agents (cpp-sensei, etc.) in parallel, but do NOT delegate the entire parallel-review skill to another agent.
+  - **Fix work (Step 2.3 / Step 2.5 re-fix)** — The orchestrator performs fixes directly, acting as each relevant specialist. Do NOT launch specialist subagents.
+- Tasks that do **not** launch further subagents themselves may be delegated to a subagent:
+  - **Triage (Step 2.3 / Step 2.5)** — Running in a separate context avoids orchestrator bias.
+  - **Review-resolve verification (Step 2.4 / Step 2.5)** — Read-only verification task.
+- Results from each round are passed forward **only through review documents**.
 
 ## Flow Overview
 
 ```
 Round 1 Start
-  ├─ [Agent A] parallel-review → round1.md generated
+  ├─ Orchestrator acts as parallel-review lead, launching reviewers
+  │   (cpp-sensei, qt-sensei, obs-sensei, network-sensei, etc.) in parallel
+  │   → round1.md generated
   ├─ Orchestrator checks for actionable findings (if none, exit)
-  ├─ [Agent B] review-respond → round1.md updated
-  ├─ [Agent C] review-resolve → round1.md verified
+  ├─ [Agent A] triage (fresh context decides Will Fix / Won't Fix)
+  ├─ Orchestrator applies fixes directly as specialists
+  │   → round1.md updated
+  ├─ [Agent B] review-resolve → round1.md verified
   ├─ Orchestrator checks feedback
-  │   └─ If feedback: [Agent D] review-respond → round1.md re-fix
-  │   └─ [Agent E] review-resolve → round1.md re-verify (up to 3 times)
+  │   └─ If feedback: [Agent C] triage → orchestrator re-fixes (up to 3 times)
+  │   └─ [Agent D] review-resolve → round1.md re-verified
   └─ Round 1 End
-Round 2 Start (all new agent contexts)
-  ├─ [Agent F] parallel-review → round2.md generated (full re-review)
+Round 2 Start
+  ├─ Orchestrator launches reviewers in parallel (fresh reviewer contexts)
+  │   → round2.md generated (full re-review)
   ├─ Orchestrator deduplicates against prior rounds
   └─ ...
 ```
@@ -88,25 +99,23 @@ However, **findings that have been raised and rejected 2 or more times across pr
 - **Do NOT exclude findings rejected only once.** The judgment may change on the second review, so the finding must be surfaced again.
 - A finding is only eligible for exclusion when it has been repeatedly rejected across multiple rounds (**2 or more total rejections**).
 
-**Agent launch procedure:**
+**Important: Subagent nesting is prohibited**
+
+Subagents cannot launch further subagents. Therefore, in this step, the `review-rounds` orchestrator (you) acts as the parallel-review lead directly, launching reviewer agents in parallel and consolidating the report. Follow the rules in `.claude/skills/parallel-review/SKILL.md` (without delegating to another agent).
+
+**Execution procedure:**
 
 1. Print to console: `## Round {N} — Step 1: Parallel Review`
-2. Launch a **new agent** via the Agent tool. Specify the command file and arguments explicitly in the prompt:
-
-```
-Execute a parallel code review following the instructions in the command file below.
-
-Command file: .claude/commands/parallel-review.md
-Arguments: Round {N} {append --base value if specified}
-
-Additional instructions:
-- Review target: Commits unique to the current branch and working tree changes (default review target)
-- Review document language: {user's chat language}
-- Write the report to the following file: {current round file path}
-{include only if there are findings rejected 2 or more times (do NOT include findings rejected only once):}
-- The following findings have been rejected 2 or more times in prior rounds. Exclude them from the review:
-  - {summary of each finding and the round numbers where it was rejected}
-```
+2. Read `.claude/skills/parallel-review/SKILL.md` and follow its review rules (required/optional reviewers, severity classification, report format, etc.).
+3. Launch reviewer agents **in parallel** via the Agent tool (cpp-sensei, qt-sensei, obs-sensei, network-sensei are required; add av-sensei, devops-sensei, python-sensei, lua-sensei as needed based on scope). Provide each reviewer with:
+   - Review target: Commits unique to the current branch and working tree changes
+   - Their specialist perspective
+   - Read-only instruction with severity labels (Critical / Major / Minor / Info)
+   - {include only if there are findings rejected 2 or more times (do NOT include findings rejected only once):}
+     - Exclude these findings that have been rejected 2+ times in prior rounds: {summary of each finding and the round numbers where it was rejected}
+4. Collect all reviewer results, deduplicate, annotate with `[Action Required]` / `[No Action Needed]` decisions, and write out the report following parallel-review's report format:
+   - File path: {current round file path}
+   - Review document language: {user's chat language}
 
 ### 2.2 — Deduplication and Actionable Findings Check
 
@@ -119,39 +128,57 @@ Read the generated review document and perform the following:
 
 ### 2.3 — Respond (review-respond)
 
-**Agent launch procedure:**
+**Agent context separation:**
 
-1. Print to console: `## Round {N} — Step 3: Review Respond`
-2. Launch a **new agent** via the Agent tool. Specify the command file and arguments explicitly in the prompt:
+- **Triage runs in a separate agent context** — Delegate the triage step (Will Fix / Won't Fix / Needs Investigation decisions) to a dedicated subagent. This avoids bias from the orchestrator's accumulated context and produces fresher judgment.
+- **Fixes are performed by the orchestrator** — After receiving triage results, the orchestrator (you) applies fixes directly, acting as the appropriate specialist. Do NOT launch specialist subagents (subagent nesting is prohibited).
+
+Follow the rules in `.claude/skills/review-respond/SKILL.md` (delegate only the triage; orchestrator performs the fix).
+
+**Execution procedure:**
+
+1. Print to console: `## Round {N} — Step 3: Review Respond (Triage)`
+2. Launch a **new subagent** via the Agent tool to perform triage. Example prompt:
 
 ```
-Address the findings in the review document following the instructions in the command file below.
+Triage the findings in the review document, following the instructions in the skill file below.
+**This task is triage only.** Do NOT perform fixes. Report triage results only.
 
-Command file: .claude/commands/review-respond.md
-Arguments: {current round file path} {if --commit enabled: --commit}
+Skill file: .claude/skills/review-respond/SKILL.md — "Step 2 — Triage"
+Arguments: {current round file path}
 
-Additional instructions:
-{if --commit disabled:}
-Do NOT create any git commits. Only modify source code. Committing is strictly prohibited.
+For each `[Action Required]` finding, classify as one of:
+- **Will Fix** — Valid finding, should be addressed.
+- **Won't Fix** — Not applicable / false positive / acceptable risk (state the reason).
+- **Needs Investigation** — Read the relevant source to decide → then finalize as Will Fix / Won't Fix.
 
-{if --confirm-triage enabled:}
-Present triage results to the user and wait for confirmation before proceeding to fixes.
-
-{if --confirm-triage disabled:}
-Proceed to fixes without waiting for user confirmation after triage.
+Output format:
+| Finding ID | Decision | Rationale |
+|------------|----------|-----------|
+| C-1 | Will Fix | ... |
+| M-2 | Won't Fix | Pre-existing code, out of scope |
 ```
+
+3. Print to console: `## Round {N} — Step 3: Review Respond (Fix)`
+4. Receive the triage results. Then, **as the orchestrator**, perform the fixes under the following additional constraints:
+   - Follow `.claude/skills/review-respond/SKILL.md` from Step 3 onward (fix, self-review, format verification, build verification, review document update, commit).
+   - Arguments: {current round file path} {if --commit enabled: --commit}
+   - **You** apply fixes directly from the perspective of the appropriate specialist (cpp-sensei / qt-sensei / obs-sensei / network-sensei / av-sensei / devops-sensei / python-sensei / lua-sensei). Do NOT delegate to another agent.
+   - {if --commit disabled:} Do NOT create any git commits. Only modify source code. Committing is strictly prohibited.
+   - {if --confirm-triage enabled:} Present the triage results to the user and wait for confirmation before proceeding to fixes.
+   - {if --confirm-triage disabled:} Proceed to fixes without waiting for user confirmation after triage.
 
 ### 2.4 — Verify (review-resolve)
 
 **Agent launch procedure:**
 
 1. Print to console: `## Round {N} — Step 4: Review Resolve`
-2. Launch a **new agent** via the Agent tool. Specify the command file and arguments explicitly in the prompt:
+2. Launch a **new agent** via the Agent tool. Specify the skill file and arguments explicitly in the prompt:
 
 ```
-Verify the resolution status of the review document following the instructions in the command file below.
+Verify the resolution status of the review document following the instructions in the skill file below.
 
-Command file: .claude/commands/review-resolve.md
+Skill file: .claude/skills/review-resolve/SKILL.md
 Arguments: {current round file path}
 ```
 
@@ -164,32 +191,38 @@ Read the verification report and check for findings that require feedback.
 
 Re-fix loop (up to 3 attempts):
 
-1. Print to console: `## Round {N} — Step 5: Feedback Fix (attempt {M}/3)`
-2. Launch a **new agent** via the Agent tool to re-run review-respond:
+1. Print to console: `## Round {N} — Step 5: Feedback Triage (attempt {M}/3)`
+2. Launch a **new subagent** via the Agent tool to triage the unresolved findings based on feedback annotations. Example prompt:
 
 ```
-Re-address the findings in the review document based on verification feedback, following the instructions in the command file below.
+Triage the unresolved findings in the review document, taking feedback annotations into account.
+**This task is triage only.** Do NOT perform fixes. Report triage results only.
 
-Command file: .claude/commands/review-respond.md
-Arguments: {current round file path} {if --commit enabled: --commit}
+Skill file: .claude/skills/review-respond/SKILL.md — "Step 2 — Triage"
+Arguments: {current round file path}
 
-Additional instructions:
-Review the feedback annotations in the review document and address the unresolved findings.
-{if --commit disabled:}
-Do NOT create any git commits. Only modify source code. Committing is strictly prohibited.
+Prioritize feedback annotations (`> **{id} Feedback:** ...`) when deciding.
+Output format: same as Step 2.3.
 ```
 
-3. Print to console: `## Round {N} — Step 5: Feedback Verify (attempt {M}/3)`
-4. Launch a **new agent** via the Agent tool to re-run review-resolve:
+3. Print to console: `## Round {N} — Step 5: Feedback Fix (attempt {M}/3)`
+4. Receive the triage results. **As in Step 2.3, you perform re-fixes directly as the specialist** (do NOT delegate). Follow `.claude/skills/review-respond/SKILL.md` from Step 3 onward, with the following additional constraints:
+   - Arguments: {current round file path} {if --commit enabled: --commit}
+   - Review the feedback annotations in the review document and address the unresolved findings.
+   - **You** apply fixes directly from the perspective of the appropriate specialist. Do NOT delegate to another agent.
+   - {if --commit disabled:} Do NOT create any git commits. Committing is strictly prohibited.
+
+5. Print to console: `## Round {N} — Step 5: Feedback Verify (attempt {M}/3)`
+6. Launch a **new agent** via the Agent tool to re-run review-resolve:
 
 ```
-Verify the resolution status of the review document following the instructions in the command file below.
+Verify the resolution status of the review document following the instructions in the skill file below.
 
-Command file: .claude/commands/review-resolve.md
+Skill file: .claude/skills/review-resolve/SKILL.md
 Arguments: {current round file path}
 ```
 
-5. If feedback remains, return to step 1. If unresolved after 3 attempts, record as unresolved and end the round.
+7. If feedback remains, return to step 1. If unresolved after 3 attempts, record as unresolved and end the round.
 
 ### 2.6 — Round End
 

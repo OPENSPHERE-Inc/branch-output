@@ -1,4 +1,5 @@
 ---
+name: review-resolve
 description: Verify review finding resolutions against actual source code and provide feedback
 allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*)
 ---
@@ -15,9 +16,23 @@ The user will specify a path to a review document (markdown). If the argument is
 
 ## Review Document Format
 
-The review document uses markdown tables grouped by severity (`## Critical`, `## Major`, `## Minor`, `## Info`). Each severity section has a table with columns for finding ID, location, description, reviewer(s), and action.
+The review document is organized into severity sections (`## Critical`, `## Major`, `## Minor`, `## Info`). Each finding is a `###` subsection with this structure:
 
-Status annotations appear as blockquote lines after each table:
+```markdown
+### {finding-id} — `{location}`
+
+- **Reviewer(s):** {reviewer names}
+
+**Finding:**
+
+{description}
+
+**Action:** **[Action Required]** or **[No Action Needed]** — {rationale}
+
+---
+```
+
+Status annotations appear as blockquote lines between the Action line and the `---` separator:
 
 - `> **{id} Status: Fixed** — ...` — The finding was addressed with a code fix.
 - `> **{id} Status: Won't Fix** — ...` — The finding was intentionally not fixed, with rationale.
@@ -139,21 +154,21 @@ For each finding, update based on the verdict:
 ### Feedback Line Format
 
 ```
-> - **{finding-id} Feedback:** {Concise description of the issue and what should be done to fully resolve it.}
+> **{finding-id} Feedback:** {Concise description of the issue and what should be done to fully resolve it.}
 ```
 
 ### Verified Line Format
 
 ```
-> - **{finding-id} Status: Fixed ✓ Verified** — {Description of the fix}
+> **{finding-id} Status: Fixed ✓ Verified** — {Description of the fix}
 ```
 
 ### Rules
 
 - Overwrite the review document directly.
-- Preserve existing finding tables and section structure.
-- For **Resolved** findings, append `✓ Verified` to the status line.
-- For **Feedback** findings, keep the status line and add a feedback line immediately after.
+- Preserve the existing finding subsection structure (headings, metadata, Finding, Action, `---` separators).
+- For **Resolved** findings, append `✓ Verified` to the existing status line.
+- For **Feedback** findings, keep the status line and add a feedback line immediately after it (still before the `---` separator).
 - Do **not** add feedback lines for **Resolved** or **Unresolved** findings.
 - Write feedback descriptions in the same language as the review document.
 
@@ -164,13 +179,31 @@ Before update:
 ```markdown
 ## Major
 
-| # | Location | Finding | Reviewer(s) | Action |
-|---|----------|---------|-------------|--------|
-| M-1 | `output.cpp:80` | Missing error check... | obs-sensei | **[Action Required]** Add return value check. |
-| M-2 | `filter.cpp:120` | RAII not used... | cpp-sensei | **[Action Required]** Use OBSDataAutoRelease. |
+### M-1 — `output.cpp:80`
 
-> - **M-1 Status: Fixed** — Added `if (!output)` guard with `LOG_ERROR` before proceeding.
-> - **M-2 Status: Fixed** — Wrapped with OBSDataAutoRelease.
+- **Reviewer(s):** obs-sensei
+
+**Finding:**
+
+Missing error check on the return value of `obs_output_start()`.
+
+**Action:** **[Action Required]** Add return value check.
+
+> **M-1 Status: Fixed** — Added `if (!output)` guard with `LOG_ERROR` before proceeding.
+
+---
+
+### M-2 — `filter.cpp:120`
+
+- **Reviewer(s):** cpp-sensei
+
+**Finding:**
+
+RAII not used for `obs_data_t` lifetime management.
+
+**Action:** **[Action Required]** Use OBSDataAutoRelease.
+
+> **M-2 Status: Fixed** — Wrapped with OBSDataAutoRelease.
 
 ---
 ```
@@ -180,14 +213,32 @@ After update:
 ```markdown
 ## Major
 
-| # | Location | Finding | Reviewer(s) | Action |
-|---|----------|---------|-------------|--------|
-| M-1 | `output.cpp:80` | Missing error check... | obs-sensei | **[Action Required]** Add return value check. |
-| M-2 | `filter.cpp:120` | RAII not used... | cpp-sensei | **[Action Required]** Use OBSDataAutoRelease. |
+### M-1 — `output.cpp:80`
 
-> - **M-1 Status: Fixed** — Added `if (!output)` guard with `LOG_ERROR` before proceeding.
-> - **M-1 Feedback:** Null check was added, but the `else` branch at line 85 returns without logging, leaving the error propagation path incomplete. Add `LOG_ERROR` to the `else` branch as well.
-> - **M-2 Status: Fixed ✓ Verified** — Wrapped with OBSDataAutoRelease.
+- **Reviewer(s):** obs-sensei
+
+**Finding:**
+
+Missing error check on the return value of `obs_output_start()`.
+
+**Action:** **[Action Required]** Add return value check.
+
+> **M-1 Status: Fixed** — Added `if (!output)` guard with `LOG_ERROR` before proceeding.
+> **M-1 Feedback:** Null check was added, but the `else` branch at line 85 returns without logging, leaving the error propagation path incomplete. Add `LOG_ERROR` to the `else` branch as well.
+
+---
+
+### M-2 — `filter.cpp:120`
+
+- **Reviewer(s):** cpp-sensei
+
+**Finding:**
+
+RAII not used for `obs_data_t` lifetime management.
+
+**Action:** **[Action Required]** Use OBSDataAutoRelease.
+
+> **M-2 Status: Fixed ✓ Verified** — Wrapped with OBSDataAutoRelease.
 
 ---
 ```
