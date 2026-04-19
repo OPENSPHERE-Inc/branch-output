@@ -260,6 +260,8 @@ Arguments: {current round file path}
 
 7. If feedback remains, return to step 1. If unresolved after 3 attempts, record as unresolved and end the round.
 
+8. If `--confirm-round` is enabled and unresolved findings remain, wait for user confirmation before proceeding to the next round.
+
 ### 2.6 — Round End
 
 Record the round results:
@@ -267,11 +269,9 @@ Record the round results:
 - **Fix count** — Number of findings fixed in Step 2.3 onward and verified as **Resolved** or `✓ Verified` in Step 2.4 / 2.5.
 - **Unresolved count** — Number of findings that still have Feedback remaining after 3 iterations of the Step 2.5 re-fix loop (Will Fix findings that could not be resolved within this round).
 
-**Strict maximum round enforcement:** If the round counter reaches `--max-rounds`, **always** terminate the overall process and proceed to Step 3 (Final Report), even if unresolved findings remain. Regardless of `--confirm-round` setting or user request, executing a round beyond the maximum is prohibited.
+**Strict maximum round enforcement:** Increment the round counter. If it is ≤ `--max-rounds`, return to Step 2.1. Once the counter reaches (or exceeds) `--max-rounds`, **always** proceed to Step 3 (Final Report), even if unresolved findings remain. Executing a round beyond the maximum is prohibited.
 
-If `--confirm-round` is enabled and **unresolved count > 0**, wait for user confirmation before proceeding to the next round. If unresolved count is 0, proceed to the next round without confirmation.
-
-Increment the round counter. If it is ≤ `--max-rounds`, return to Step 2.1. If it exceeds, proceed to Step 3.
+(This step performs only the max-rounds check above. The round-exit decision based on absence of Will Fix findings is already made in Step 2.2.)
 
 ## Step 3 — Final Report
 
