@@ -16,9 +16,9 @@ This feature was implemented in response to production requirements where record
 
 All procedures in this API follow these threading rules:
 
-- **Thread safety**: The override procedures may be called from any thread. Internally they acquire the filter's `outputMutex` and, depending on the current recording state, may call `obs_output_update()` (when file splitting is enabled) or defer work to the next interval-timer tick (which performs a recording restart). The call is therefore not guaranteed to be constant-time — avoid calling it on latency-sensitive hot paths.
-- **Callback safety**: These procedures **must not be called from OBS signal callbacks (`obs_source_signal`, `obs_output_signal`, etc.) or from frontend event callbacks (`obs_frontend_event_callback`)**. Such callbacks may already hold — or may indirectly acquire — the filter's `outputMutex` or a libobs output lock, which would cause a deadlock against the locks taken inside the override procedure. Prefer calling them from script timer callbacks, hotkey handlers, or UI event handlers instead. The "hotkey handlers" guidance here assumes **scripting hotkeys registered via `obslua` / `obspython`** (which dispatch from a safe context without holding any filter-side locks). If you are calling these procedures from a **native plugin** hotkey callback registered with `obs_hotkey_register_*`, be aware that such callbacks may be dispatched from threads that already hold locks unrelated to Branch Output; verify that your hotkey-dispatch context does not hold a lock that the Branch Output `outputMutex` or the Qt UI thread might need. The same restriction applies to `osi_branch_output_get_filter_list` below, which synchronizes with the Qt UI thread via a blocking queued connection and will deadlock if the caller holds a lock that the UI thread is waiting on.
-- **Deferred application during pending states**: When recording is in `recordingPending` or a split/restart is in progress, the override is stored and applied on the next interval tick (via the internal 1-second `intervalTimer`) rather than taking effect synchronously. The proc call still returns immediately; there is no indication when the new filename format becomes active.
+- **Thread safety**: Callable from any thread. The call is not guaranteed to be constant-time (a recording restart or file split may occur), so avoid latency-sensitive hot paths.
+- **Callback safety**: Do not call from OBS signal callbacks (`obs_source_signal`, `obs_output_signal`, etc.) or frontend event callbacks (`obs_frontend_event_callback`) — a deadlock may occur. Safe callers: script timers, hotkey handlers, UI event handlers. When calling from a hotkey callback, ensure your own code does not hold a Branch Output lock at the call site. The same restriction applies to `osi_branch_output_get_filter_list` below.
+- **Deferred application**: If recording is transitioning (pending, split, or restart in progress), the override is stored and applied with up to about 1 second of delay rather than synchronously. The proc call returns immediately and there is no notification when the new format becomes active.
 
 ### Obtaining the Filter Source
 
@@ -56,22 +56,12 @@ A procedure registered on the Branch Output filter source that overrides the out
 ```python
 import obspython as obs
 
-# Get the target Branch Output filter by UUID
+# Get the target Branch Output filter by UUID. Pass "" as format to clear.
 bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
 if bo_filter:
     ph = obs.obs_source_get_proc_handler(bo_filter)
     cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "MyShow %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_recording_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-
-# Clear the override (pass an empty string)
-bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter:
-    ph = obs.obs_source_get_proc_handler(bo_filter)
-    cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "")
     obs.proc_handler_call(ph, "override_recording_filename_format", cd)
     obs.calldata_free(cd)
     obs.obs_source_release(bo_filter)
@@ -82,23 +72,12 @@ if bo_filter:
 ```lua
 local obs = obslua
 
--- Get the target Branch Output filter by UUID
+-- Get the target Branch Output filter by UUID. Pass "" as format to clear.
 local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
 if bo_filter ~= nil then
     local ph = obs.obs_source_get_proc_handler(bo_filter)
     local cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "MyShow %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_recording_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-end
-
--- Clear the override (pass an empty string)
-local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter ~= nil then
-    local ph = obs.obs_source_get_proc_handler(bo_filter)
-    local cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "")
     obs.proc_handler_call(ph, "override_recording_filename_format", cd)
     obs.calldata_free(cd)
     obs.obs_source_release(bo_filter)
@@ -124,22 +103,12 @@ The overridden filename format takes effect on the next replay buffer save. The 
 ```python
 import obspython as obs
 
-# Get the target Branch Output filter by UUID
+# Get the target Branch Output filter by UUID. Pass "" as format to clear.
 bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
 if bo_filter:
     ph = obs.obs_source_get_proc_handler(bo_filter)
     cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "Replay %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-
-# Clear the override (pass an empty string)
-bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter:
-    ph = obs.obs_source_get_proc_handler(bo_filter)
-    cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "")
     obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
     obs.calldata_free(cd)
     obs.obs_source_release(bo_filter)
@@ -150,23 +119,12 @@ if bo_filter:
 ```lua
 local obs = obslua
 
--- Get the target Branch Output filter by UUID
+-- Get the target Branch Output filter by UUID. Pass "" as format to clear.
 local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
 if bo_filter ~= nil then
     local ph = obs.obs_source_get_proc_handler(bo_filter)
     local cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "Replay %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-end
-
--- Clear the override (pass an empty string)
-local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter ~= nil then
-    local ph = obs.obs_source_get_proc_handler(bo_filter)
-    local cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "")
     obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
     obs.calldata_free(cd)
     obs.obs_source_release(bo_filter)
@@ -187,10 +145,11 @@ A global procedure that returns the list of Branch Output filters currently load
 
 **Notes**
 
-- The procedure is registered during `obs_module_post_load()`. Calling it before this point (e.g., during early OBS Studio module load) returns an empty list.
+- The procedure is registered during `obs_module_post_load()`. Calling it before registration completes fails: `proc_handler_call()` returns `false` and the `out string json` parameter is not written. Always check the return value before reading `json`.
 - Filters applied to **private sources** (sources not visible in the OBS frontend) are intentionally excluded from the returned list, matching the Status Dock's visibility rules.
-- The returned list is a snapshot taken at call time. Callers that need to react to filter additions/removals should poll periodically or refresh on demand.
-- **Thread safety**: This procedure may be called from any thread. Internally, the implementation reads the Status Dock's filter table, which must be accessed from the Qt UI thread. When called from a non-UI thread (e.g., an obs-websocket worker), the read is dispatched to the UI thread via a blocking queued connection. When called from the UI thread itself (e.g., a frontend plugin or a hotkey handler), the read is performed directly to avoid self-deadlock. Callers do not need to worry about the distinction.
+- The returned list is a snapshot taken at call time. Poll periodically or refresh on demand if you need to react to filter additions/removals.
+- **Thread safety**: Callable from any thread.
+- **Lifetime**: Do not call after `obs_module_unload()` — behavior is undefined.
 
 **Returned JSON structure**
 
@@ -292,50 +251,29 @@ Two variants of each sample script are bundled with the plugin: **Python** (`.py
 
 On Windows, the scripts are installed at `data\obs-plugins\osi-branch-output\scripts\` under the OBS installation path. On macOS and Linux, the path follows the standard OBS plugin data directory convention.
 
-#### recording-filename-from-text.py / recording-filename-from-text.lua
+#### Common setup
 
-A script that reads the value of a text input and applies it to the stream recording filename format.
-
-1. Open OBS menu → Tools → Scripts
-2. Click the plus (+) button at the bottom of the Scripts dialog
-3. Select the script file — either the `.py` or the `.lua` variant.
-4. When you select the script in Loaded Scripts, various settings can be configured in the Description panel:
-   - **Text Source** — Select the text input
-   - **Branch Output Filter** — Select the Branch Output filter to override
-   - **Base Filename Format** — Specify the base filename format. This format is appended to the end of the filename.
-5. The override becomes active as soon as you configure these settings. Click Script Log to see the script's activity.
-   Example: `[recording-filename-from-text.lua] Recording filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
-6. When recording with the override active, the overridden filename takes precedence.
-7. To disable the override, remove the script from Loaded Scripts using the trash button.
-
-> **Behavior during recording**
->
-> - Before recording starts: The overridden filename format is used when recording begins
-> - During recording (with file splitting enabled): A file split is triggered immediately when the filename format changes
-> - During recording (without file splitting): Recording is restarted with the new filename format
-
-**Note:** While the override is active, the filename setting in the filter properties is not used.
-
-**Throttling:** To avoid excessive file splits or recording restarts when the text source changes rapidly, the sample script throttles updates to at most one apply per 30 seconds per distinct text value. As a result, a change in the text source may take up to 30 seconds to be reflected in the recording filename. Edit the `THROTTLE_SECONDS` constant at the top of the script to tune this interval.
-
-**Windows + "Read from file" — Lua limitation:** When the text source is configured to read from a file, the Lua variant uses `io.open()`, which on Windows calls the CRT `fopen()` and interprets the path in the system ANSI code page (e.g. CP932 on Japanese locale). Paths containing characters that are not representable in the ANSI code page may therefore fail to open from the Lua script. The Python variant is not affected because CPython uses wide-character Windows APIs internally. Use the Python variant when you need full UTF-8 path support on Windows.
-
-#### replay-buffer-filename-from-text.py / replay-buffer-filename-from-text.lua
-
-A script that reads the value of a text input and applies it to the replay buffer save filename format.
+Both sample scripts share the same setup flow:
 
 1. Open OBS menu → Tools → Scripts
 2. Click the plus (+) button at the bottom of the Scripts dialog
 3. Select the script file — either the `.py` or the `.lua` variant.
-4. When you select the script in Loaded Scripts, various settings can be configured in the Description panel:
+4. In the Description panel, configure:
    - **Text Source** — Select the text input
    - **Branch Output Filter** — Select the Branch Output filter to override
-   - **Base Filename Format** — Specify the base filename format. This format is appended to the end of the filename.
-5. The override becomes active as soon as you configure these settings. Click Script Log to see the script's activity.
-   Example: `[replay-buffer-filename-from-text.lua] Replay buffer filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
-6. When saving with the override active, the overridden filename takes precedence.
-7. To disable the override, remove the script from Loaded Scripts using the trash button.
+   - **Base Filename Format** — The base format appended to the end of the filename.
+5. The override becomes active immediately. Check **Script Log** to confirm activity.
+6. The overridden filename takes precedence over the filter's own setting while the script is loaded; the filter property value is not used.
+7. To disable the override, remove the script via the trash button.
 
-**Note:** While the override is active, the filename setting in the filter properties is not used.
+**Windows + "Read from file" — Lua limitation:** When the text source reads from a file, the Lua variant uses `io.open()`, which on Windows interprets the path in the system ANSI code page (e.g. CP932 on Japanese locale). Paths containing characters outside that code page may therefore fail to open. The Python variant is not affected (CPython uses wide-character Windows APIs). Use the Python variant if full UTF-8 path support is required on Windows.
 
-**Windows + "Read from file" — Lua limitation:** The same limitation noted for `recording-filename-from-text.lua` applies here. When the text source reads from a file whose path contains non-ANSI characters, the Lua variant may fail to open the file on Windows. Use the Python variant if full UTF-8 path support is required.
+#### recording-filename-from-text
+
+Reads the value of a text input and applies it to the stream recording filename format. See [behavior during recording](#overriding-the-stream-recording-filename-format) above for how the override is applied in each recording state.
+
+**Throttling:** To avoid excessive file splits or recording restarts when the text source changes rapidly, the script throttles updates to one apply per 30 seconds per distinct text value. A text change may therefore take up to 30 seconds to be reflected. Adjust `THROTTLE_SECONDS` at the top of the script to tune this interval.
+
+#### replay-buffer-filename-from-text
+
+Reads the value of a text input and applies it to the replay buffer save filename format. The override takes effect on the next save; the replay buffer itself is not restarted.

@@ -54,12 +54,11 @@ struct BranchOutputFilterInfo {
     QString filterUuid;
 };
 Q_DECLARE_METATYPE(BranchOutputFilterInfo)
-// NOTE: Qt 6 automatically provides metatype support for QList<T> when T itself
-// has been declared via Q_DECLARE_METATYPE, so a separate Q_DECLARE_METATYPE for
-// QList<BranchOutputFilterInfo> is not needed here. The explicit
-// qRegisterMetaType<QList<BranchOutputFilterInfo>>() call in obs_module_post_load()
-// is kept as a safety net to guarantee the type is registered before any
-// cross-thread QMetaObject::invokeMethod / Q_RETURN_ARG usage.
+// QList<BranchOutputFilterInfo> is auto-registered lazily by Qt 6 on first
+// use via template machinery. The explicit qRegisterMetaType<QList<...>>()
+// in obs_module_post_load() is a defensive pre-registration to close the
+// race against first cross-thread use, and MUST precede the matching
+// proc_handler_add that publishes the proc invoking the meta call.
 
 class OutputTableCellItem : public QTableWidgetItem {
     enum ItemRole {
@@ -233,6 +232,10 @@ class BranchOutputStatusDock : public QFrame {
 
     QTimer timer;
     QTableWidget *outputTable = nullptr;
+    // Invariant: touched only from the Qt UI thread. Cross-thread callers
+    // (addFilter / removeFilter / onFilterRenamed / getFilterList) route
+    // through QMetaObject::invokeMethod, so no mutex is needed. Preserve
+    // this invariant when adding new access paths.
     QList<OutputTableRow *> outputTableRows;
     QLabel *applyToAllLabel = nullptr;
     QToolButton *enableAllButton = nullptr;
@@ -290,6 +293,10 @@ public:
     explicit BranchOutputStatusDock(QWidget *parent = (QWidget *)nullptr);
     ~BranchOutputStatusDock();
 
+    // Q_INVOKABLE (not a slot): invoked by name via QMetaObject::invokeMethod
+    // as a cross-thread RPC entry, not connected to any signal.
+    Q_INVOKABLE QList<BranchOutputFilterInfo> getFilterList() const;
+
 public slots:
     void addRow(BranchOutputFilter *filter, size_t streamingIndex, RowOutputType outputType, size_t groupIndex = 0);
     void addFilter(BranchOutputFilter *filter);
@@ -304,7 +311,6 @@ public slots:
     void sort();
 
     inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
-    Q_INVOKABLE QList<BranchOutputFilterInfo> getFilterList() const;
 };
 
 class OutputTableRow : public QObject {

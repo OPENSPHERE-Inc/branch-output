@@ -16,9 +16,9 @@
 
 本 API のすべてのプロシージャは以下のスレッドルールに従います。
 
-- **スレッド安全性**: オーバーライドプロシージャは任意のスレッドから呼び出し可能です。内部的にフィルターの `outputMutex` を取得し、現在の録画状態に応じて `obs_output_update()` の呼び出し（ファイル分割が有効な場合）や、次の interval タイマーティックでの録画リスタートへの遅延処理を行います。このためプロシージャ呼び出しは定数時間であることを保証しません。レイテンシが重要なホットパスからの呼び出しは避けてください。
-- **コールバックからの呼び出し**: これらのプロシージャは、**OBS のシグナルコールバック（`obs_source_signal` / `obs_output_signal` 等）やフロントエンドイベントコールバック（`obs_frontend_event_callback`）から呼び出してはいけません**。これらのコールバックは既にフィルターの `outputMutex` や libobs の出力ロックを保持しているか、間接的に取得する可能性があり、オーバーライドプロシージャ内部で取得するロックとの間でデッドロックが発生します。スクリプトのタイマーコールバック、ホットキーハンドラ、UI イベントハンドラからの呼び出しを推奨します。なお、ここで言う「ホットキーハンドラ」は **`obslua` / `obspython` で登録したスクリプト側のホットキーコールバック**を想定しています（スクリプトホットキーは Branch Output 側のロックを保持しない安全なコンテキストからディスパッチされます）。これに対し、**ネイティブプラグインが `obs_hotkey_register_*` で登録したホットキーコールバック**から呼び出す場合は、ディスパッチ元のスレッドが Branch Output とは無関係なロックを既に保持している可能性があります。呼び出し側が `outputMutex` や Qt UI スレッドが必要とするロックを保持していないことを確認してください。この制約は後述の `osi_branch_output_get_filter_list` にも同様に該当します — 同プロシージャは Qt UI スレッドに対してブロッキングキューイング接続で同期するため、UI スレッドが待っているロックを呼び出し側が保持しているとデッドロックを引き起こします。
-- **pending 状態中の遅延反映**: 録画が `recordingPending` 状態、またはスプリット／リスタート処理中の場合、オーバーライドは保存され、内部の 1秒間隔タイマー（`intervalTimer`）経由で次のティックで反映されます。プロシージャ呼び出し自体は即座に返却しますが、新しいファイル名フォーマットがいつ有効になったかを示す通知はありません。
+- **スレッド安全性**: 任意のスレッドから呼び出し可能です。録画リスタートやファイル分割を伴う場合があるため定数時間の動作は保証されません。レイテンシが重要なホットパスからの呼び出しは避けてください。
+- **コールバックからの呼び出し**: デッドロックが発生するため、OBS のシグナルコールバック（`obs_source_signal` / `obs_output_signal` 等）やフロントエンドイベントコールバック（`obs_frontend_event_callback`）からは呼び出さないでください。スクリプトのタイマーコールバック、ホットキーハンドラ、UI イベントハンドラからの呼び出しが安全です。ホットキーコールバックから呼ぶ場合は、呼び出し元で Branch Output のロックを保持していないことを確認してください。後述の `osi_branch_output_get_filter_list` にも同じ制約が適用されます。
+- **遅延反映**: 録画が遷移中（pending、分割、リスタート処理中）の場合、オーバーライドは同期的には反映されず、最大 1 秒程度の遅延で適用されます。プロシージャ呼び出しは即座に返却され、反映タイミングの通知はありません。
 
 ### フィルターソースの取得方法
 
@@ -56,22 +56,12 @@ Branch Output フィルターソースに登録されたプロシージャで、
 ```python
 import obspython as obs
 
-# 対象 Branch Output フィルターを UUID から取得
+# 対象 Branch Output フィルターを UUID から取得。format に "" を渡すとクリア。
 bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
 if bo_filter:
     ph = obs.obs_source_get_proc_handler(bo_filter)
     cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "MyShow %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_recording_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-
-# オーバーライドをクリア（空文字列を渡す）
-bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter:
-    ph = obs.obs_source_get_proc_handler(bo_filter)
-    cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "")
     obs.proc_handler_call(ph, "override_recording_filename_format", cd)
     obs.calldata_free(cd)
     obs.obs_source_release(bo_filter)
@@ -82,23 +72,12 @@ if bo_filter:
 ```lua
 local obs = obslua
 
--- 対象 Branch Output フィルターを UUID から取得
+-- 対象 Branch Output フィルターを UUID から取得。format に "" を渡すとクリア。
 local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
 if bo_filter ~= nil then
     local ph = obs.obs_source_get_proc_handler(bo_filter)
     local cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "MyShow %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_recording_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-end
-
--- オーバーライドをクリア（空文字列を渡す）
-local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter ~= nil then
-    local ph = obs.obs_source_get_proc_handler(bo_filter)
-    local cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "")
     obs.proc_handler_call(ph, "override_recording_filename_format", cd)
     obs.calldata_free(cd)
     obs.obs_source_release(bo_filter)
@@ -124,22 +103,12 @@ Branch Output フィルターソースに登録されたプロシージャで、
 ```python
 import obspython as obs
 
-# 対象 Branch Output フィルターを UUID から取得
+# 対象 Branch Output フィルターを UUID から取得。format に "" を渡すとクリア。
 bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
 if bo_filter:
     ph = obs.obs_source_get_proc_handler(bo_filter)
     cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "Replay %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-
-# オーバーライドをクリア（空文字列を渡す）
-bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter:
-    ph = obs.obs_source_get_proc_handler(bo_filter)
-    cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "")
     obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
     obs.calldata_free(cd)
     obs.obs_source_release(bo_filter)
@@ -150,23 +119,12 @@ if bo_filter:
 ```lua
 local obs = obslua
 
--- 対象 Branch Output フィルターを UUID から取得
+-- 対象 Branch Output フィルターを UUID から取得。format に "" を渡すとクリア。
 local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
 if bo_filter ~= nil then
     local ph = obs.obs_source_get_proc_handler(bo_filter)
     local cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "Replay %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-end
-
--- オーバーライドをクリア（空文字列を渡す）
-local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter ~= nil then
-    local ph = obs.obs_source_get_proc_handler(bo_filter)
-    local cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "")
     obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
     obs.calldata_free(cd)
     obs.obs_source_release(bo_filter)
@@ -187,10 +145,11 @@ OBS にロードされている Branch Output フィルターの一覧を取得�
 
 **注意事項**
 
-- このプロシージャは `obs_module_post_load()` で登録されます。それ以前（OBS Studio モジュールロード初期段階など）に呼び出すと空のリストが返ります。
+- 本プロシージャは `obs_module_post_load()` で登録されます。登録前に呼び出すと `proc_handler_call()` は `false` を返し、`out string json` パラメータには何も書き込まれません。`json` を読み取る前に必ず戻り値を確認してください。
 - **プライベートソース**（OBS フロントエンドに表示されないソース）に適用されたフィルターは、ステータスドックの表示ルールと整合させるため意図的に結果から除外されます。
-- 返されるリストは呼び出し時点でのスナップショットです。フィルターの追加・削除に反応する必要がある場合は、定期的にポーリングするか、必要に応じてリフレッシュしてください。
-- **スレッド安全性**: 本プロシージャは任意のスレッドから呼び出し可能です。内部実装ではステータスドックのフィルターテーブルを参照しますが、これは Qt UI スレッドからのみアクセスする必要があります。UI スレッド以外（例: obs-websocket のワーカースレッド）から呼ばれた場合はブロッキングキュー接続で UI スレッドにディスパッチして読み取ります。UI スレッド自身（例: フロントエンドプラグインやホットキーハンドラ）から呼ばれた場合は自己デッドロックを避けるため直接読み取ります。呼び出し側はこの違いを意識する必要はありません。
+- 返されるリストは呼び出し時点のスナップショットです。フィルターの追加・削除に反応する必要がある場合は、定期的にポーリングするか必要に応じてリフレッシュしてください。
+- **スレッド安全性**: 任意のスレッドから呼び出し可能です。
+- **ライフタイム**: `obs_module_unload()` 以降は呼び出さないでください（動作未定義）。
 
 **返される JSON の構造**
 
@@ -292,50 +251,29 @@ end
 
 Windows の場合、スクリプトは OBS インストールパスの `data\obs-plugins\osi-branch-output\scripts\` にインストールされます。macOS および Linux では、標準的な OBS プラグインデータディレクトリ規則に従います。
 
-#### recording-filename-from-text.py / recording-filename-from-text.lua
+#### 共通のセットアップ
 
-テキストインプットの値を読み取って、ストリーム録画ファイル名フォーマットに反映するスクリプトです。
-
-1. OBS のメニューから Tools → Scripts を開く
-2. Scripts ダイアログ下部のプラスボタンをクリック
-3. スクリプトファイルを選択（`.py` または `.lua` のどちらか）
-4. Loaded Scripts でスクリプトを選択すると、Description で各種設定が行えます。
-   - **Text Source** - テキストインプットを選択
-   - **Branch Output Filter** - オーバーライドする Branch Output フィルターを選択
-   - **Base Filename Format** - ベースとなるファイル名フォーマットを指定。これらのフォーマットはファイル名の末尾に付与されます。
-5. 設定を行った時点でオーバーライドが有効です。Script Log をクリックするとスクリプトの動作状況を確認できます。
-   例： `[recording-filename-from-text.lua] Recording filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
-6. オーバーライド有効の状態で録画するとファイル名はオーバーライドされたものが優先使用されます。
-7. オーバーライドを無効化したい場合はスクリプトをゴミ箱ボタンで Loaded Scripts から削除してください。
-
-> **録画中の挙動**
->
-> - 録画開始前: 録画開始時にオーバーライドされたファイル名フォーマットが使用されます
-> - 録画中（ファイル分割有効時）: ファイル名フォーマットが変化した場合、ファイルスプリットが即座に実行されます
-> - 録画中（ファイル分割無効時）: 新しいファイル名フォーマットで、録画がリスタートされます
-
-**注意:** オーバーライドが有効な状態で、フィルタープロパティ設定のファイル名は使用されません。
-
-**スロットリング:** テキストソースが短時間に繰り返し変化した際にファイルスプリットや録画リスタートが頻発しないよう、サンプルスクリプトは同一テキスト値あたり最大 30 秒に 1 回までに反映を制限しています。このため、テキストソースの変更が録画ファイル名に反映されるまで最大 30 秒の遅延が発生する場合があります。スクリプト先頭の `THROTTLE_SECONDS` 定数を編集することでこの間隔を調整できます。
-
-**Windows + "Read from file" — Lua の既知制約:** テキストソースをファイル読み込みモードに設定した場合、Lua 版は `io.open()` を使用します。Windows では `io.open()` は CRT の `fopen()` を呼び出し、パスをシステムの ANSI コードページ（例: 日本語ロケールでは CP932）で解釈するため、そのコードページで表現できない文字を含むパスは Lua スクリプトから開けないことがあります。Python 版は CPython が内部でワイド文字 Windows API を使用するため影響を受けません。Windows で完全な UTF-8 パス対応が必要な場合は Python 版を使用してください。
-
-#### replay-buffer-filename-from-text.py / replay-buffer-filename-from-text.lua
-
-テキストインプットの値を読み取って、リプレイバッファー保存ファイル名フォーマットに反映するスクリプトです。
+両サンプルスクリプトで共通の手順です。
 
 1. OBS のメニューから Tools → Scripts を開く
 2. Scripts ダイアログ下部のプラスボタンをクリック
 3. スクリプトファイルを選択（`.py` または `.lua` のどちらか）
-4. Loaded Scripts でスクリプトを選択すると、Description で各種設定が行えます。
+4. Description 欄で以下を設定:
    - **Text Source** - テキストインプットを選択
    - **Branch Output Filter** - オーバーライドする Branch Output フィルターを選択
-   - **Base Filename Format** - ベースとなるファイル名フォーマットを指定。これらのフォーマットはファイル名の末尾に付与されます。
-5. 設定を行った時点でオーバーライドが有効です。Script Log をクリックするとスクリプトの動作状況を確認できます。
-   例： `[replay-buffer-filename-from-text.lua] Replay buffer filename format updated: test %CCYY-%MM-%DD %hh-%mm-%ss`
-6. オーバーライド有効の状態で保存するとファイル名はオーバーライドされたものが優先使用されます。
-7. オーバーライドを無効化したい場合はスクリプトをゴミ箱ボタンで Loaded Scripts から削除してください。
+   - **Base Filename Format** - ベースとなるファイル名フォーマット（ファイル名末尾に付与されます）
+5. 設定した時点でオーバーライドが有効になります。Script Log で動作状況を確認できます。
+6. スクリプトがロードされている間、オーバーライドされたファイル名が優先使用され、フィルタープロパティ側の設定は使用されません。
+7. 無効化したい場合は Loaded Scripts からゴミ箱ボタンで削除してください。
 
-**注意:** オーバーライドが有効な状態で、フィルタープロパティ設定のファイル名は使用されません。
+**Windows + "Read from file" — Lua の既知制約:** テキストソースがファイル読み込みモードの場合、Lua 版は `io.open()` を使用します。Windows ではパスがシステム ANSI コードページ（例: 日本語ロケールの CP932）で解釈されるため、コードページ外の文字を含むパスは開けないことがあります。Python 版は CPython がワイド文字 Windows API を使用するため影響を受けません。Windows で完全な UTF-8 パス対応が必要な場合は Python 版を使用してください。
 
-**Windows + "Read from file" — Lua の既知制約:** `recording-filename-from-text.lua` で述べた制約がこちらにも同様に該当します。ファイル読み込みモードのパスに非 ANSI 文字が含まれる場合、Lua 版は Windows でファイルを開けないことがあります。Windows で完全な UTF-8 パス対応が必要な場合は Python 版を使用してください。
+#### recording-filename-from-text
+
+テキストインプットの値を読み取ってストリーム録画のファイル名フォーマットに反映します。録画状態ごとの挙動は上記の[録画中の挙動](#ストリーム録画ファイル名フォーマットのオーバーライド)を参照してください。
+
+**スロットリング:** テキストソースが短時間に繰り返し変化した際にファイルスプリットや録画リスタートが頻発しないよう、スクリプトは同一テキスト値あたり最大 30 秒に 1 回までに反映を制限しています。このため最大 30 秒の遅延が発生する場合があります。スクリプト先頭の `THROTTLE_SECONDS` 定数で調整できます。
+
+#### replay-buffer-filename-from-text
+
+テキストインプットの値を読み取ってリプレイバッファー保存時のファイル名フォーマットに反映します。オーバーライドは次回の保存時に反映され、リプレイバッファー自体は再起動しません。
