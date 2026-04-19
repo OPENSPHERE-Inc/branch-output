@@ -140,6 +140,74 @@ local function is_unicode_space(cp)
         or cp == 0x3000          -- ideographic space
 end
 
+local function utf8_codepoints(s)
+    -- Iterator yielding each Unicode code point from a UTF-8 encoded string.
+    -- Invalid or incomplete byte sequences are silently skipped.
+    -- Compatible with LuaJIT / Lua 5.1 (no utf8 library required).
+    local i = 1
+    local len = #s
+    return function()
+        while i <= len do
+            local b = string.byte(s, i)
+            local cp, size
+            if b < 0x80 then
+                cp, size = b, 1
+            elseif b >= 0xC2 and b <= 0xDF and i + 1 <= len then
+                local b2 = string.byte(s, i + 1)
+                if b2 >= 0x80 and b2 <= 0xBF then
+                    cp = (b - 0xC0) * 0x40 + (b2 - 0x80)
+                    size = 2
+                end
+            elseif b >= 0xE0 and b <= 0xEF and i + 2 <= len then
+                local b2 = string.byte(s, i + 1)
+                local b3 = string.byte(s, i + 2)
+                if b2 >= 0x80 and b2 <= 0xBF and b3 >= 0x80 and b3 <= 0xBF
+                    and (b ~= 0xE0 or b2 >= 0xA0) and (b ~= 0xED or b2 <= 0x9F) then
+                    cp = (b - 0xE0) * 0x1000 + (b2 - 0x80) * 0x40 + (b3 - 0x80)
+                    size = 3
+                end
+            elseif b >= 0xF0 and b <= 0xF4 and i + 3 <= len then
+                local b2 = string.byte(s, i + 1)
+                local b3 = string.byte(s, i + 2)
+                local b4 = string.byte(s, i + 3)
+                if b2 >= 0x80 and b2 <= 0xBF and b3 >= 0x80 and b3 <= 0xBF
+                    and b4 >= 0x80 and b4 <= 0xBF
+                    and (b ~= 0xF0 or b2 >= 0x90) and (b ~= 0xF4 or b2 <= 0x8F) then
+                    cp = (b - 0xF0) * 0x40000 + (b2 - 0x80) * 0x1000 + (b3 - 0x80) * 0x40 + (b4 - 0x80)
+                    size = 4
+                end
+            end
+            if cp then
+                i = i + size
+                return cp
+            else
+                i = i + 1 -- skip invalid byte
+            end
+        end
+    end
+end
+
+local function cp_to_utf8(cp)
+    -- Encode a Unicode code point to a UTF-8 byte string.
+    -- Compatible with LuaJIT / Lua 5.1 (no utf8 library required).
+    if cp <= 0x7F then
+        return string.char(cp)
+    elseif cp <= 0x7FF then
+        local hi = math.floor(cp / 0x40)
+        return string.char(0xC0 + hi, 0x80 + cp % 0x40)
+    elseif cp <= 0xFFFF then
+        local hi = math.floor(cp / 0x1000)
+        local mid = math.floor(cp / 0x40) % 0x40
+        return string.char(0xE0 + hi, 0x80 + mid, 0x80 + cp % 0x40)
+    elseif cp <= 0x10FFFF then
+        local hi = math.floor(cp / 0x40000)
+        local mid1 = math.floor(cp / 0x1000) % 0x40
+        local mid2 = math.floor(cp / 0x40) % 0x40
+        return string.char(0xF0 + hi, 0x80 + mid1, 0x80 + mid2, 0x80 + cp % 0x40)
+    end
+    return "" -- invalid code point
+end
+
 local function sanitize_filename(text)
     -- Produce a filesystem-safe prefix:
     --   1. Walk the string as UTF-8 code points, dropping strip-list points
@@ -152,27 +220,16 @@ local function sanitize_filename(text)
         return ""
     end
     local out = {}
-    -- utf8.codes raises on invalid UTF-8; fall back to the raw string so a
-    -- stray byte from a misconfigured source does not kill the timer callback.
-    local ok_iter, err = pcall(function()
-        for _, cp in utf8.codes(text) do
-            if UNICODE_STRIP[cp] then
-                -- drop
-            elseif is_unicode_space(cp) then
-                out[#out + 1] = " "
-            else
-                out[#out + 1] = utf8.char(cp)
-            end
+    for cp in utf8_codepoints(text) do
+        if UNICODE_STRIP[cp] then
+            -- drop
+        elseif is_unicode_space(cp) then
+            out[#out + 1] = " "
+        else
+            out[#out + 1] = cp_to_utf8(cp)
         end
-    end)
-    local cleaned
-    if ok_iter then
-        cleaned = table.concat(out)
-    else
-        obs.script_log(obs.LOG_WARNING,
-            "Text source contains invalid UTF-8; using raw bytes (" .. tostring(err) .. ")")
-        cleaned = text:gsub("%c", " ")
     end
+    local cleaned = table.concat(out)
     cleaned = cleaned:gsub("%s+", " ")
     local trimmed = cleaned:match("^%s*(.-)%s*$") or ""
     local sanitized = trimmed:gsub('[<>:"|?*/\\]', "-")
