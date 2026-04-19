@@ -1,0 +1,3 @@
+[submodule "lib/obs-websocket"]
+	path = lib/obs-websocket
+	url = https://github.com/obsproject/obs-websocket.git

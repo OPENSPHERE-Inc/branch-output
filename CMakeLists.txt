@@ -34,12 +34,15 @@ if(ENABLE_QT)
                AUTORCC ON)
 endif()
 
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/lib/obs-websocket/lib)
+
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE src/plugin-main.cpp
           src/plugin-streaming.cpp
           src/plugin-stream-recording.cpp
           src/plugin-replay-buffer.cpp
+          src/plugin-websocket.cpp
           src/plugin-ui.cpp
           src/utils.cpp
           src/audio/audio-capture.cpp

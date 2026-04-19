@@ -33,6 +33,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "video/filter-video-capture.hpp"
 #include "plugin-support.h"
 #include "plugin-main.hpp"
+#include "plugin-websocket.hpp"
 #include "utils.hpp"
 
 #define SETTINGS_JSON_NAME "recently.json"
@@ -1928,10 +1929,14 @@ void obs_module_post_load()
     // after unload.
     proc_handler_t *ph = obs_get_proc_handler();
     proc_handler_add(ph, "void osi_branch_output_get_filter_list(out string json)", onGetFilterList, nullptr);
+
+    registerWebSocketVendorRequests();
 }
 
 void obs_module_unload()
 {
+    unregisterWebSocketVendorRequests();
+
     // Publish nullptr before destroying the widget so subsequent loads in
     // onGetFilterList() bail out. A worker that already holds a non-null
     // pointer will either (a) take the cross-thread branch and be released
