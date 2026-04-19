@@ -27,6 +27,7 @@ Usage:
 
 import json
 import time
+import unicodedata
 import obspython as obs
 
 # Proc and filter constants
@@ -72,8 +73,8 @@ def get_branch_output_filters():
                         filter_uuid = item.get("filter_uuid", "")
                         if source_uuid and filter_uuid:
                             filters.append((source_name, source_uuid, filter_name, filter_uuid))
-                except json.JSONDecodeError:
-                    obs.script_log(obs.LOG_WARNING, "Failed to parse filter list JSON")
+                except json.JSONDecodeError as e:
+                    obs.script_log(obs.LOG_WARNING, f"Failed to parse filter list JSON: {e}")
     finally:
         obs.calldata_free(cd)
 
@@ -91,7 +92,8 @@ def parse_selected_filter(value):
 def sanitize_filename(text):
     """Produce a filesystem-safe prefix.
 
-    1. Replace all control characters (incl. CR/LF/TAB) with a single space
+    1. Replace all Unicode "Other" category characters (Cc/Cf/Cs/Cn/Co),
+       including CR/LF/TAB and zero-width format controls, with a single space
     2. Collapse runs of whitespace to a single space and trim
     3. Replace filesystem-unsafe characters with "-"
     4. Strip trailing dots/spaces (Windows disallows these at end of filename)
@@ -99,8 +101,13 @@ def sanitize_filename(text):
     """
     if text is None:
         return ""
-    # Replace control characters with a space
-    cleaned = "".join(ch if ch.isprintable() or ch == " " else " " for ch in text)
+    # Fold Unicode "Other" category (Cc/Cf/Cs/Cn/Co) to space. Keeps the
+    # literal space explicitly so the following split()/join() collapses
+    # runs, and avoids str.isprintable() which would leak ZWJ/BiDi marks.
+    cleaned = "".join(
+        ch if ch == " " or unicodedata.category(ch)[0] != "C" else " "
+        for ch in text
+    )
     # Collapse runs of whitespace and trim
     trimmed = " ".join(cleaned.split())
     # Replace filesystem-unsafe characters
@@ -305,11 +312,9 @@ def script_properties():
     if sources:
         for source in sources:
             source_id = obs.obs_source_get_unversioned_id(source)
-            # text_gdiplus_v3 / text_ft2_source_v2 are listed as a forward-
-            # compatibility reserve; OBS 30.1.x currently only ships up to
-            # text_gdiplus_v2 and text_ft2_source_v2. Kept as an explicit
-            # allowlist (rather than a startswith("text_") match) so that new
-            # unrelated source types cannot be picked up accidentally.
+            # Explicit allowlist (rather than startswith("text_")) to avoid
+            # picking up unrelated future source types. _v3 etc. are
+            # forward-compat reservations.
             if source_id in ("text_gdiplus", "text_gdiplus_v2", "text_gdiplus_v3",
                              "text_ft2_source", "text_ft2_source_v2"):
                 name = obs.obs_source_get_name(source)

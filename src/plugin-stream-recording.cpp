@@ -405,17 +405,11 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
         // Recording is active
         if (filter->splitRecordingEnabled && !filter->recordingPending) {
             // Split file enabled: update format setting, then trigger split outside mutex.
-            //
-            // Note on lock ordering: obs_output_update() is called here while still
-            // holding outputMutex. This is intentional and matches the existing pattern
-            // used by restartRecordingOutput() (see obs_output_update call at the top
-            // of that function) and by onOverrideReplayBufferFilenameFormat() in
-            // plugin-replay-buffer.cpp. None of the OBS output signal callbacks used
-            // by this filter re-enter outputMutex while an output lock is held, so the
-            // (outputMutex -> obs_output internal lock) ordering does not collide with
-            // any reverse path in this codebase. If a future change introduces a code
-            // path that takes outputMutex from inside an obs_output signal handler,
-            // this call must be hoisted out of the mutex scope.
+            // obs_output_update() is called while holding outputMutex. Safe today
+            // because no obs_output signal handler in this plugin reacquires
+            // outputMutex from a different thread; same-thread re-entry is handled
+            // by outputMutex being PTHREAD_MUTEX_RECURSIVE.
+            // FIXME: hoist this call outside the mutex scope if that invariant ever breaks.
             OBSDataAutoRelease filterSettings = obs_source_get_settings(filter->filterSource);
             bool noSpace = obs_data_get_bool(filterSettings, "no_space_filename");
             QString appliedFormat = filter->applyFilenameFormatArgs(

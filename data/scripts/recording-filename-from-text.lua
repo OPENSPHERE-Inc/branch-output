@@ -128,11 +128,8 @@ local UNICODE_STRIP = {
 }
 
 local function is_unicode_space(cp)
-    -- Non-ASCII whitespace-like code points that must be normalized to a
-    -- regular space so trim/collapse below can remove them. ASCII control
-    -- characters (including CR/LF/TAB) and DEL are also folded here.
-    -- Mirrors the broader set Python's str.isprintable()/str.split() treats
-    -- as whitespace in the Python variant.
+    -- Whitespace-like code points folded to ASCII space so the trim/collapse
+    -- pass below can remove them. Includes ASCII control chars and DEL.
     return cp < 0x20 or cp == 0x7F
         or cp == 0xA0            -- NBSP
         or (cp >= 0x2000 and cp <= 0x200A) -- en/em space family
@@ -418,21 +415,11 @@ local function update_recording_format()
 end
 
 clear_override = function()
-    -- Clear the filename format override by sending an empty string.
-    -- Sets override_cleared = true to suppress redundant proc calls on
-    -- subsequent timer ticks until a new format is applied or the
-    -- selection changes.
-    -- Also reset the cached text state so that if the text source
-    -- reappears later with the same content as before, the override
-    -- is re-applied rather than being suppressed by the early-return
-    -- "same text" check in update_recording_format().
-    --
-    -- Note: resetting last_applied_time to 0 intentionally bypasses the
-    -- THROTTLE_SECONDS window on the next successful apply. This is the
-    -- desired behavior so that a source that disappears and returns can
-    -- re-apply its override immediately rather than waiting out the
-    -- throttle. If the text source flaps rapidly, the throttle will not
-    -- suppress those transitions.
+    -- Clear the override (empty string) and reset cached state so that when
+    -- a text source reappears with identical content it re-applies instead
+    -- of being swallowed by the "same text" early-return. Resetting
+    -- last_applied_time to 0 intentionally bypasses THROTTLE_SECONDS so a
+    -- vanish-and-return cycle isn't forced to wait out the throttle.
     last_text = nil
     last_applied_text = nil
     last_applied_time = 0
@@ -486,11 +473,9 @@ function script_properties()
     if sources ~= nil then
         for _, source in ipairs(sources) do
             local source_id = obs.obs_source_get_unversioned_id(source)
-            -- text_gdiplus_v3 / text_ft2_source_v2 are listed as a forward-
-            -- compatibility reserve; OBS 30.1.x currently only ships up to
-            -- text_gdiplus_v2 and text_ft2_source_v2. Kept as an explicit
-            -- allowlist (rather than a "^text_" prefix match) so that new
-            -- unrelated source types cannot be picked up accidentally.
+            -- Explicit allowlist (rather than a "text_" prefix match) to
+            -- avoid picking up unrelated future source types. _v3 etc. are
+            -- forward-compat reservations.
             if source_id == "text_gdiplus" or source_id == "text_gdiplus_v2"
                 or source_id == "text_gdiplus_v3"
                 or source_id == "text_ft2_source" or source_id == "text_ft2_source_v2" then
@@ -550,9 +535,6 @@ function script_update(settings)
     -- filter so it reverts to its own setting.
     if text_source_uuid == "" then
         clear_override()
-        last_text = nil
-        last_applied_text = nil
-        last_applied_time = 0
         return
     end
 
