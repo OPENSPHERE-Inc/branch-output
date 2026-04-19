@@ -101,6 +101,17 @@ The orchestrator (you) acts as the parallel-review lead directly, launching indi
 
 **Exclusion of repeatedly rejected findings:** Only **findings that have been raised across 2 or more rounds and rejected (Won't Fix / No Action Needed) each time** may be explicitly listed as exclusions in the reviewer's prompt. **Do NOT exclude findings rejected only once** (the judgment may change on the second review, so the finding must be surfaced again).
 
+**Information the orchestrator MUST NOT pass to reviewers (convergence-bias prevention):**
+
+Reviewer subagents do not have access to prior-round review documents. Leaking prior-round context into the prompt biases the reviewer into suppressing findings that should legitimately be surfaced. The following MUST NOT appear in the reviewer prompt:
+
+- Prior-round finding counts, count trends, or language suggesting "converging," "findings are fewer now," or similar trend framing.
+- Prior-round finding IDs (`C-1`, `M-1`, etc.) — subagents do not have the prior-round document, so these IDs are meaningless to them.
+- Statistics such as how many findings were Fixed / Won't Fix in prior rounds.
+- Suggestions that the review bar should be raised or lowered as rounds progress.
+
+When listing a repeatedly-rejected finding as an exclusion, use only **a short summary of the finding's content** — do not use finding IDs. For example: "The ×× finding in △△ function of ○○ file (rejected as Won't Fix in 2 prior rounds)."
+
 **Execution procedure:**
 
 1. Print to console: `## Round {N} — Step 1: Parallel Review`
@@ -108,7 +119,8 @@ The orchestrator (you) acts as the parallel-review lead directly, launching indi
    - Review target: Commits unique to the current branch and working tree changes
    - Their specialist perspective
    - Read-only instruction, outputting findings with severity labels (Critical / Major / Minor / Info)
-   - {If there are repeatedly rejected findings only:} List of such findings to exclude, with summary and round numbers of rejection
+   - {Only if there are findings rejected across 2 or more prior rounds:} List of such findings to exclude — provide a **content summary** (no prior-round IDs) and round numbers of rejection
+   - Reviewers must follow the review-pedantry guard in `.claude/rules/review-pedantry.md` (auto-loaded).
 3. Aggregate all reviewer results and write the review document following parallel-review's report format:
    - File path: {current round file path} (language: user's chat language)
    - **Merge reviewer-level duplicates** (if multiple reviewers report the same finding, merge into one entry and note which reviewers identified it).
@@ -196,6 +208,8 @@ Instructions:
    - Check for edge cases, thread safety, and resource leaks.
    - If the self-review reveals problems, fix them before reporting back.
 4. Report what you changed and why, including any self-review corrections.
+
+Follow the comment discipline in `.claude/rules/comment-discipline.md` (auto-loaded).
 
 **Prohibited:**
 - Do NOT create git commits (the orchestrator performs consolidated commits).

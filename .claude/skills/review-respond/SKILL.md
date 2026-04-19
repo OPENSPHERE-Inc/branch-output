@@ -148,6 +148,8 @@ Instructions:
    - Check for edge cases, thread safety, and resource leaks.
    - If the self-review reveals problems, fix them before reporting back.
 4. Report what you changed and why, including any self-review corrections.
+
+Follow the comment discipline in `.claude/rules/comment-discipline.md` (auto-loaded).
 ```
 
 ### Parallelization
