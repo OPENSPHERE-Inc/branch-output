@@ -242,6 +242,25 @@ local function sanitize_filename(text)
     if WINDOWS_RESERVED[sanitized:upper()] or WINDOWS_RESERVED[base_before_dot:upper()] then
         sanitized = "_" .. sanitized
     end
+    -- Truncate to 200 bytes to stay within NTFS filename component (255) /
+    -- MAX_PATH (260) limits, leaving room for the base format and extension.
+    -- Respect UTF-8 codepoint boundaries.
+    local MAX_FILENAME_BYTES = 200
+    if #sanitized > MAX_FILENAME_BYTES then
+        local parts = {}
+        local total = 0
+        for cp in utf8_codepoints(sanitized) do
+            local encoded = cp_to_utf8(cp)
+            if total + #encoded > MAX_FILENAME_BYTES then
+                break
+            end
+            parts[#parts + 1] = encoded
+            total = total + #encoded
+        end
+        sanitized = table.concat(parts)
+        -- Re-strip trailing dots/spaces that may appear at the new end.
+        sanitized = sanitized:gsub("[%.%s]+$", "")
+    end
     return sanitized
 end
 
@@ -368,10 +387,19 @@ local function update_replay_buffer_format()
     -- Build the new format string
     local sanitized = sanitize_filename(current_text)
     local new_format
-    if sanitized ~= "" then
+    if sanitized ~= "" and base_format ~= "" then
         new_format = sanitized .. " " .. base_format
-    else
+    elseif sanitized ~= "" then
+        new_format = sanitized
+    elseif base_format ~= "" then
         new_format = base_format
+    else
+        -- Both text and base format are empty; clear the override
+        -- rather than sending an ambiguous empty string.
+        if not override_cleared then
+            clear_override()
+        end
+        return
     end
 
     if call_override_proc(filter_uuid, new_format) then
@@ -416,7 +444,8 @@ function script_description()
     return [[<b>Replay Buffer Filename from Text Source</b><br><br>
 Overrides a Branch Output replay buffer's filename format based on the content of a Text (GDI+) source.<br><br>
 The text content is prepended to the base format on every change.<br><br>
-<b>Note:</b> This script overrides the filename format at runtime. The filter's own property settings are not modified. When this script is unloaded, the override is cleared and the filter reverts to its original filename format setting.]]
+<b>Note:</b> This script overrides the filename format at runtime. The filter's own property settings are not modified. When this script is unloaded, the override is cleared and the filter reverts to its original filename format setting.<br><br>
+<b>Limitation:</b> Text sources inside Groups are not listed in the dropdown. Only top-level sources are shown.]]
 end
 
 function script_properties()
@@ -490,6 +519,14 @@ function script_update(settings)
             obs.script_log(obs.LOG_INFO,
                 LOG_LABEL .. " override cleared on previous filter (uuid: " .. old_filter_uuid .. ")")
         end
+    end
+
+    -- If text source was deselected, clear the override on the current
+    -- filter so it reverts to its own setting.
+    if text_source_uuid == "" then
+        clear_override()
+        last_text = nil
+        return
     end
 
     -- Reset last_text to force update on next tick
