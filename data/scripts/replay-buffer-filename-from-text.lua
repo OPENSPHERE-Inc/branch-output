@@ -120,48 +120,59 @@ local WINDOWS_RESERVED = {
     LPT6 = true, LPT7 = true, LPT8 = true, LPT9 = true,
 }
 
+-- Unicode code points to drop entirely (zero-width / BOM-like contaminants from
+-- Word/Excel/SNS copy-paste in ja/zh/ko workflows).
+local UNICODE_STRIP = {
+    [0x200B] = true, -- ZERO WIDTH SPACE
+    [0xFEFF] = true, -- BOM / ZWNBSP
+}
+
+local function is_unicode_space(cp)
+    -- Non-ASCII whitespace-like code points that must be normalized to a
+    -- regular space so trim/collapse below can remove them. ASCII control
+    -- characters (including CR/LF/TAB) and DEL are also folded here.
+    -- Mirrors the broader set Python's str.isprintable()/str.split() treats
+    -- as whitespace in the Python variant.
+    return cp < 0x20 or cp == 0x7F
+        or cp == 0xA0            -- NBSP
+        or (cp >= 0x2000 and cp <= 0x200A) -- en/em space family
+        or cp == 0x2028 or cp == 0x2029    -- line / paragraph separator
+        or cp == 0x3000          -- ideographic space
+end
+
 local function sanitize_filename(text)
     -- Produce a filesystem-safe prefix:
-    --   1. Replace all control characters (incl. CR/LF/TAB) with a single space
-    --   2. Normalize common non-ASCII whitespace-like code points to a regular
-    --      ASCII space so they participate in the trim/collapse below. Lua
-    --      patterns operate on bytes, so %s only matches ASCII whitespace and
-    --      would otherwise leave NBSP / ideographic space / BOM intact at the
-    --      end of the filename (Windows disallows trailing spaces).
-    --      Covered: NBSP (U+00A0), ideographic space (U+3000), BOM / ZWNBSP
-    --      (U+FEFF), zero-width space (U+200B), line separator (U+2028),
-    --      paragraph separator (U+2029). The Python variant relies on
-    --      str.isprintable()/str.split() for equivalent behavior on a broader
-    --      set of Unicode whitespace — keeping this list in sync with the
-    --      Python behavior is the reason this block exists at all.
-    --      IMPORTANT: each gsub target must be the **complete** multi-byte
-    --      UTF-8 sequence. Lua patterns operate on bytes and treat the first
-    --      byte of a multi-byte code point as a plain literal, so do NOT try
-    --      to escape/group these via character classes — use one gsub call
-    --      per exact byte sequence instead. Several of the bytes below
-    --      (e.g. 0xE2, 0xEF) would be Lua pattern magic characters only when
-    --      prefixed with `%`, so the raw decimal escapes are safe as-is.
-    --   3. Collapse runs of whitespace to a single space and trim
-    --   4. Replace filesystem-unsafe characters with "-"
-    --   5. Strip trailing dots/spaces (Windows disallows these at end of filename)
-    --   6. Prefix an underscore if the result collides with a Windows reserved name
+    --   1. Walk the string as UTF-8 code points, dropping strip-list points
+    --      and folding whitespace-like points to a single ASCII space.
+    --   2. Collapse runs of whitespace and trim.
+    --   3. Replace filesystem-unsafe characters with "-".
+    --   4. Strip trailing dots/spaces (Windows disallows these at end of filename).
+    --   5. Prefix an underscore if the result collides with a Windows reserved name.
     if text == nil then
         return ""
     end
-    local cleaned = text:gsub("%c", " ")
-    -- NBSP U+00A0 -> 0xC2 0xA0
-    cleaned = cleaned:gsub("\194\160", " ")
-    -- Ideographic space U+3000 -> 0xE3 0x80 0x80
-    cleaned = cleaned:gsub("\227\128\128", " ")
-    -- Zero-width space U+200B -> 0xE2 0x80 0x8B (strip; common invisible
-    -- contaminant from Word/Excel/SNS copy-paste in ja/zh/ko workflows)
-    cleaned = cleaned:gsub("\226\128\139", "")
-    -- Line separator U+2028 -> 0xE2 0x80 0xA8
-    cleaned = cleaned:gsub("\226\128\168", " ")
-    -- Paragraph separator U+2029 -> 0xE2 0x80 0xA9
-    cleaned = cleaned:gsub("\226\128\169", " ")
-    -- BOM / ZWNBSP U+FEFF -> 0xEF 0xBB 0xBF (strip any occurrence, not only leading)
-    cleaned = cleaned:gsub("\239\187\191", "")
+    local out = {}
+    -- utf8.codes raises on invalid UTF-8; fall back to the raw string so a
+    -- stray byte from a misconfigured source does not kill the timer callback.
+    local ok_iter, err = pcall(function()
+        for _, cp in utf8.codes(text) do
+            if UNICODE_STRIP[cp] then
+                -- drop
+            elseif is_unicode_space(cp) then
+                out[#out + 1] = " "
+            else
+                out[#out + 1] = utf8.char(cp)
+            end
+        end
+    end)
+    local cleaned
+    if ok_iter then
+        cleaned = table.concat(out)
+    else
+        obs.script_log(obs.LOG_WARNING,
+            "Text source contains invalid UTF-8; using raw bytes (" .. tostring(err) .. ")")
+        cleaned = text:gsub("%c", " ")
+    end
     cleaned = cleaned:gsub("%s+", " ")
     local trimmed = cleaned:match("^%s*(.-)%s*$") or ""
     local sanitized = trimmed:gsub('[<>:"|?*/\\]', "-")
