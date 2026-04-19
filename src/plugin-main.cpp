@@ -43,14 +43,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-// Use std::atomic for the status dock pointer so that:
-//   * obs_module_unload() can publish the nullptr store before (or after, with
-//     sequential consistency) obs_frontend_remove_dock() destroys the widget
-//   * asynchronous proc-handler callers (e.g. onGetFilterList invoked from
-//     obs-websocket worker threads) can safely load the pointer without a
-//     data race, even on weakly-ordered architectures such as ARM64.
-// Loads/stores default to sequential consistency which is fine for the low
-// call frequency at plugin load/unload.
+// Atomic so proc-handler callers on worker threads can load without a race,
+// and obs_module_unload() can publish nullptr with well-defined ordering
+// before obs_frontend_remove_dock() destroys the widget.
 std::atomic<BranchOutputStatusDock *> statusDock{nullptr};
 pthread_mutex_t pluginMutex;
 
@@ -143,21 +138,13 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     initialized = isStreamingGroupEnabled(settings) || obs_data_get_bool(settings, "stream_recording") ||
                   obs_data_get_bool(settings, "replay_buffer");
 
-    // Register proc handlers for external script access.
+    // Register proc handlers for external script access. These handlers
+    // live on filterSource and die with it. Scripts keep us alive while a
+    // call is in flight by holding a strong ref via obs_get_source_by_uuid()
+    // (weak-ref CAS refuses to bump a strong count of 0).
     //
-    // Lifetime note: libobs does not expose proc_handler_remove(), so these
-    // handlers remain registered on filterSource for as long as filterSource
-    // itself is alive. That is intentionally safe here because the proc
-    // handler is owned by filterSource and is destroyed together with it:
-    // OBS tears down a filter by first severing it from its parent (so no
-    // new proc calls can arrive from script threads via
-    // obs_get_source_by_uuid -> obs_source_get_proc_handler), then calling
-    // the filter's destroy callback (which deletes this BranchOutputFilter),
-    // and only after that freeing the source's proc_handler_t. The `this`
-    // pointer captured above therefore remains valid for the full window in
-    // which a call can actually dispatch. If libobs ever adds a
-    // proc_handler_remove() API, pair the removal with ~BranchOutputFilter()
-    // to close the theoretical race window explicitly.
+    // FIXME: libobs has no proc_handler_remove(). If it gains one, pair
+    // unregistration with ~BranchOutputFilter().
     proc_handler_t *ph = obs_source_get_proc_handler(filterSource);
     proc_handler_add(
         ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat, this
@@ -1879,28 +1866,29 @@ static void onGetFilterList(void *, calldata_t *cd)
     OBSDataAutoRelease wrapper = obs_data_create();
     OBSDataArrayAutoRelease array = obs_data_array_create();
 
-    // Load the atomic pointer once so we observe a consistent value for the
-    // duration of this invocation. obs_module_unload() stores nullptr before
-    // calling obs_frontend_remove_dock(), so any non-null load here also
-    // happens-before the dock's destruction (see obs_module_unload()).
+    // Dispatch the QWidget read to the UI thread so this proc is safe from
+    // any thread. BlockingQueuedConnection would deadlock if the caller is
+    // already on the target thread, so short-circuit in that case.
+    //
+    // See obs_module_unload() for the residual race against widget destruction.
     auto *dock = statusDock.load();
     if (dock) {
-        // BranchOutputStatusDock is a QFrame subclass and, like any QWidget, must be
-        // accessed only from the UI (Qt) thread. Dispatch the read to the UI thread so
-        // this proc handler is safe to call from any thread, as documented in API.md.
-        //
-        // Qt::BlockingQueuedConnection deadlocks (or asserts) when the caller already
-        // lives on the target object's thread, so detect that case and call directly.
-        // This keeps the proc usable from both background threads (e.g. obs-websocket
-        // worker threads) and the UI thread itself (e.g. frontend plugins / hotkeys).
         QList<BranchOutputFilterInfo> filterList;
         if (QThread::currentThread() == dock->thread()) {
             filterList = dock->getFilterList();
         } else {
-            QMetaObject::invokeMethod(
+            // Qt 6 returns false if the receiver was destroyed mid-call;
+            // log it so callers can tell this apart from an empty list.
+            const bool dispatched = QMetaObject::invokeMethod(
                 dock, "getFilterList", Qt::BlockingQueuedConnection,
                 Q_RETURN_ARG(QList<BranchOutputFilterInfo>, filterList)
             );
+            if (!dispatched) {
+                obs_log(
+                    LOG_WARNING, "osi_branch_output_get_filter_list: UI thread dispatch failed "
+                                 "(dock may have been destroyed); returning empty list"
+                );
+            }
         }
 
         for (const auto &info : filterList) {
@@ -1915,51 +1903,49 @@ static void onGetFilterList(void *, calldata_t *cd)
 
     obs_data_set_array(wrapper, "filters", array);
 
-    // obs_data_get_json() returns a pointer into an internal buffer owned by
-    // `wrapper`, which remains alive for the rest of this scope. calldata_set_string()
-    // copies the string into the calldata, so the pointer's lifetime is sufficient.
-    // Defensive NULL fallback: obs_data_get_json should not return NULL in practice,
-    // but guarantee callers always see a valid (non-NULL) JSON string.
+    // Defensive "{}" fallback: obs_data_get_json is expected to return a
+    // valid pointer here but guarantee a non-NULL result to callers.
     const char *json = obs_data_get_json(wrapper);
     calldata_set_string(cd, "json", json ? json : "{}");
 }
 
 void obs_module_post_load()
 {
+    // Pre-register on the main thread before the proc below is published.
+    // QList<T> auto-registers lazily; doing it up front closes the race if
+    // the first cross-thread invocation beats the lazy registration.
     qRegisterMetaType<BranchOutputFilter *>();
     qRegisterMetaType<BranchOutputFilterInfo>();
     qRegisterMetaType<QList<BranchOutputFilterInfo>>();
 
     statusDock.store(BranchOutputFilter::createOutputStatusDock());
 
-    // Register global proc handler for script access (obs-websocket style)
+    // Register global proc handler for script access (obs-websocket style).
+    // data=nullptr: onGetFilterList resolves the dock via the statusDock
+    // atomic so the unload sequence is the single source of truth.
+    //
+    // FIXME: libobs has no removal API for the global proc table, so the
+    // function pointer outlives obs_module_unload(). Callers must not dispatch
+    // after unload.
     proc_handler_t *ph = obs_get_proc_handler();
     proc_handler_add(ph, "void osi_branch_output_get_filter_list(out string json)", onGetFilterList, nullptr);
 }
 
 void obs_module_unload()
 {
-    // Remove and destroy status dock to avoid leaks (hotkeys, timers, widgets).
+    // Publish nullptr before destroying the widget so subsequent loads in
+    // onGetFilterList() bail out. A worker that already holds a non-null
+    // pointer will either (a) take the cross-thread branch and be released
+    // by Qt 6's ~QObject() cleanup with invokeMethod() returning false
+    // (implementation detail, not a spec guarantee), or (b) take the
+    // same-thread branch, which is only reachable on the UI thread and
+    // therefore cannot race this unloader.
     //
-    // Order matters: publish nullptr **before** obs_frontend_remove_dock()
-    // destroys the widget. Because libobs has no proc_handler_remove, a
-    // concurrent call to onGetFilterList() could already be in flight on
-    // another thread (e.g. an obs-websocket worker). By nulling first, any
-    // subsequent load in onGetFilterList() sees nullptr and bails out.
-    //
-    // A load that happened *before* our store still observes the live dock
-    // pointer; in that case getFilterList() routes through the Qt UI thread
-    // via BlockingQueuedConnection. Since obs_module_unload() itself runs on
-    // the UI thread at shutdown, such an in-flight worker may briefly block
-    // until the UI thread services the queued event after
-    // obs_frontend_remove_dock() returns. The window is bounded by dock
-    // teardown and no dangling reference can reach the widget, but it is
-    // not strictly lock-free; a future improvement could drain in-flight
-    // callers explicitly (e.g. an inflight counter) before tearing down.
-    // std::atomic (seq_cst) enforces the ordering on weakly-ordered targets
-    // such as ARM64.
-    if (auto *dock = statusDock.exchange(nullptr)) {
-        Q_UNUSED(dock);
+    // FIXME: narrow worker race remains. Proper fixes are an in-flight
+    // counter (wait for zero before remove_dock) or QPointer + deleteLater
+    // + processEvents drain. Current code accepts the race because the
+    // worst observable effect is a silent empty result.
+    if (statusDock.exchange(nullptr) != nullptr) {
         obs_frontend_remove_dock("BranchOutputStatusDock");
     }
 
