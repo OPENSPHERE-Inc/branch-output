@@ -45,7 +45,7 @@ OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 // Use std::atomic for the status dock pointer so that:
 //   * obs_module_unload() can publish the nullptr store before (or after, with
-//     acquire/release semantics) obs_frontend_remove_dock() destroys the widget
+//     sequential consistency) obs_frontend_remove_dock() destroys the widget
 //   * asynchronous proc-handler callers (e.g. onGetFilterList invoked from
 //     obs-websocket worker threads) can safely load the pointer without a
 //     data race, even on weakly-ordered architectures such as ARM64.
@@ -1930,7 +1930,7 @@ void obs_module_post_load()
     qRegisterMetaType<BranchOutputFilterInfo>();
     qRegisterMetaType<QList<BranchOutputFilterInfo>>();
 
-    statusDock = BranchOutputFilter::createOutputStatusDock();
+    statusDock.store(BranchOutputFilter::createOutputStatusDock());
 
     // Register global proc handler for script access (obs-websocket style)
     proc_handler_t *ph = obs_get_proc_handler();
