@@ -99,6 +99,18 @@ For each `[Action Required]` finding that is not yet resolved:
 
 For "Needs Investigation" items, read the referenced files and make a final Will Fix / Won't Fix decision.
 
+### Won't Fix Guidelines
+
+Classify a finding as **Won't Fix** when it falls into any of the following categories:
+
+1. **Out of scope of the branch diff** — The finding targets code or behavior that is not part of what this branch modifies.
+2. **Pre-existing bugs not introduced by this branch** — The issue already existed before this branch; the branch did not introduce it.
+3. **Based on incorrect hypotheses or technically wrong** — The finding misreads the code or is based on an invalid technical premise.
+4. **Acceptable given the purpose, use case, or intended users** — The behavior can reasonably be inferred as acceptable from the project's goals, target environment, or expected users.
+5. **Refactoring that is merely a matter of preference** — Stylistic or structural suggestions without a concrete correctness, safety, performance, or maintainability rationale.
+
+**High-severity exception:** Even if a finding matches the above and is marked Won't Fix in this cycle, if its severity is **Critical** or **Major**, explicitly recommend addressing it in a separate PR. Record this in the Won't Fix rationale, e.g. "Won't Fix — pre-existing bug, recommend fixing in a separate PR."
+
 Present the triage results to the user and wait for confirmation before proceeding to fixes.
 
 ## Step 3 — Fix

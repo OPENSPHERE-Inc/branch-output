@@ -140,6 +140,15 @@ Tasks:
    - **Will Fix** — Valid finding, should be addressed → finalize action line to `**[Action Required]**`
    - **Won't Fix** — Not applicable / false positive / acceptable risk (state the reason) → finalize action line to `**[No Action Needed]**`
    - **Needs Investigation** — Read the relevant source to decide → finalize as Will Fix / Won't Fix
+
+   **Won't Fix guidelines** — Classify as Won't Fix when the finding falls into any of the following:
+   - Out of scope of the branch diff.
+   - Pre-existing bugs not introduced by this branch.
+   - Based on incorrect hypotheses or technically wrong.
+   - Acceptable given the project's purpose, use case, or intended users.
+   - Refactoring that is merely a matter of preference.
+
+   **High-severity exception:** If a Won't Fix finding is **Critical** or **Major**, recommend addressing it in a separate PR in the rationale (e.g. "Won't Fix — pre-existing bug, recommend fixing in a separate PR").
 2. **Assign specialist** — For each Will Fix, assign the most appropriate specialist (cpp-sensei / qt-sensei / obs-sensei / network-sensei / av-sensei / devops-sensei / python-sensei / lua-sensei).
 3. **Reflect results in the review document** — Write results back to the review document ({current round file path}). Preserve the existing structure and edit as follows:
    - **Will Fix** findings: Finalize action line to `**[Action Required]**`. Add an HTML comment `<!-- Triage: Will Fix / assignee: cpp-sensei -->` immediately after the action line to note the assignee.
