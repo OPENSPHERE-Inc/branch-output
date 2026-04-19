@@ -108,12 +108,15 @@ def sanitize_filename(text):
         sanitized = sanitized.replace(ch, '-')
     # Strip trailing dots/spaces
     sanitized = sanitized.rstrip(". ")
-    # Limit length to avoid exceeding Windows MAX_PATH (260 chars).
-    # The base format, extension, and directory path also consume path budget,
-    # so cap the user-controlled prefix conservatively.
-    MAX_SANITIZED_LENGTH = 128
-    if len(sanitized) > MAX_SANITIZED_LENGTH:
-        sanitized = sanitized[:MAX_SANITIZED_LENGTH].rstrip(". ")
+    # Truncate to 200 bytes to stay within NTFS filename component (255) /
+    # MAX_PATH (260) limits, leaving room for the base format and extension.
+    # Respect UTF-8 codepoint boundaries.
+    MAX_FILENAME_BYTES = 200
+    if len(sanitized.encode('utf-8')) > MAX_FILENAME_BYTES:
+        truncated = sanitized.encode('utf-8')[:MAX_FILENAME_BYTES]
+        sanitized = truncated.decode('utf-8', errors='ignore')
+        # Re-strip trailing dots/spaces that may appear at the new end.
+        sanitized = sanitized.rstrip(". ")
     # Prefix underscore for Windows reserved names. Windows treats reserved
     # device names as reserved even when followed by an extension
     # (e.g. "CON.txt"), so also check the portion before the first dot.
@@ -270,7 +273,9 @@ def script_description():
         "<b>Note:</b> This script overrides the filename format at runtime. "
         "The filter's own property settings are not modified. "
         "When this script is unloaded, the override is cleared and "
-        "the filter reverts to its original filename format setting."
+        "the filter reverts to its original filename format setting.<br><br>"
+        "<b>Limitation:</b> Text sources inside Groups are not listed in the dropdown. "
+        "Only top-level sources are shown."
     )
 
 
@@ -341,6 +346,13 @@ def script_update(settings):
         if call_override_proc(old_filter_uuid, ""):
             obs.script_log(obs.LOG_INFO,
                            f"{LOG_LABEL} override cleared on previous filter (uuid: {old_filter_uuid})")
+
+    # If text source was deselected, clear the override on the current
+    # filter so it reverts to its own setting.
+    if not text_source_uuid:
+        clear_override()
+        last_text = None
+        return
 
     # Reset state to force update on next tick
     last_text = None
