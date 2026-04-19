@@ -55,9 +55,11 @@ struct BranchOutputFilterInfo {
 };
 Q_DECLARE_METATYPE(BranchOutputFilterInfo)
 // NOTE: Qt 6 automatically provides metatype support for QList<T> when T itself
-// has been declared via Q_DECLARE_METATYPE, so declaring QList<BranchOutputFilterInfo>
-// explicitly is redundant. qRegisterMetaType<QList<BranchOutputFilterInfo>>() in
-// obs_module_post_load() is sufficient for QMetaObject::invokeMethod / Q_RETURN_ARG.
+// has been declared via Q_DECLARE_METATYPE, so a separate Q_DECLARE_METATYPE for
+// QList<BranchOutputFilterInfo> is not needed here. The explicit
+// qRegisterMetaType<QList<BranchOutputFilterInfo>>() call in obs_module_post_load()
+// is kept as a safety net to guarantee the type is registered before any
+// cross-thread QMetaObject::invokeMethod / Q_RETURN_ARG usage.
 
 class OutputTableCellItem : public QTableWidgetItem {
     enum ItemRole {
