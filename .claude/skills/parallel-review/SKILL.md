@@ -159,9 +159,7 @@ Description of the issue. May span multiple paragraphs and include code snippets
 
 ## Minor
 
-### m-1 — `foo.cpp:15`
-
-...
+No findings.
 
 ---
 
@@ -187,4 +185,4 @@ Description of the issue. May span multiple paragraphs and include code snippets
 - Each finding is its own `###` subsection with heading `{finding-id} — `{location}``.
 - Under each finding, list metadata (Reviewer(s)) as a bullet list, then the Finding description and Action on their own lines with bold labels.
 - Separate findings with `---` horizontal rules so downstream tools (review-respond, review-resolve) can append status lines after the Action but before the `---` separator.
-- Severity sections (`## Critical` / `## Major` / `## Minor` / `## Info`) may be omitted entirely if they contain no findings.
+- Severity sections (`## Critical` / `## Major` / `## Minor` / `## Info`) with no findings must still have their heading emitted, with the body set to `No findings.` (do not omit the section).

@@ -269,9 +269,12 @@ Record the round results:
 - **Fix count** — Number of findings fixed in Step 2.3 onward and verified as **Resolved** or `✓ Verified` in Step 2.4 / 2.5.
 - **Unresolved count** — Number of findings that still have Feedback remaining after 3 iterations of the Step 2.5 re-fix loop (Will Fix findings that could not be resolved within this round).
 
-**Strict maximum round enforcement:** Increment the round counter. If it is ≤ `--max-rounds`, return to Step 2.1. Once the counter reaches (or exceeds) `--max-rounds`, **always** proceed to Step 3 (Final Report), even if unresolved findings remain. Executing a round beyond the maximum is prohibited.
+**Conditions to proceed to the next round:** Only when **all** of the following are satisfied, increment the round counter and return to Step 2.1:
 
-(This step performs only the max-rounds check above. The round-exit decision based on absence of Will Fix findings is already made in Step 2.2.)
+1. The round counter is ≤ `--max-rounds`.
+2. At least one finding was fixed in this round (i.e., fix count ≥ 1, meaning some change was made to source files).
+
+If any condition is not met, proceed to Step 3 (Final Report). The rationale for condition 2 is that if nothing was fixed, the next round would review the same target in the same state and produce the same findings — a pointless repetition.
 
 ## Step 3 — Final Report
 
