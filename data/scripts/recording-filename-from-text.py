@@ -59,22 +59,24 @@ def get_branch_output_filters():
     ph = obs.obs_get_proc_handler()
     cd = obs.calldata_create()
 
-    if obs.proc_handler_call(ph, "osi_branch_output_get_filter_list", cd):
-        json_str = obs.calldata_string(cd, "json")
-        if json_str:
-            try:
-                data = json.loads(json_str)
-                for item in data.get("filters", []):
-                    source_name = item.get("source_name", "")
-                    source_uuid = item.get("source_uuid", "")
-                    filter_name = item.get("filter_name", "")
-                    filter_uuid = item.get("filter_uuid", "")
-                    if source_uuid and filter_uuid:
-                        filters.append((source_name, source_uuid, filter_name, filter_uuid))
-            except json.JSONDecodeError:
-                obs.script_log(obs.LOG_WARNING, "Failed to parse filter list JSON")
+    try:
+        if obs.proc_handler_call(ph, "osi_branch_output_get_filter_list", cd):
+            json_str = obs.calldata_string(cd, "json")
+            if json_str:
+                try:
+                    data = json.loads(json_str)
+                    for item in data.get("filters", []):
+                        source_name = item.get("source_name", "")
+                        source_uuid = item.get("source_uuid", "")
+                        filter_name = item.get("filter_name", "")
+                        filter_uuid = item.get("filter_uuid", "")
+                        if source_uuid and filter_uuid:
+                            filters.append((source_name, source_uuid, filter_name, filter_uuid))
+                except json.JSONDecodeError:
+                    obs.script_log(obs.LOG_WARNING, "Failed to parse filter list JSON")
+    finally:
+        obs.calldata_free(cd)
 
-    obs.calldata_free(cd)
     return filters
 
 
@@ -107,6 +109,12 @@ def sanitize_filename(text):
         sanitized = sanitized.replace(ch, '-')
     # Strip trailing dots/spaces
     sanitized = sanitized.rstrip(". ")
+    # Limit length to avoid exceeding Windows MAX_PATH (260 chars).
+    # The base format, extension, and directory path also consume path budget,
+    # so cap the user-controlled prefix conservatively.
+    MAX_SANITIZED_LENGTH = 128
+    if len(sanitized) > MAX_SANITIZED_LENGTH:
+        sanitized = sanitized[:MAX_SANITIZED_LENGTH].rstrip(". ")
     # Prefix underscore for Windows reserved names. Windows treats reserved
     # device names as reserved even when followed by an extension
     # (e.g. "CON.txt"), so also check the portion before the first dot.
@@ -187,9 +195,11 @@ def call_override_proc(filter_uuid, format_value):
 
         ph = obs.obs_source_get_proc_handler(bo_filter)
         cd = obs.calldata_create()
-        obs.calldata_set_string(cd, "format", format_value)
-        result = obs.proc_handler_call(ph, OVERRIDE_PROC, cd)
-        obs.calldata_free(cd)
+        try:
+            obs.calldata_set_string(cd, "format", format_value)
+            result = obs.proc_handler_call(ph, OVERRIDE_PROC, cd)
+        finally:
+            obs.calldata_free(cd)
 
         if not result:
             obs.script_log(obs.LOG_WARNING,

@@ -1919,9 +1919,9 @@ static void onGetFilterList(void *, calldata_t *cd)
     // `wrapper`, which remains alive for the rest of this scope. calldata_set_string()
     // copies the string into the calldata, so the pointer's lifetime is sufficient.
     // Defensive NULL fallback: obs_data_get_json should not return NULL in practice,
-    // but guarantee callers always see a valid (non-NULL) value.
+    // but guarantee callers always see a valid (non-NULL) JSON string.
     const char *json = obs_data_get_json(wrapper);
-    calldata_set_string(cd, "json", json ? json : "");
+    calldata_set_string(cd, "json", json ? json : "{}");
 }
 
 void obs_module_post_load()
