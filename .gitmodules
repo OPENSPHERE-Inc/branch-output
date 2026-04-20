@@ -1,3 +1,6 @@
 [submodule "lib/obs-websocket"]
 	path = lib/obs-websocket
 	url = https://github.com/obsproject/obs-websocket.git
+	# Tag-pinned: do NOT use `git submodule update --remote`.
+	# To update, fetch and checkout a specific release tag manually
+	# (see https://github.com/obsproject/obs-websocket/tags).
