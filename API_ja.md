@@ -277,3 +277,99 @@ Windows の場合、スクリプトは OBS インストールパスの `data\obs
 #### replay-buffer-filename-from-text
 
 テキストインプットの値を読み取ってリプレイバッファー保存時のファイル名フォーマットに反映します。オーバーライドは次回の保存時に反映され、リプレイバッファー自体は再起動しません。
+
+## obs-websocket vendor request
+
+上記のファイル名オーバーライドおよびフィルター一覧取得機能は、**obs-websocket の vendor request** としても公開されています。OBS のスクリプト機構を使わず、外部ツールやボット、Stream Deck 連携から obs-websocket 経由で直接操作できます。
+
+- **ベンダー名 (vendor name):** `osi_branch_output`
+- **トランスポート:** obs-websocket 5.x の `CallVendorRequest`
+- **必要条件:** obs-websocket がインストールされていること。未インストールの場合は以下のリクエストは利用できません。
+
+### セキュリティ
+
+vendor request は obs-websocket に認証済みのクライアントからのみ受け付けられます。obs-websocket のパスワードは以下のすべてのリクエストに対するフルアクセス権と等価であり、OBS ユーザー相当の資格情報として扱ってください。obs-websocket を `localhost` 以外に公開する場合は、強固なパスワードと信頼できるネットワークを使用してください。
+
+### 制限事項
+
+- `filter_uuid` は 36 文字のハイフン付き UUID 文字列である必要があります。それ以外の形式は `"filter_uuid must be a UUID string"` で拒否されます。
+- `format` は 1024 バイトを超えられません。超過した場合は `"format too long"` で拒否されます。
+- `filter_uuid` は Branch Output フィルターソースに解決される必要があります。他種別のソースや存在しない UUID は `"Filter not found"` で拒否されます。
+- 録画遷移中（ファイル分割、リスタート）にリクエストを連続送信すると、遷移完了までリクエストがブロックされることがあります。
+
+### `get_filter_list`
+
+現在 OBS にロードされている Branch Output フィルター一覧を列挙します。
+
+| 項目 | 内容 |
+|------|------|
+| リクエストタイプ | `get_filter_list` |
+| リクエストデータ | *(なし)* |
+| レスポンス | `{ "success": bool, "error"?: string, "filters": array }` |
+
+`filters` 配列の各要素:
+
+| フィールド | 内容 |
+|-----------|------|
+| `source_name` | Branch Output フィルターが適用されている親ソース／シーン名 |
+| `source_uuid` | 親ソース／シーンの UUID |
+| `filter_name` | Branch Output フィルターの名前 |
+| `filter_uuid` | Branch Output フィルターの UUID（下記のオーバーライドリクエストで使用） |
+
+**プライベートソース**に適用されたフィルターは、ステータスドックの表示ルールに合わせて結果から除外されます。
+
+### `override_recording_filename_format`
+
+指定した Branch Output フィルターのストリーム録画ファイル名フォーマットをオーバーライドします。
+
+| 項目 | 内容 |
+|------|------|
+| リクエストタイプ | `override_recording_filename_format` |
+| リクエストデータ | `{ "filter_uuid": string, "format": string }` |
+| レスポンス | `{ "success": bool, "error"?: string }` |
+| オーバーライド解除 | `format` に空文字列を指定 |
+
+録画中の挙動はプロシージャハンドラと同一です。上記の[録画中の挙動](#ストリーム録画ファイル名フォーマットのオーバーライド)を参照してください。
+
+### `override_replay_buffer_filename_format`
+
+指定した Branch Output フィルターのリプレイバッファ保存ファイル名フォーマットをオーバーライドします。
+
+| 項目 | 内容 |
+|------|------|
+| リクエストタイプ | `override_replay_buffer_filename_format` |
+| リクエストデータ | `{ "filter_uuid": string, "format": string }` |
+| レスポンス | `{ "success": bool, "error"?: string }` |
+| オーバーライド解除 | `format` に空文字列を指定 |
+
+オーバーライドは次回のリプレイバッファ保存時に反映されます。
+
+### 呼び出し例
+
+リクエスト:
+
+```json
+{
+  "requestType": "CallVendorRequest",
+  "requestData": {
+    "vendorName": "osi_branch_output",
+    "requestType": "override_recording_filename_format",
+    "requestData": {
+      "filter_uuid": "87654321-4321-4321-4321-cba987654321",
+      "format": "%CCYY-%MM-%DD %hh-%mm-%ss MyScene"
+    }
+  }
+}
+```
+
+成功時のレスポンス:
+
+```json
+{ "success": true }
+```
+
+失敗時のレスポンス（UUID 形式不正の場合）:
+
+```json
+{ "success": false, "error": "filter_uuid must be a UUID string" }
+```

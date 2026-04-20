@@ -121,7 +121,7 @@ Branch Output は、外部スクリプトから実行時にストリーム録画
 
 サンプルスクリプト（`recording-filename-from-text` および `replay-buffer-filename-from-text`）は、**Python**（`.py`）版と **Lua**（`.lua`）版の両方がプラグインに同梱されており、OBS の Tools → Scripts からロードして使用できます。
 
-プロシージャのシグネチャ、サンプルコード、同梱スクリプトの使用方法については [API リファレンス](./API_ja.md) を参照してください。
+プロシージャのシグネチャ、サンプルコード、同梱スクリプトの使用方法については [API リファレンス](./API_ja.md) を参照してください。同じファイル名オーバーライド機能は **obs-websocket の vendor request** としても公開されており、外部ツールやボット、Stream Deck 連携から利用できます。詳細は API リファレンスを参照してください。
 
 # Development
 

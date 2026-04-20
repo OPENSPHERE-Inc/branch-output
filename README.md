@@ -119,7 +119,7 @@ Branch Output exposes public procedures that let external scripts override the s
 
 Sample scripts (`recording-filename-from-text` and `replay-buffer-filename-from-text`) are bundled with the plugin in both **Python** (`.py`) and **Lua** (`.lua`) variants, and can be loaded from OBS Tools → Scripts.
 
-See the [API reference](./API.md) for procedure signatures, sample code, and usage instructions for the bundled scripts.
+See the [API reference](./API.md) for procedure signatures, sample code, and usage instructions for the bundled scripts. The same filename-override operations are also exposed as **obs-websocket vendor requests** for integration with external tools, bots, and Stream Deck plugins — see the API reference for details.
 
 # Development
 

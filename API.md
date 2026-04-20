@@ -277,3 +277,99 @@ Reads the value of a text input and applies it to the stream recording filename 
 #### replay-buffer-filename-from-text
 
 Reads the value of a text input and applies it to the replay buffer save filename format. The override takes effect on the next save; the replay buffer itself is not restarted.
+
+## obs-websocket Vendor Requests
+
+The same filename-override operations (and the filter listing helper) are also exposed as **obs-websocket vendor requests**, so external tools, bots, or Stream Deck integrations can drive the plugin over obs-websocket without running an in-process OBS script.
+
+- **Vendor name:** `osi_branch_output`
+- **Transport:** obs-websocket 5.x `CallVendorRequest`
+- **Requirement:** obs-websocket must be installed. If not, these requests are unavailable.
+
+### Security
+
+Vendor requests require a client authenticated with obs-websocket. The obs-websocket password grants full access to every request below — treat it as a credential equivalent to OBS user authority. When exposing obs-websocket beyond `localhost`, use a strong password and a trusted network.
+
+### Limitations
+
+- `filter_uuid` must be a 36-character hyphenated UUID string. Other shapes are rejected with `"filter_uuid must be a UUID string"`.
+- `format` cannot exceed 1024 bytes. Longer strings are rejected with `"format too long"`.
+- `filter_uuid` must resolve to a Branch Output filter source. Any other source (including non-existent UUIDs) is rejected with `"Filter not found"`.
+- Do not send bursts of requests while a recording transition (file split, restart) is in progress — a request may block until the transition completes.
+
+### `get_filter_list`
+
+Enumerates every Branch Output filter currently loaded in OBS.
+
+| Item | Description |
+|------|-------------|
+| Request type | `get_filter_list` |
+| Request data | *(none)* |
+| Response | `{ "success": bool, "error"?: string, "filters": array }` |
+
+Each element of the `filters` array:
+
+| Field | Description |
+|-------|-------------|
+| `source_name` | Name of the parent source/scene to which the Branch Output filter is applied |
+| `source_uuid` | UUID of the parent source/scene |
+| `filter_name` | Name of the Branch Output filter |
+| `filter_uuid` | UUID of the Branch Output filter (used with the override requests below) |
+
+Filters applied to **private sources** are excluded, matching the Status Dock's visibility rules.
+
+### `override_recording_filename_format`
+
+Overrides the stream-recording filename format for a specific Branch Output filter.
+
+| Item | Description |
+|------|-------------|
+| Request type | `override_recording_filename_format` |
+| Request data | `{ "filter_uuid": string, "format": string }` |
+| Response | `{ "success": bool, "error"?: string }` |
+| Clearing the override | Pass an empty string for `format`. |
+
+Behavior during recording is identical to the proc handler — see [Overriding the Stream Recording Filename Format](#overriding-the-stream-recording-filename-format) above.
+
+### `override_replay_buffer_filename_format`
+
+Overrides the replay buffer save filename format for a specific Branch Output filter.
+
+| Item | Description |
+|------|-------------|
+| Request type | `override_replay_buffer_filename_format` |
+| Request data | `{ "filter_uuid": string, "format": string }` |
+| Response | `{ "success": bool, "error"?: string }` |
+| Clearing the override | Pass an empty string for `format`. |
+
+The override takes effect on the next replay buffer save.
+
+### Example
+
+Request:
+
+```json
+{
+  "requestType": "CallVendorRequest",
+  "requestData": {
+    "vendorName": "osi_branch_output",
+    "requestType": "override_recording_filename_format",
+    "requestData": {
+      "filter_uuid": "87654321-4321-4321-4321-cba987654321",
+      "format": "%CCYY-%MM-%DD %hh-%mm-%ss MyScene"
+    }
+  }
+}
+```
+
+Successful response:
+
+```json
+{ "success": true }
+```
+
+Failure response (invalid UUID):
+
+```json
+{ "success": false, "error": "filter_uuid must be a UUID string" }
+```
