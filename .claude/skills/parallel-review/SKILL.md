@@ -66,7 +66,9 @@ If a base branch is not specified via `--base`, use `main` or `master` if either
 4. Decide whether to add optional reviewers based on the scope. If the user has explicitly requested specific reviewers, include them.
 5. **Fetch diff information** — To avoid each reviewer redundantly running `git diff` themselves, the review leader fetches the diff once here and passes it to each reviewer:
    - Changed file list: `git diff --name-status {base}..HEAD`
-   - Diff body: `git diff {base}..HEAD` plus unstaged/staged changes (`git diff` and `git diff --cached`)
+   - Commit diff: `git diff {base}..HEAD`
+   - Staged changes: `git diff --cached`
+   - Unstaged changes: `git diff`
    - Branch-specific commit log: `git log {base}..HEAD --oneline`
 6. **Decide how to pass the diff to reviewers based on its size:**
    - **Less than 1,000 lines:** Embed directly in the prompt.
