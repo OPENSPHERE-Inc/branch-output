@@ -107,20 +107,26 @@ The orchestrator (you) directly takes on the "review leader" role of parallel-re
 
 ### 2.2 — Review Response (review-respond)
 
-The orchestrator (you) directly takes on the "review response leader" role of review-respond, performing the entire flow of §§ Step 2 through Step 5 plus the `--commit` option.
+The orchestrator (you) directly takes on the "review response leader" role of review-respond. Refer to `.claude/skills/review-respond/SKILL.md` for detailed procedures, formats, and prompt templates.
 
 **Input document:** {this round's file path}
+
+**Responsibility breakdown:**
+
+- **Step 1 (Parse) · Step 4 (Format & Build Verification) · Step 5 (Document Update) · Step 6 (Summary)** — Performed directly by the orchestrator.
+- **Step 2 (Triage)** — Delegated to a single triage sub-agent following review-respond § Step 2.
+- **Step 3 (Fix)** — Each Will Fix finding delegated to the appropriate specialist sub-agent following review-respond § Step 3 (parallelization rules also follow that skill).
 
 **Round-specific overrides:**
 
 - **Progress display (console output):**
   - At triage start: `## Round {N} — Step 2: Triage`
   - At fix / verify / update / commit start: `## Round {N} — Step 3: Review Respond (Fix & Verify)`
-- **Additional constraints for the triage sub-agent (§ Step 2 — Triage):**
+- **Additional constraints for the triage sub-agent (Step 2):**
   - Do not reference the previous round's review document (to avoid bias).
   - Explicitly state the Will Fix count in the report (including when zero).
 - **Round-loop control after triage:**
-  - **0 Will Fix findings:** Skip § Step 3 onward; end the round loop → proceed to Step 3 (Final Report).
+  - **0 Will Fix findings:** Skip Step 3 onward; end the round loop → proceed to Step 3 (Final Report).
   - **1 or more Will Fix findings:** Proceed to the fix phase. If `--confirm-triage` is enabled, wait for user confirmation.
 
 ### 2.3 — Review Verification (review-resolve)
@@ -153,7 +159,7 @@ Read the verification result from Step 2.3 and check whether any findings requir
    ```
 
 2. Print to console: `## Round {N} — Step 4: Feedback Fix (attempt {M}/3)`
-   Use the same fix / verification / update sub-step method as Step 2.2 (review-respond §§ Step 3 through Step 5). Append the following to the prompt for each specialist:
+   Use the same fix / verification / update method as Step 2.2 (review-respond § Step 3 through Step 5). Append the following to the prompt for each specialist:
    ```
    Re-fix taking into account the Feedback lines in the review document (`> - **{id} Feedback:** ...`).
    ```
