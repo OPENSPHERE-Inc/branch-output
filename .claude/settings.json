@@ -22,7 +22,12 @@
       "Bash(gh pr checks:*)",
       "Bash(cmake:*)",
       "Bash(clang-format:*)",
-      "Bash(cmake-format:*)"
+      "Bash(cmake-format:*)",
+      "Bash(.claude/scripts/fetch-diff.sh:*)",
+      "Skill(parallel-review)",
+      "Skill(review-resolve)",
+      "Skill(review-respond)",
+      "Skill(review-rounds)"
     ],
     "deny": [
       "Read(.env.production)",

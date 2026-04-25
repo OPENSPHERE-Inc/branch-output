@@ -1,7 +1,7 @@
 ---
 name: parallel-review
 description: Launch parallel code review with multiple specialist reviewers
-allowed-tools: Agent, Read, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*)
+allowed-tools: Agent, Read, Glob, Grep, Bash(.claude/scripts/fetch-diff.sh:*), Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(rm:*)
 ---
 
 # Parallel Code Review
@@ -64,19 +64,17 @@ If a base branch is not specified via `--base`, use `main` or `master` if either
 2. Read the target files or diff to grasp the scope.
 3. Produce a concise summary of the review content.
 4. Decide whether to add optional reviewers based on the scope. If the user has explicitly requested specific reviewers, include them.
-5. **Fetch diff information** — To avoid each reviewer redundantly running `git diff` themselves, the review leader fetches the diff once here and passes it to each reviewer:
-   - Changed file list: `git diff --name-status {base}..HEAD`
-   - Commit diff: `git diff {base}..HEAD`
-   - Staged changes: `git diff --cached`
-   - Unstaged changes: `git diff`
-   - Branch-specific commit log: `git log {base}..HEAD --oneline`
-6. **Decide how to pass the diff to reviewers based on its size:**
-   - **Less than 1,000 lines:** Embed directly in the prompt.
-   - **1,000 lines or more:** Save to a temporary file and pass the **file path** to reviewers, who will read it via Read.
-     - **Use the OS temporary directory as the save location** (avoid `.claude/` paths since they prompt for user confirmation).
-       - Windows: `%TEMP%` / `$TEMP` (typically `C:\Users\{user}\AppData\Local\Temp`)
-       - macOS / Linux: `$TMPDIR` or `/tmp`
-     - Example filename: `parallel-review-diff-{timestamp}.txt`
+5. **Fetch diff information via script** — Run the provided script to collect all diff data atomically. This guarantees every section — including unstaged changes — is always written to the output file:
+   - Generate an output file path: `/tmp/parallel-review-diff-{timestamp}.txt`
+   - Run the script:
+     ```
+     .claude/scripts/fetch-diff.sh {base} {output-file-path}
+     ```
+   - The script writes the following sections in order:
+     Changed Files / Commit Log / Commit Diff (`{base}..HEAD`) / Staged Changes / Unstaged Changes
+6. **Decide how to pass the diff to reviewers based on file size:**
+   - **Less than 1,000 lines:** Read the file and embed its contents directly in the reviewer prompt.
+   - **1,000 lines or more:** Pass the **file path** to reviewers, who will read it via Read.
 
 ## Step 2 — Launching Parallel Reviewers
 
@@ -84,7 +82,7 @@ Launch all selected reviewers **simultaneously** using the Agent tool. Each revi
 
 ### Agent Prompt Template
 
-Pass the following prompt to each reviewer agent (filling in `{name}`, `{perspective}`, `{targets}`, `{base}`, `{changed_files_list}`, `{diff_content_or_path}`, and `{commit_log_summary}`):
+Pass the following prompt to each reviewer agent (filling in `{name}`, `{perspective}`, `{targets}`, `{base}`, and `{diff_content_or_path}`):
 
 ```
 You are {name}. Conduct a code review from your specialist perspective.
@@ -94,15 +92,11 @@ You are {name}. Conduct a code review from your specialist perspective.
 Review target:
 - Scope: {targets}
 - Base branch: {base}
-- Changed files:
-  {changed_files_list}
 
-Diff (fetched by the review leader):
+Diff and context (pre-fetched by the review leader via script):
 {diff_content_or_path}
-(For under 1,000 lines, embed the diff body directly here. For 1,000+ lines, write `File path: {path}` and have the reviewer read it via Read.)
-
-Branch-specific commits:
-{commit_log_summary}
+(Contains these sections: Changed Files / Commit Log / Commit Diff / Staged Changes / Unstaged Changes.
+For under 1,000 lines, the contents are embedded above. For 1,000+ lines, a file path is shown — read it via Read.)
 
 Rules:
 - You are read-only. Do not edit or write any files under any circumstances.
