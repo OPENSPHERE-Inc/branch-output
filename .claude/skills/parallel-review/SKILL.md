@@ -58,12 +58,23 @@ If a base branch is not specified via `--base`, use `main` or `master` if either
 | **python-sensei** | Python scripting, OBS Studio script design and conventions | Reviews involving Python scripts or OBS Script files |
 | **lua-sensei** | Lua scripting, OBS Studio Script (Lua) design and conventions | Reviews involving Lua scripts or OBS Lua Script files |
 
-## Step 1 — Identify Review Scope
+## Step 1 — Identify Review Scope and Fetch Diff
 
 1. Based on the user's input, identify the files or diff to review.
 2. Read the target files or diff to grasp the scope.
 3. Produce a concise summary of the review content.
 4. Decide whether to add optional reviewers based on the scope. If the user has explicitly requested specific reviewers, include them.
+5. **Fetch diff information** — To avoid each reviewer redundantly running `git diff` themselves, the review leader fetches the diff once here and passes it to each reviewer:
+   - Changed file list: `git diff --name-status {base}..HEAD`
+   - Diff body: `git diff {base}..HEAD` plus unstaged/staged changes (`git diff` and `git diff --cached`)
+   - Branch-specific commit log: `git log {base}..HEAD --oneline`
+6. **Decide how to pass the diff to reviewers based on its size:**
+   - **Less than 1,000 lines:** Embed directly in the prompt.
+   - **1,000 lines or more:** Save to a temporary file and pass the **file path** to reviewers, who will read it via Read.
+     - **Use the OS temporary directory as the save location** (avoid `.claude/` paths since they prompt for user confirmation).
+       - Windows: `%TEMP%` / `$TEMP` (typically `C:\Users\{user}\AppData\Local\Temp`)
+       - macOS / Linux: `$TMPDIR` or `/tmp`
+     - Example filename: `parallel-review-diff-{timestamp}.txt`
 
 ## Step 2 — Launching Parallel Reviewers
 
@@ -71,18 +82,30 @@ Launch all selected reviewers **simultaneously** using the Agent tool. Each revi
 
 ### Agent Prompt Template
 
-Pass the following prompt to each reviewer agent (filling in `{name}`, `{perspective}`, and `{targets}`):
+Pass the following prompt to each reviewer agent (filling in `{name}`, `{perspective}`, `{targets}`, `{base}`, `{changed_files_list}`, `{diff_content_or_path}`, and `{commit_log_summary}`):
 
 ```
 You are {name}. Conduct a code review from your specialist perspective.
 
 **Your perspective:** {perspective}
 
-Review the following files/changes: {targets}
+Review target:
+- Scope: {targets}
+- Base branch: {base}
+- Changed files:
+  {changed_files_list}
+
+Diff (fetched by the review leader):
+{diff_content_or_path}
+(For under 1,000 lines, embed the diff body directly here. For 1,000+ lines, write `File path: {path}` and have the reviewer read it via Read.)
+
+Branch-specific commits:
+{commit_log_summary}
 
 Rules:
 - You are read-only. Do not edit or write any files under any circumstances.
-- For code investigation, you may use only Read, Glob, Grep, and Bash (limited to grep, ls, find, git log, git diff, git show).
+- **The diff has been provided above. You do not need to re-run `git diff` / `git log` / `git show`.** If you need surrounding code (context lines around changes, callers, related files, etc.), use Read.
+- For code investigation, you may use only Read, Glob, Grep, and Bash (limited to grep, ls, find).
 - Tag each finding with one of the following severity labels:
   - **Critical** — Fatal / high risk (must fix)
   - **Major** — Medium risk (should fix)
@@ -174,3 +197,7 @@ No findings
 - List metadata (Reviewers) as bullets per finding, then write the finding under a bold "Finding:" label.
 - Separate findings with a `---` horizontal rule. **Do not output Status lines** (out of scope for this skill).
 - Severity sections (`## Critical` / `## Major` / `## Minor` / `## Info`) with no findings must **not be omitted**: emit the heading and write `No findings` in the body.
+
+## Step 4 — Clean Up Temporary Files
+
+If the diff was saved to a temporary file in Step 1 item 6, delete that file after report integration completes. The diff is no longer needed once all reviewers have finished.
