@@ -6,295 +6,184 @@ allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), B
 
 # Automated Review Rounds
 
-You are the **review round orchestrator**. Your role is to automatically iterate the parallel-review / review-respond / review-resolve workflow across multiple rounds until no actionable findings remain.
-
-**Role separation:** Delegate individual reviews, triage, fixes, and verification to subagents whenever possible. However, consolidation of subagent results (parallel-review aggregation), format verification, build verification, final review document updates, and commits are performed by the orchestrator itself (see "Subagent Usage Rules" for details).
+You are the **review round orchestrator**. Your role is to automatically iterate the parallel-review / review-respond / review-resolve flow across multiple rounds, repeating until no actionable findings remain. See "Sub-Agent Usage Rules" for the division of responsibilities between sub-agent delegation and what the orchestrator handles itself.
 
 ## Input
 
-The user may optionally specify an output base path. If the argument is `$ARGUMENTS`, interpret it as the output base path (and options). If no output base path is specified, default to `.claude/tmp/` under the project root.
+The user may optionally specify an output base path. If the argument is `$ARGUMENTS`, interpret it as the output base path (and any options). If no output base path is specified, default to `.claude/tmp/` at the project root.
 
 ## Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--confirm-triage` | OFF | Wait for user confirmation after triage before proceeding to fixes |
-| `--confirm-round` | OFF | Wait for user confirmation before proceeding to the next round when unresolved findings exist |
-| `--commit` | OFF | Create a git commit after each finding is fixed (orchestrator performs consolidated commits) |
-| `--max-rounds N` | 5 | Maximum number of outer loop rounds (1–10) |
-| `--base {branch}` | `main` or `master` | Base branch for comparison (passed to parallel-review) |
+| `--confirm-triage` | OFF | After triage, wait for user confirmation before proceeding to fixes |
+| `--confirm-round` | OFF | After review-resolve, if unresolved findings remain, wait for user confirmation before proceeding to the next round |
+| `--commit` | OFF | Create a git commit after each finding fix (the orchestrator performs aggregated commits) |
+| `--max-rounds N` | 5 | Change the maximum number of outer-loop rounds (1–10) |
+| `--base {branch}` | `main` or `master` | Specify the base branch (passed through to parallel-review) |
 
-## Review Document Naming
+## Review Document File Naming
 
 - **Format:** `{base-path}/{branch-dir}/review-round{N}.md`
-- **Branch name:** Obtained via `git branch --show-current`.
-- **Branch name is used as a directory path** — the entire branch name (including `/`) becomes the directory hierarchy.
-- **Suffix numbering for re-runs on the same branch:** If the `{base-path}/{branch-name}` directory already exists, append a suffix (`{branch-name}_1`, `{branch-name}_2`, ...) to create a new directory. This preserves existing review results.
-  - Suffix selection: Check from `{branch-name}_1` upward and use the smallest number that does not yet exist.
+- **Branch name retrieval:** Use `git branch --show-current` to obtain the current branch name.
+- **Branch name as directory path** — The whole branch name (including `/`) becomes the directory hierarchy verbatim.
+- **Sequential suffixing on re-runs of the same branch:** If `{base-path}/{branch-name}` already exists, create a new directory with a numeric suffix `{branch-name}_1`, `{branch-name}_2`, ... so existing review results are not overwritten.
+  - Suffix selection: probe `{branch-name}_1`, `{branch-name}_2`, ... in order and use the smallest suffix that does not yet exist.
 - **Examples:**
   - First run: branch `feat/add-replay` → `{base-path}/feat/add-replay/review-round1.md`
   - Second run: `feat/add-replay` already exists → `{base-path}/feat/add-replay_1/review-round1.md`
   - Third run: `feat/add-replay_1` also exists → `{base-path}/feat/add-replay_2/review-round1.md`
-  - Branch `dev` → `{base-path}/dev/review-round1.md` (first), `{base-path}/dev_1/review-round1.md` (second)
+  - Branch `dev` → `{base-path}/dev/review-round1.md` (first run), `{base-path}/dev_1/review-round1.md` (second run)
 - **Default base-path:** `.claude/tmp/`
 - Create directories as needed.
-- Retain all round review documents — do not overwrite.
+- Keep all per-round review documents; do not overwrite them.
 
 ## Review Document Language
 
-Write review documents in the **user's chat language**. If the user is communicating in Japanese, write in Japanese; if in English, write in English.
+Write the review document in **the user's chat language**. If the user is conversing in Japanese, write it in Japanese; if in English, write it in English.
 
-## Subagent Usage Rules
+## Sub-Agent Usage Rules
 
-- **Subagent nesting is prohibited** — If you are running as a subagent yourself, you cannot launch further subagents from within.
-- **Tasks that do not launch further subagents themselves may be delegated to a subagent** (one level of nesting is acceptable):
-  - **Individual reviewers (Step 2.1)** — Launch cpp-sensei / qt-sensei / obs-sensei / network-sensei etc. in parallel to review individually.
-  - **Triage and review document editing (Step 2.2 / 2.5)** — Running in a separate context avoids orchestrator bias.
-  - **Individual fixes (Step 2.3 / 2.5)** — Delegate each finding to the appropriate specialist subagent.
-  - **Review-resolve verification (Step 2.4 / 2.5)** — Read-only verification task.
-- On the other hand, **aggregation and orchestration roles are performed by the orchestrator (you) directly**:
-  - **Parallel-review consolidation (Step 2.1)** — Aggregate individual reviewer results into a report. Do NOT delegate the entire parallel-review skill to another agent (that would trigger further subagent nesting).
-  - **Format verification, build verification, review document updates, and commits (Step 2.3 / 2.5)** — Consolidated after all fixes complete.
-- Results from each round are passed forward **only through review documents**.
+- **No nesting of sub-agents** — If you yourself were launched as a sub-agent, you cannot launch further sub-agents from within.
+- **Tasks that themselves do not launch sub-agents may be delegated to sub-agents** (one level of nesting is allowed):
+  - **Individual reviewers (Step 2.1)** — Launch cpp-sensei / qt-sensei / obs-sensei / network-sensei, etc. in parallel for individual reviews.
+  - **Triage / review-document edits (Step 2.2 / 2.4)** — Have a separate context perform the decision and edits to avoid bias.
+  - **Individual fixes (Step 2.2 / 2.4)** — Delegate each finding to the appropriate specialist sub-agent.
+  - **review-resolve verification (Step 2.3 / 2.4)** — A read-only verification task.
+- Conversely, **aggregation and orchestration responsibilities stay with the orchestrator (you yourself)**:
+  - **parallel-review aggregation (Step 2.1)** — Aggregate results from individual reviewers into a report. Do not delegate the entire parallel-review skill to a separate agent (because that would launch further sub-agents).
+  - **review-respond leader role (Step 2.2 / 2.4)** — Aggregate the post-triage delegation of fixes, plus format verification, build verification, review-document update, and commit. Do not delegate the entire review-respond skill to a separate agent.
+- Per-round results are propagated to subsequent steps and rounds **only via the review document**.
 
 ## Flow Overview
 
 ```
-Round 1 Start
-  ├─ Orchestrator acts as parallel-review lead, launching reviewers
-  │   (cpp-sensei, qt-sensei, obs-sensei, network-sensei, etc.) in parallel
-  │   → round1.md generated (reviewer-level dedup only, triage not done)
-  ├─ [Agent A] Triage & document editing
-  │   → round1.md edited, Will Fix findings identified
-  │   (if no Will Fix, end round)
-  ├─ [Specialist agents] Each Will Fix finding fixed in parallel / sequentially
-  ├─ Orchestrator runs format verification, build verification, document update, commit
-  │   → round1.md updated
-  ├─ [Agent B] review-resolve → round1.md verified
-  ├─ Orchestrator checks feedback
-  │   └─ If feedback: [Agent C] re-triage → [specialist agents] re-fix (up to 3 times)
-  │   └─ [Agent D] review-resolve → round1.md re-verified
-  └─ Round 1 End
-Round 2 Start
-  ├─ Orchestrator launches reviewers in parallel (fresh reviewer contexts)
-  │   → round2.md generated
-  ├─ [Agent E] Triage & document editing (prior round docs NOT passed)
+Round 1 starts
+  ├─ 2.1 parallel-review leader role (orchestrator)
+  │     [specialist reviewers] launched in parallel → round1.md generated (untriaged)
+  ├─ 2.2 review-respond leader role (orchestrator)
+  │     [Triage A] → if 0 Will Fix, end the round
+  │     [specialist agents] fix each Will Fix
+  │     orchestrator performs format verification, build verification, document update, and commit
+  ├─ 2.3 review-resolve ([Verify B] sub-agent) → verifies round1.md
+  ├─ 2.4 Feedback re-fix loop (up to 3 iterations)
+  │     If any feedback: [Triage C] → [specialist agents] re-fix → [Verify D]
+  └─ 2.5 Round end → evaluate condition for proceeding to the next round
+Round 2 starts (the previous round's review document is not passed in)
   └─ ...
 ```
 
 ## Step 1 — Initialization
 
-1. Verify the output directory exists; create it if needed.
-2. Get the current branch name.
-3. Parse options.
+1. Verify the existence of the output directory; create it if it does not exist.
+2. Obtain the current branch name.
+3. Parse the options.
 4. Set the round counter to 1.
 
 ## Step 2 — Round Loop
 
-Repeat while the round counter is ≤ `--max-rounds`.
+While the round counter is less than or equal to `--max-rounds`, repeat the following.
 
-### 2.1 — Review (parallel-review)
+### 2.1 — Review Execution (parallel-review)
 
-Regardless of the round, always review the entire target scope. Do NOT pass prior round review documents to the review agents (to avoid bias from prior-round judgments). Deduplication against prior rounds is **not** performed as a rule — resolved findings are already reflected in the source code and should not be re-detected, and handling of repeatedly rejected findings is covered by "Exclusion of repeatedly rejected findings" below.
+The orchestrator (you) directly takes on the "review leader" role of parallel-review. Reviewer roster, reviewer prompt template, severity labels, report format, and format rules follow each section of `.claude/skills/parallel-review/SKILL.md`.
 
-The orchestrator (you) acts as the parallel-review lead directly, launching individual reviewers in parallel and consolidating the report. Follow the review rules in `.claude/skills/parallel-review/SKILL.md` (required/optional reviewers, severity classification, report format, etc.).
-
-**Exclusion of repeatedly rejected findings:** Only **findings that have been raised across 2 or more rounds and rejected (Won't Fix / No Action Needed) each time** may be explicitly listed as exclusions in the reviewer's prompt. **Do NOT exclude findings rejected only once** (the judgment may change on the second review, so the finding must be surfaced again).
-
-**Information the orchestrator MUST NOT pass to reviewers (convergence-bias prevention):**
-
-Reviewer subagents do not have access to prior-round review documents. Leaking prior-round context into the prompt biases the reviewer into suppressing findings that should legitimately be surfaced. The following MUST NOT appear in the reviewer prompt:
-
-- Prior-round finding counts, count trends, or language suggesting "converging," "findings are fewer now," or similar trend framing.
-- Prior-round finding IDs (`C-1`, `M-1`, etc.) — subagents do not have the prior-round document, so these IDs are meaningless to them.
-- Statistics such as how many findings were Fixed / Won't Fix in prior rounds.
-- Suggestions that the review bar should be raised or lowered as rounds progress.
-
-When listing a repeatedly-rejected finding as an exclusion, use only **a short summary of the finding's content** — do not use finding IDs. For example: "The ×× finding in △△ function of ○○ file (rejected as Won't Fix in 2 prior rounds)."
-
-**Execution procedure:**
+**Procedure:**
 
 1. Print to console: `## Round {N} — Step 1: Parallel Review`
-2. Launch reviewer agents **in parallel** via the Agent tool (cpp-sensei / qt-sensei / obs-sensei / network-sensei are required; add av-sensei / devops-sensei / python-sensei / lua-sensei as needed based on scope). Provide each reviewer with:
-   - Review target: Commits unique to the current branch and working tree changes
-   - Their specialist perspective
-   - Read-only instruction, outputting findings with severity labels (Critical / Major / Minor / Info)
-   - {Only if there are findings rejected across 2 or more prior rounds:} List of such findings to exclude — provide a **content summary** (no prior-round IDs) and round numbers of rejection
-   - Reviewers must follow the review-pedantry guard in `.claude/rules/review-pedantry.md` (auto-loaded).
-3. Aggregate all reviewer results and write the review document following parallel-review's report format:
-   - File path: {current round file path} (language: user's chat language)
-   - **Merge reviewer-level duplicates** (if multiple reviewers report the same finding, merge into one entry and note which reviewers identified it).
-   - **Do NOT make the actionable decision (`[Action Required]` / `[No Action Needed]`)** — leave the action line blank or use a placeholder like "(pending triage)" (the decision is made in Step 2.2).
-   - **Do NOT perform deduplication against prior rounds** (not needed per above).
+2. Following the reviewer selection criteria in parallel-review § Reviewers, **launch reviewers in parallel** via the Agent tool. Use the template in parallel-review § Step 2 — Launching Parallel Reviewers as the prompt.
+3. Following the procedure and report format in parallel-review § Step 3 — Report Integration, aggregate the results and emit the review document (file path: {this round's file path}; language: the user's chat language).
 
-### 2.2 — Triage & Review Document Editing
+**Round-specific overrides:**
 
-Delegate the task of triaging each finding in the review document generated by Step 2.1 (deciding whether to act) and writing the results back to the review document to a **single specialist subagent**. Running in a separate context avoids bias from the orchestrator's accumulated context and produces fresher judgment.
+- **Do not pass the previous round's review document to reviewers** — to avoid letting prior judgments bias the new round.
+- **Do not deduplicate against previous rounds** — already-resolved findings have been reflected in source code, so they are assumed not to be re-detected.
+- **Convergence-induction prevention — never include the following in reviewer prompts:**
+  - Counts of past-round findings, count trends, or claims like "things are converging."
+  - Past-round finding IDs (`C-1`, `M-1`, etc.).
+  - Past-round Fixed / Won't Fix counts or other statistics.
+  - Instructions to make reviews stricter or looser as rounds progress.
+- **Excluding repeatedly-rejected findings:** Only **findings rejected as Won't Fix in two or more consecutive rounds** may be explicitly listed for exclusion in the reviewer prompt. **A finding marked Won't Fix only once is not excluded** (to leave room for re-judgment). Use a **short summary of the finding content only** for the exclusion notice; do not use IDs (e.g., "the finding about XX in YY function in ZZ file (Won't Fix in the past 2 rounds)").
 
-**Prior round review documents are NOT passed to the subagent:**
-- Findings that were resolved in prior rounds are already reflected in the source code, so they should not be re-detected in the review (= deduplication is unnecessary).
-- Prior-round judgments could bias the current-round triage and produce incorrect decisions.
-- Suppression of repeatedly rejected findings is already handled by the exclusion instruction in Step 2.1's reviewer prompts.
+### 2.2 — Review Response (review-respond)
 
-**Execution procedure:**
+The orchestrator (you) directly takes on the "review response leader" role of review-respond, performing the entire flow of §§ Step 2 through Step 5 plus the `--commit` option.
 
-1. Print to console: `## Round {N} — Step 2: Triage`
-2. Launch a **new subagent** via the Agent tool and delegate the following:
+**Input document:** {this round's file path}
 
-```
-Triage the findings in the review document and reflect the results in the document.
-**This task does NOT modify source code.** Only edit the review document and report triage results.
+**Round-specific overrides:**
 
-Review document: {current round file path}
+- **Progress display (console output):**
+  - At triage start: `## Round {N} — Step 2: Triage`
+  - At fix / verify / update / commit start: `## Round {N} — Step 3: Review Respond (Fix & Verify)`
+- **Additional constraints for the triage sub-agent (§ Step 2 — Triage):**
+  - Do not reference the previous round's review document (to avoid bias).
+  - Explicitly state the Will Fix count in the report (including when zero).
+- **Round-loop control after triage:**
+  - **0 Will Fix findings:** Skip § Step 3 onward; end the round loop → proceed to Step 3 (Final Report).
+  - **1 or more Will Fix findings:** Proceed to the fix phase. If `--confirm-triage` is enabled, wait for user confirmation.
 
-Tasks:
-1. **Triage** — For each finding (action line is a placeholder at Step 2.1), classify as one of:
-   - **Will Fix** — Valid finding, should be addressed → finalize action line to `**[Action Required]**`
-   - **Won't Fix** — Not applicable / false positive / acceptable risk (state the reason) → finalize action line to `**[No Action Needed]**`
-   - **Needs Investigation** — Read the relevant source to decide → finalize as Will Fix / Won't Fix
-
-   **Won't Fix guidelines** — Classify as Won't Fix when the finding falls into any of the following:
-   - Out of scope of the branch diff.
-   - Pre-existing bugs not introduced by this branch.
-   - Based on incorrect hypotheses or technically wrong.
-   - Acceptable given the project's purpose, use case, or intended users.
-   - Refactoring that is merely a matter of preference.
-
-   **High-severity exception:** If a Won't Fix finding is **Critical** or **Major**, recommend addressing it in a separate PR in the rationale (e.g. "Won't Fix — pre-existing bug, recommend fixing in a separate PR").
-2. **Assign specialist** — For each Will Fix, assign the most appropriate specialist (cpp-sensei / qt-sensei / obs-sensei / network-sensei / av-sensei / devops-sensei / python-sensei / lua-sensei).
-3. **Reflect results in the review document** — Write results back to the review document ({current round file path}). Preserve the existing structure and edit as follows:
-   - **Will Fix** findings: Finalize action line to `**[Action Required]**`. Add an HTML comment `<!-- Triage: Will Fix / assignee: cpp-sensei -->` immediately after the action line to note the assignee.
-   - **Won't Fix** findings: Finalize action line to `**[No Action Needed]**` and append a status line `> **{id} Status: Won't Fix** — {reason}` immediately after the action line (before the `---` separator).
-
-Report format:
-- Triage results:
-  | Finding ID | Decision | Assignee | Rationale |
-  |------------|----------|----------|-----------|
-  | C-1 | Will Fix | cpp-sensei | ... |
-  | M-2 | Won't Fix | — | Pre-existing code, out of scope |
-- Presence of actionable (Will Fix) findings.
-```
-
-3. Receive the results from the subagent.
-4. **Actionable check:**
-   - **No Will Fix findings:** Exit the round loop and proceed to Step 3 (Final Report).
-   - **Will Fix findings exist:** Proceed to the next step.
-5. {If --confirm-triage enabled:} Present triage results to the user and wait for confirmation before proceeding. If disabled, proceed without confirmation.
-
-### 2.3 — Respond (Fix)
-
-Delegate each Will Fix finding's fix to the appropriate specialist subagent (one-level nesting is acceptable). After all fixes complete, the orchestrator consolidates format verification, build verification, document update, and commits. See `.claude/skills/review-respond/SKILL.md` from Step 3 onward for detailed rules.
-
-**Execution procedure:**
-
-1. Print to console: `## Round {N} — Step 3: Review Respond (Fix)`
-2. For each Will Fix finding from Step 2.2's triage results, launch the assigned specialist subagent via the Agent tool to perform the fix:
-   - **Parallelization:** Different files in parallel, same file sequentially (to avoid edit conflicts).
-   - Example delegation prompt to each specialist:
-
-```
-You are {specialist-name}, fixing review finding {finding-id}.
-
-**Finding:** {description}
-**Location:** {file_paths_and_lines}
-**Reviewer action:** {action_column_content}
-
-Instructions:
-1. Read the relevant source file(s) to understand the current code and surrounding context.
-2. Implement the fix. Follow the project's coding conventions (see CLAUDE.md).
-3. After fixing, perform a self-review:
-   - Re-read the modified code.
-   - Verify the fix addresses the finding without introducing new issues.
-   - Check for edge cases, thread safety, and resource leaks.
-   - If the self-review reveals problems, fix them before reporting back.
-4. Report what you changed and why, including any self-review corrections.
-
-Follow the comment discipline in `.claude/rules/comment-discipline.md` (auto-loaded).
-
-**Prohibited:**
-- Do NOT create git commits (the orchestrator performs consolidated commits).
-- Do NOT edit the review document ({current round file path}).
-```
-
-3. After all fix agents complete, **the orchestrator** performs the following consolidation:
-   - **Format verification** (clang-format / cmake-format) — for all modified files.
-   - **Build verification** — Run the platform-appropriate build. If the build fails, relaunch the relevant specialist subagents to fix (instruct self-review on re-fix as well).
-   - **Review document update** — For each Will Fix finding that was fixed, add a status line `> **{id} Status: Fixed** — {concise fix description}` immediately after the action line (before the `---` separator). Won't Fix / Acknowledged status lines were already added in Step 2.2, so do NOT add them here.
-   - **Commit** — {If --commit enabled:} Commit per finding fix. {If --commit disabled:} Do NOT create git commits. Committing is strictly prohibited.
-
-### 2.4 — Verify (review-resolve)
+### 2.3 — Review Verification (review-resolve)
 
 **Agent launch procedure:**
 
 1. Print to console: `## Round {N} — Step 4: Review Resolve`
-2. Launch a **new subagent** via the Agent tool. Specify the skill file and arguments explicitly in the prompt:
+2. Launch a **new sub-agent** via the Agent tool. Specify the skill file and arguments explicitly in the prompt:
 
 ```
-Verify the resolution status of the review document following the instructions in the skill file below.
+Verify the resolution status of the review document by following the instructions in the skill file below.
 
 Skill file: .claude/skills/review-resolve/SKILL.md
-Arguments: {current round file path}
+Argument: {this round's file path}
 ```
 
-### 2.5 — Feedback Check and Re-fix Loop
+### 2.4 — Feedback Check and Re-fix Loop
 
-Read the verification report and check for findings that require feedback.
+Read the verification result from Step 2.3 and check whether any findings require feedback.
 
-- **No feedback needed:** Proceed to round end.
-- **Feedback needed:** Enter the re-fix loop (up to 3 attempts).
+- **No feedback:** End the round (proceed to 2.5).
+- **Feedback exists:** Enter the re-fix loop (up to 3 iterations).
 
-Re-fix loop (up to 3 attempts):
+**Re-fix loop (up to 3 iterations):**
 
-1. Print to console: `## Round {N} — Step 5: Feedback Triage (attempt {M}/3)`
-2. Launch a **new subagent** via the Agent tool to triage unresolved findings based on feedback. Example prompt:
+1. Print to console: `## Round {N} — Step 4: Feedback Triage (attempt {M}/3)`
+   Use the same triage sub-agent launch method as Step 2.2 (review-respond § Step 2 — Triage). Append the following to the "additional constraints" portion of the prompt:
+   ```
+   Prioritize the Feedback lines in the review document (`> - **{id} Feedback:** ...`) as triage signals. Focus the triage on findings that have a Feedback line.
+   ```
 
-```
-Triage the unresolved findings in the review document, taking feedback annotations into account.
-**This task is triage only.** Do NOT perform fixes. Report triage results only.
+2. Print to console: `## Round {N} — Step 4: Feedback Fix (attempt {M}/3)`
+   Use the same fix / verification / update sub-step method as Step 2.2 (review-respond §§ Step 3 through Step 5). Append the following to the prompt for each specialist:
+   ```
+   Re-fix taking into account the Feedback lines in the review document (`> - **{id} Feedback:** ...`).
+   ```
 
-Skill file: .claude/skills/review-respond/SKILL.md — "Step 2 — Triage"
-Arguments: {current round file path}
+3. Print to console: `## Round {N} — Step 4: Feedback Verify (attempt {M}/3)`
+   Re-run review-resolve using the same method as Step 2.3.
 
-Prioritize feedback annotations (`> **{id} Feedback:** ...`) when deciding.
-Output format is the same as Step 2.2's triage result table (Finding ID / Decision / Assignee / Rationale).
-```
+4. If feedback remains, return to step 1. If 3 iterations do not resolve it, record it as unresolved and end the round.
 
-3. Print to console: `## Round {N} — Step 5: Feedback Fix (attempt {M}/3)`
-4. Receive the triage results, then perform re-fixes following **the same flow as Step 2.3 procedure 2–3**. However, add the instruction to each specialist: "Re-fix based on the feedback annotations (`> **{id} Feedback:** ...`)".
+5. If `--confirm-round` is enabled and unresolved items remain, wait for user confirmation before proceeding to the next round.
 
-5. Print to console: `## Round {N} — Step 5: Feedback Verify (attempt {M}/3)`
-6. Launch a **new subagent** via the Agent tool to re-run review-resolve:
+### 2.5 — Round End
 
-```
-Verify the resolution status of the review document following the instructions in the skill file below.
+Record the round's results:
+- **Actionable findings count** — Number of findings triaged as Will Fix in Step 2.2.
+- **Fixed count** — Number of findings fixed in Step 2.2 and judged **Resolved** or `✓ Verified` by the verification in Step 2.3 / 2.4.
+- **Unresolved count** — Number of findings that still have Feedback after 3 iterations of the re-fix loop in Step 2.4 (those triaged as Will Fix but not resolved within this round).
 
-Skill file: .claude/skills/review-resolve/SKILL.md
-Arguments: {current round file path}
-```
+**Conditions to proceed to the next round:** Increment the round counter and return to Step 2.1 only if **all** of the following are satisfied:
 
-7. If feedback remains, return to step 1. If unresolved after 3 attempts, record as unresolved and end the round.
+1. The round counter is less than or equal to `--max-rounds`.
+2. At least one line of source code was changed in this round.
 
-8. If `--confirm-round` is enabled and unresolved findings remain, wait for user confirmation before proceeding to the next round.
-
-### 2.6 — Round End
-
-Record the round results:
-- **Actionable findings count** — Number of findings classified as Will Fix in Step 2.2.
-- **Fix count** — Number of findings fixed in Step 2.3 onward and verified as **Resolved** or `✓ Verified` in Step 2.4 / 2.5.
-- **Unresolved count** — Number of findings that still have Feedback remaining after 3 iterations of the Step 2.5 re-fix loop (Will Fix findings that could not be resolved within this round).
-
-**Conditions to proceed to the next round:** Only when **all** of the following are satisfied, increment the round counter and return to Step 2.1:
-
-1. The round counter is ≤ `--max-rounds`.
-2. At least one finding was fixed in this round (i.e., fix count ≥ 1, meaning some change was made to source files).
-
-If any condition is not met, proceed to Step 3 (Final Report). The rationale for condition 2 is that if nothing was fixed, the next round would review the same target in the same state and produce the same findings — a pointless repetition.
+If any of the above is not satisfied, proceed to Step 3 (Final Report). The intent of condition 2: if any source code change occurred, the next round should re-review it. Conversely, if no change was made at all, the next round would run against the same target in the same state and would only surface the same findings — a meaningless repetition.
 
 ## Step 3 — Final Report
 
-After all rounds complete, generate a final report. File path: `{base-path}/{branch-dir}/final-report.md`
+After all rounds end, produce the final report. File path: `{base-path}/{branch-dir}/final-report.md`
 
-The final report must be written by **you (the orchestrator)** by reading all round review documents (do NOT delegate to an agent). Each review document has status lines for fix progress and Feedback / ✓ Verified annotations after verification, so obtain information from there (note that review-resolve's verification report is console-output only and is not saved to a file).
+**You yourself** create the final report by reading the review documents from all rounds (do not delegate to an agent). Each review document carries the Status lines for the fix state and the post-verification Feedback / ✓ Verified annotations, so the information can be retrieved from there (note that the review-resolve verification reports are console output only and are not saved to file).
 
 ### Final Report Format
 
@@ -303,13 +192,13 @@ The final report must be written by **you (the orchestrator)** by reading all ro
 
 **Branch:** {branch-name}
 **Date:** YYYY-MM-DD
-**Rounds completed:** {N}
-**Termination reason:** {No actionable findings / Max rounds reached / User stopped}
+**Rounds executed:** {N}
+**Termination reason:** {No actionable findings / Maximum rounds reached / User stopped}
 
 ## Statistics Summary
 
-| Round | Findings | Actionable | Fixed | Unresolved | Feedback Re-fixes |
-|-------|----------|------------|-------|------------|-------------------|
+| Round | Findings | Actionable | Fixed | Not fixed | Feedback re-fixes |
+|-------|----------|------------|-------|-----------|-------------------|
 | Round 1 | ... | ... | ... | ... | ... |
 | Round 2 | ... | ... | ... | ... | ... |
 | **Total** | ... | ... | ... | ... | ... |
@@ -318,31 +207,33 @@ The final report must be written by **you (the orchestrator)** by reading all ro
 
 ### Resolved
 
-| # | Round | Severity | Location | Summary | Resolution |
-|---|-------|----------|----------|---------|------------|
-| 1 | Round 1 | Critical | file:line | Summary | Fixed — Description of fix |
+| # | Round | Severity | Location | Finding Summary | Resolution |
+|---|-------|----------|----------|-----------------|------------|
+| 1 | Round 1 | Critical | file:line | Summary | Fixed — description |
 | ... | ... | ... | ... | ... | ... |
 
 ### Unresolved
 
-| # | Round | Severity | Location | Summary | Status |
-|---|-------|----------|----------|---------|--------|
-| 1 | Round 2 | Major | file:line | Summary | Not resolved after feedback re-fixes |
+| # | Round | Severity | Location | Finding Summary | Status |
+|---|-------|----------|----------|-----------------|--------|
+| 1 | Round 2 | Major | file:line | Summary | Not resolved even after feedback re-fix |
 | ... | ... | ... | ... | ... | ... |
 
-### No Action Needed
+### Decided as No Action Needed
 
-| # | Round | Severity | Location | Summary | Reason |
-|---|-------|----------|----------|---------|--------|
-| 1 | Round 1 | Minor | file:line | Summary | Won't Fix — Reason |
+Among Won't Fix findings, list here those **without a recommendation to address in a separate PR** (false positives, preference issues, fully-rejected out-of-scope items, etc.).
+
+| # | Round | Severity | Location | Finding Summary | Reason |
+|---|-------|----------|----------|-----------------|--------|
+| 1 | Round 1 | Minor | file:line | Summary | Won't Fix — reason |
 | ... | ... | ... | ... | ... | ... |
 
-## Recommended Future Actions
+## Recommended for Future Action
 
-The following items were detected during this review but were not addressed due to being out of scope, acceptable risk, or pre-existing code. Consider addressing them in future maintenance.
+Among Won't Fix findings, list here those for which **addressing in a separate PR is recommended** (existing-code bugs, out-of-scope improvement opportunities, future refactoring candidates, etc.). This is mutually exclusive with "Decided as No Action Needed"; a finding must not appear in both.
 
-| # | Severity | Location | Summary | Rationale |
-|---|----------|----------|---------|-----------|
+| # | Severity | Location | Summary | Reason for Recommendation |
+|---|----------|----------|---------|---------------------------|
 | 1 | Minor | file:line | Summary | Reason |
 | ... | ... | ... | ... | ... |
 
@@ -356,4 +247,4 @@ The following items were detected during this review but were not addressed due 
 
 ## Step 4 — Completion Report
 
-Report the final report path to the user and briefly convey the key statistics (total findings, resolved, unresolved).
+Report the final report path to the user and concisely communicate the key statistics (total findings, resolved count, unresolved count).

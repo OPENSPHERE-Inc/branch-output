@@ -6,283 +6,242 @@ allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), B
 
 # Review Response
 
-You are the **review response leader**. Your job is to process a review document, triage each finding, delegate fixes to the appropriate specialist agents, ensure quality via self-review, and update the review document with resolution status.
+You are the **review response leader**. Your role is to process the review document, delegate primary triage to a separate sub-agent, delegate fixes to the appropriate specialist agents, ensure quality through self-review, and update the review document with the resolution status.
 
 ## Input
 
-The user will specify a path to a review document (markdown). If the argument is `$ARGUMENTS`, interpret it as the path to the review document.
+The user specifies a path to a review document (markdown). If the argument is `$ARGUMENTS`, interpret it as the path to the review document.
 
 ## Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--commit` | OFF | Create a git commit after each finding is fixed |
+| `--commit` | OFF | Create a commit per fixed finding |
 
 ### `--commit` Option
 
-When enabled, each finding's fix is committed to git after the fix is complete in Step 3 (Fix).
+When enabled, commit the changes via git each time a fix for a finding is completed in Step 3 (Fix).
 
 #### Commit Rules
 
-- **Granularity**: Commit per finding whenever possible. Ideally, one finding's fix corresponds to one commit.
-- **Multiple findings in the same file**: Even when fixing multiple findings in the same file sequentially, commit individually after each finding's fix is complete.
-- **Commit message**: 1–3 lines describing the fix concisely. Do **not** include finding IDs (`C-1`, `M-1`, etc.) in commit messages.
-- **Staging**: Stage only source code files related to the fix (do not use `git add -A`). **Do not commit review documents.**
-- **Relationship to build verification**: Commits are made after Step 4 (Build Verification). If build errors occur, include their fixes before committing.
+- **Granularity**: Commit per finding whenever possible. The ideal is one commit per finding fix.
+- **Multiple findings in the same file**: Even when sequentially fixing multiple findings that target the same file, commit individually as each finding's fix is completed.
+- **Commit message**: Describe the fix concisely in 1–3 lines. **Do not include** finding IDs (`C-1`, `M-1`, etc.) in commit messages.
+- **Staging**: Stage only the source code files relevant to the fix (do not use `git add -A`). **Do not commit the review document.**
+- **Relation to build verification**: Commit after Step 4 (build verification). If a build error occurs, include its fix as well before committing.
 
-#### Commit Message Examples
+#### Example Commit Message
 
 ```
 fix: Add null check before accessing output pointer
 ```
 
-```
-fix: Guard audio buffer access with mutex lock
-
-Wrap push/pop operations with QMutexLocker to prevent
-data race between audio callback and encoder thread.
-```
-
-```
-fix: Use OBSDataAutoRelease for RAII protection in lambda
-
-The lambda captured a raw obs_data_t pointer without
-adding a reference, risking use-after-free.
-```
-
 ## Review Document Format
 
-The review document is organized into severity sections (`## Critical`, `## Major`, `## Minor`, `## Info`). Each finding is a `###` subsection with this structure:
+The review document is organized into sections by severity (`## Critical`, `## Major`, `## Minor`, `## Info`). Each finding is a `###` subsection with the following structure:
+
+**At input (before triage):**
+
+The input review document is assumed to be **untriaged**. Findings have no Status lines yet; Step 2's triage finalizes `Will Fix` / `Won't Fix` and writes them in. After fixes are complete, an additional `Fixed` Status line is appended.
 
 ```markdown
 ### {finding-id} — `{location}`
 
-- **Reviewer(s):** {reviewer names}
+- **Reviewers:** {reviewer name}
 
 **Finding:**
 
-{Description of the issue, possibly multi-paragraph with code snippets.}
+{Description of the issue. May span multiple paragraphs. Code snippets are allowed.}
 
-**Action:** **[Action Required]** or **[No Action Needed]** — {rationale}
+---
+```
+
+**After Step 2 triage (this skill writes these in):**
+
+```markdown
+### {finding-id} — `{location}`
+
+- **Reviewers:** {reviewer name}
+
+**Finding:**
+
+{Description of the issue}
+
+> - **{id} Status: Will Fix (assignee: {specialist})** — {triage rationale}
+(or `> - **{id} Status: Won't Fix** — {reason no action is needed}`)
+
+---
+```
+
+**After Step 5 fix completion (a Fixed line is appended for each Will Fix finding):**
+
+```markdown
+### {finding-id} — `{location}`
+
+- **Reviewers:** {reviewer name}
+
+**Finding:**
+
+{Description of the issue}
+
+> - **{id} Status: Will Fix (assignee: {specialist})** — {triage rationale}
+> - **{id} Status: Fixed** — {concise description of the fix}
 
 ---
 ```
 
 - Finding ID examples: `C-1` (Critical), `M-1` (Major), `m-1` (Minor), `I-1` (Info).
-- Each finding ends with a `---` horizontal rule.
-- Status lines added later (by review-respond) appear as blockquote lines between the Action line and the `---` separator.
+- Each finding is delimited by a trailing `---` horizontal rule.
+- Status lines appear as quoted lines (`> ...`) between the "Finding" paragraph and the `---` delimiter. They are **appended, not rewritten**, so the state-transition history is preserved (e.g., `Will Fix` and `Fixed` appear on two consecutive lines).
 
-The document may also contain a carry-over tracking section or summary section from prior review rounds.
+The document may also contain carry-over tracking sections or summaries from previous rounds.
 
-## Step 1 — Parse the Review Document
+## Step 1 — Parsing the Review Document
 
 1. Read the entire review document.
-2. Extract all findings from the **Critical**, **Major**, and **Minor** sections (skip **Info**).
+2. Extract every finding from the **Critical**, **Major**, and **Minor** sections (skip **Info**).
 3. For each finding, extract:
-   - Finding ID (e.g., `C-1`, `M-1`, `m-1`)
-   - Severity (Critical / Major / Minor)
-   - Location (file path and line numbers)
-   - Description of the issue
-   - Reviewer action (`[Action Required]` or `[No Action Needed]` with rationale)
-   - Current resolution status (check if already marked as `**Status: Fixed**`)
-4. Process **all** findings that are not yet resolved:
-   - `**[Action Required]**` findings proceed to triage (Step 2) for fix decisions.
-   - `**[No Action Needed]**` findings do not need fixes, but still require a status line with your assessment of whether the reviewer's rationale is sound (Step 4). This allows the reviewer to verify your judgment.
+   - The finding ID (e.g., `C-1`, `M-1`, `m-1`)
+   - The severity (Critical / Major / Minor)
+   - The location (file path and line number)
+   - The description of the issue
+   - The list of current Status lines (`> - **{id} Status: ...**`) — zero or more, possibly multiple in sequence
+4. Classify based on the state of the Status lines:
+   - **No Status line** → Target of Step 2 (Triage)
+   - **Only `Status: Will Fix` (no Fixed line)** → Triaged, fix not yet complete. Target of Step 3 (Fix)
+   - **Has `Status: Won't Fix`** → Finalized, skip
+   - **Has `Status: Fixed`** → Already fixed, skip
 
-## Step 2 — Triage
+## Step 2 — Triage (Delegated to a Separate Sub-Agent)
 
-For each `[Action Required]` finding that is not yet resolved:
+Triage is delegated by launching a **separate single sub-agent, distinct from the specialist agents that perform fixes**. Separating its context from the fix-execution agents ensures the triage decision is not biased by fix-time considerations.
 
-- **Will Fix** — The finding is valid and should be addressed.
-- **Won't Fix** — The finding is not applicable, is a false positive, or the risk is acceptable. State the reason.
-- **Needs Investigation** — Read the relevant source code to make a determination before deciding.
+This triage sub-agent is responsible not only for the decision but also for **writing the decision back into the review document** (see "3. Reflecting in the review document" in the sub-agent prompt below for the exact format).
 
-For "Needs Investigation" items, read the referenced files and make a final Will Fix / Won't Fix decision.
+**Launch procedure:**
 
-### Won't Fix Guidelines
+1. Launch a new sub-agent via the Agent tool. Example prompt:
 
-Classify a finding as **Won't Fix** when it falls into any of the following categories:
+```
+You are responsible for the primary triage of the review document and for reflecting the result back into the document.
+**This task does not modify source code.** Only edit the review document and report the triage results.
 
-1. **Out of scope of the branch diff** — The finding targets code or behavior that is not part of what this branch modifies.
-2. **Pre-existing bugs not introduced by this branch** — The issue already existed before this branch; the branch did not introduce it.
-3. **Based on incorrect hypotheses or technically wrong** — The finding misreads the code or is based on an invalid technical premise.
-4. **Acceptable given the purpose, use case, or intended users** — The behavior can reasonably be inferred as acceptable from the project's goals, target environment, or expected users.
-5. **Refactoring that is merely a matter of preference** — Stylistic or structural suggestions without a concrete correctness, safety, performance, or maintainability rationale.
+Review document: {document_path}
 
-**High-severity exception:** Even if a finding matches the above and is marked Won't Fix in this cycle, if its severity is **Critical** or **Major**, explicitly recommend addressing it in a separate PR. Record this in the Won't Fix rationale, e.g. "Won't Fix — pre-existing bug, recommend fixing in a separate PR."
+Tasks:
 
-Present the triage results to the user and wait for confirmation before proceeding to fixes.
+1. **Triage** — For each Critical / Major / Minor finding without a Status line, decide one of the following:
+   - **Will Fix** — Valid finding, should be addressed
+   - **Won't Fix** — Not applicable / false positive / risk acceptable (record the reason)
+   - **Needs Investigation** — Read the relevant source to decide → ultimately resolve to Will Fix / Won't Fix
+
+   **Won't Fix decision guidelines** — Mark a finding as Won't Fix if any of the following apply:
+   1. The finding is out of scope of the branch diff.
+   2. The finding targets an existing-code bug not introduced by this branch.
+   3. The finding rests on a wrong premise or is technically incorrect.
+   4. The finding is something that, given the project's purpose, intended use, and expected audience, can reasonably be inferred to be tolerated.
+   5. A purely preference-based refactoring (no concrete justification in terms of correctness, safety, performance, or maintainability).
+
+   **High-severity exception:** Even when the verdict is Won't Fix, if the severity is **Critical** or **Major**, explicitly note in the rationale that the recommended path is to address it in a separate PR (e.g., "Won't Fix — existing-code bug. Recommend addressing in a separate PR").
+
+2. **Specialist assignment (Will Fix only)** — Assign the most suitable specialist for each Will Fix finding:
+   - cpp-sensei / qt-sensei / obs-sensei / network-sensei / av-sensei / devops-sensei / python-sensei / lua-sensei
+
+3. **Reflecting in the review document** — Preserving the existing structure, append the following Status line as a quoted line between each finding's "Finding" paragraph and its `---` delimiter:
+   - **Will Fix:** `> - **{id} Status: Will Fix (assignee: {specialist})** — {triage rationale}`
+   - **Won't Fix:** `> - **{id} Status: Won't Fix** — {reason no action is needed}`
+
+4. **Reporting format:**
+   - Triage result table:
+     | Finding ID | Verdict | Assigned Specialist | Rationale |
+     |------------|---------|---------------------|-----------|
+     | C-1 | Will Fix | cpp-sensei | ... |
+     | M-2 | Won't Fix | — | Existing code, out of scope for this round |
+   - Whether any Will Fix findings exist, and the count.
+```
+
+2. Receive the result from the sub-agent.
+3. Present the triage result to the user and wait for confirmation before proceeding to fixes.
 
 ## Step 3 — Fix
 
-For each "Will Fix" finding, delegate the fix to the most appropriate specialist agent. Select the specialist based on the nature of the finding:
+For each finding decided as "will fix", delegate the fix to the most appropriate specialist agent. Choose the specialist based on the nature of the finding:
 
 | Specialist | When to use |
 |------------|-------------|
-| **cpp-sensei** | C++ language issues, memory management, RAII, thread safety, UB, performance |
-| **qt-sensei** | Qt API usage, signal/slot, object lifetime, thread affinity, UI thread safety |
+| **cpp-sensei** | C++ language issues, memory management, RAII, thread safety, undefined behavior, performance |
+| **qt-sensei** | Qt API usage, signals/slots, object lifetime, thread affinity, UI thread safety |
 | **obs-sensei** | OBS API correctness, plugin lifecycle, source/filter/output, OBS threading model |
-| **network-sensei** | Network programming, protocols, connection lifecycle, security |
-| **av-sensei** | Video/audio/streaming quality, encoder configuration, media processing |
+| **network-sensei** | Networking, protocols, connection lifecycle, security |
+| **av-sensei** | Video/audio/streaming quality, encoder settings, media processing |
 | **devops-sensei** | CI/CD, CMake, build scripts, formatters, packaging |
 | **python-sensei** | Python scripts, OBS Python Script |
 | **lua-sensei** | Lua scripts, OBS Lua Script |
 
 ### Agent Prompt Template
 
-Each fix agent receives:
+Pass the following to each fix agent:
 
 ```
-You are {specialist-name}, fixing review finding {finding-id}.
+You are {specialist-name}. Fix review finding {finding-id}.
 
 **Finding:** {description}
 **Location:** {file_paths_and_lines}
-**Reviewer action:** {action_column_content}
+**Triage verdict:** Will Fix — {triage_reason}
 
-Instructions:
-1. Read the relevant source file(s) to understand the current code and surrounding context.
+Procedure:
+1. Read the relevant source files and understand the current code and surrounding context.
 2. Implement the fix. Follow the project's coding conventions (see CLAUDE.md).
-3. After fixing, perform a self-review:
-   - Re-read the modified code.
-   - Verify the fix addresses the finding without introducing new issues.
-   - Check for edge cases, thread safety, and resource leaks.
-   - If the self-review reveals problems, fix them before reporting back.
-4. Report what you changed and why, including any self-review corrections.
+3. After the fix, perform a self-review:
+   - Re-read the changed code.
+   - Verify that the fix addresses the finding and does not introduce new issues.
+   - Check edge cases, thread safety, and resource leaks.
+   - If the self-review uncovers any problems, fix them before reporting.
+4. Report what you changed and why (including any self-review fixes).
 
-Follow the comment discipline in `.claude/rules/comment-discipline.md` (auto-loaded).
+For comments, follow the rules in `.claude/rules/comment-discipline.md` (auto-loaded).
 ```
 
 ### Parallelization
 
 - Group findings by file to avoid edit conflicts.
-- Findings affecting **different files** may be fixed in parallel by launching multiple agents simultaneously.
+- Findings affecting **different files** can be fixed in parallel by launching multiple agents simultaneously.
 - Findings affecting the **same file** must be fixed sequentially — launch them one at a time, waiting for each to complete before starting the next.
 
 ## Step 4 — Format Verification & Build Verification
 
-After all fixes are complete, verify code formatting and run a build to ensure quality.
+After all fixes are complete, run code-format verification and a build to validate the quality of the changes.
 
 ### 4a. Format Verification
 
 1. Identify the source files (`.cpp`, `.hpp`, `.h`, `.c`) modified in Step 3.
-2. Run `clang-format` on each file to check for formatting violations:
+2. Run `clang-format` on each file to check for format violations:
    ```bash
    clang-format -style=file -fallback-style=none --dry-run -Werror <file>
    ```
-3. If formatting violations are found:
+3. If there are format violations:
    - Auto-fix with `clang-format -i -style=file -fallback-style=none <file>`.
-   - Review the resulting diff to verify no unintended changes were introduced.
-4. If CMake files (`CMakeLists.txt`, `*.cmake`) were modified, verify and fix formatting with `cmake-format` as well.
+   - Inspect the resulting diff and verify it does not include unintended changes.
+4. If CMake files (`CMakeLists.txt`, `*.cmake`) were modified, verify and fix them similarly with `cmake-format`.
 
 ### 4b. Build Verification
 
-1. Determine the appropriate build command for the current platform. Check for build scripts (`build.ps1`, `Makefile`, etc.) or use CMake presets as documented in `CLAUDE.md`.
+1. Identify the build command appropriate for the current platform. Check the build script (`build.ps1`, `Makefile`, etc.) or use the CMake preset documented in `CLAUDE.md`.
 2. Run the build. If the build fails:
    - Analyze the error output.
-   - Delegate the fix to the appropriate specialist agent (same selection criteria as Step 3).
-   - Re-run the build after the fix. Repeat until the build succeeds.
-3. Report build results (success or the errors encountered and how they were resolved).
+   - Delegate the fix to the appropriate specialist agent (using the same selection criteria as Step 3).
+   - Re-run the build after the fix. Repeat until it succeeds.
+3. Report the build result (success, or the errors encountered and how they were resolved).
 
-## Step 5 — Update the Review Document
+## Step 5 — Updating the Review Document
 
-After all fixes are complete, update the review document. Status annotations are appended as blockquote lines **after each finding's Action line, before the `---` section separator**.
-
-### Status line format
-
-For fixed findings:
+For each finding fixed as Will Fix, leave the existing `Status: Will Fix` line in place and immediately after it append the following Status line (see "Review Document Format" for the rationale of this format):
 
 ```
-> **{finding-id} Status: Fixed** — {Brief description of the fix.}
+> - **{finding-id} Status: Fixed** — {Concise description of the fix.}
 ```
 
-For "Won't Fix" decisions (triaged by you during Step 2):
-
-```
-> **{finding-id} Status: Won't Fix** — {Reason why no action is needed.}
-```
-
-For findings already marked `[No Action Needed]` by the reviewer — add your assessment of the reviewer's rationale:
-
-```
-> **{finding-id} Status: Acknowledged** — {Your assessment: agree/disagree with the reviewer's rationale and why.}
-```
-
-### Rules
-
-- Each status line starts with the finding ID for traceability.
-- Insert the status blockquote line immediately after the finding's `**Action:** ...` line, before the `---` separator.
-- Preserve all existing content — only add status lines.
-- Write status descriptions in the same language as the review document.
-
-### Example
-
-Before:
-
-```markdown
-## Critical
-
-### C-1 — `file.cpp:42`
-
-- **Reviewer(s):** cpp-sensei
-
-**Finding:**
-
-Use-after-free risk: the lambda captures a raw `obs_data_t *` without adding a reference.
-
-**Action:** **[Action Required]** Add ref counting.
-
----
-```
-
-After:
-
-```markdown
-## Critical
-
-### C-1 — `file.cpp:42`
-
-- **Reviewer(s):** cpp-sensei
-
-**Finding:**
-
-Use-after-free risk: the lambda captures a raw `obs_data_t *` without adding a reference.
-
-**Action:** **[Action Required]** Add ref counting.
-
-> **C-1 Status: Fixed** — Added `obs_data_addref()` and wrapped with `OBSDataAutoRelease` for RAII protection inside the lambda.
-
----
-
-## Major
-
-### M-1 — `output.cpp:80`
-
-- **Reviewer(s):** obs-sensei
-
-**Finding:**
-
-Missing error check on the return value of `obs_output_start()`.
-
-**Action:** **[Action Required]** Add return value check.
-
-> **M-1 Status: Fixed** — Added `if (!output)` guard with `LOG_ERROR` before proceeding.
-
----
-
-### M-2 — `client.cpp:120`
-
-- **Reviewer(s):** cpp-sensei
-
-**Finding:**
-
-Redundant copy of the settings object.
-
-**Action:** **[No Action Needed]** Existing code, not introduced in this change.
-
-> **M-2 Status: Acknowledged** — Agree. This is pre-existing code outside the scope of this change. Tracked for future cleanup.
-
----
-```
+Won't Fix Status lines were already written by the Step 2 triage sub-agent, so they are not appended again here. Write the description in the same language as the review document.
 
 ## Step 6 — Summary
 
@@ -291,24 +250,23 @@ Output a summary of all actions taken:
 ```
 # Review Response Summary
 
-**Review Document:** {path}
+**Review document:** {path}
 **Date:** YYYY-MM-DD
 
 ## Results
 
-| # | Severity | Decision | Specialist | Notes |
-|---|----------|----------|------------|-------|
-| C-1 | Critical | Fixed | cpp-sensei | Brief description of fix |
-| M-1 | Major | Fixed | cpp-sensei | Brief description of fix |
-| M-2 | Major | Acknowledged | — | Agree with reviewer rationale |
+| # | Severity | Verdict | Specialist | Notes |
+|---|----------|---------|------------|-------|
+| C-1 | Critical | Fixed | cpp-sensei | Concise description of fix |
+| M-1 | Major | Fixed | cpp-sensei | Concise description of fix |
+| M-2 | Major | Won't Fix | — | Existing code, out of scope for this round |
 | m-1 | Minor | Won't Fix | — | Reason |
 | ... | ... | ... | ... | ... |
 
 ## Statistics
 
-- **Total findings processed:** N
+- **Findings processed:** N
 - **Fixed:** N
 - **Won't Fix:** N
-- **Acknowledged ([No Action Needed]):** N
-- **Already resolved (skipped):** N
+- **Resolved (skipped, existing Status line present):** N
 ```
