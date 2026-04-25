@@ -127,3 +127,13 @@ Branch Output は、外部スクリプトから実行時にストリーム録画
 
 This plugin is developed under [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate)
 
+## 事前準備
+
+本リポジトリは [obs-websocket](https://github.com/obsproject/obs-websocket) のヘッダに依存しており、`lib/obs-websocket` 配下に Git サブモジュールとして含まれています。クローン後、ビルド設定の前にサブモジュールを初期化してください。
+
+```bash
+git submodule update --init --recursive
+```
+
+`--recurse-submodules` 付きでクローンした場合は、この手順は不要です。
+

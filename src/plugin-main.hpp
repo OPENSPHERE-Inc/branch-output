@@ -37,6 +37,17 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #define MAX_SERVICES 8
 
+// Source ID for the Branch Output filter. Used by createFilterInfo() to register the
+// source and by external lookups (e.g. obs-websocket vendor requests) to verify that
+// a given obs_source_t* is in fact a Branch Output filter.
+inline constexpr char FILTER_ID[] = "osi_branch_output";
+
+// Proc handler names exposed on each BranchOutputFilter source. Shared between
+// the registration site (plugin-main.cpp) and callers (plugin-websocket.cpp) so
+// that a rename on one side does not silently break the other.
+inline constexpr char PROC_OVERRIDE_RECORDING_FILENAME_FORMAT[] = "override_recording_filename_format";
+inline constexpr char PROC_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT[] = "override_replay_buffer_filename_format";
+
 // Defined in plugin-main.cpp. Guards plugin-wide state shared across filter instances:
 // - Serializes OBS global API calls (obs_view, obs_encoder, obs_output creation/destruction)
 // - Protects BranchOutputFilter instance lists and cross-instance coordination

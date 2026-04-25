@@ -30,6 +30,7 @@
 !screenshot2.jpg
 !build.ps1
 !/lib
+!.gitmodules
 !README_ja.md
 !API.md
 !API_ja.md

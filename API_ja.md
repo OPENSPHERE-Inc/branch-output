@@ -294,8 +294,15 @@ vendor request は obs-websocket に認証済みのクライアントからの�
 
 - `filter_uuid` は 36 文字のハイフン付き UUID 文字列である必要があります。それ以外の形式は `"filter_uuid must be a UUID string"` で拒否されます。
 - `format` は 1024 バイトを超えられません。超過した場合は `"format too long"` で拒否されます。
-- `filter_uuid` は Branch Output フィルターソースに解決される必要があります。他種別のソースや存在しない UUID は `"Filter not found"` で拒否されます。
+- `format` は相対パス表現である必要があります。絶対パス（POSIX の `/...`、Windows の `\...` や `X:\...`）および `..` セグメントは `"format must not contain path traversal or absolute paths"` で拒否されます。
+- `filter_uuid` は Branch Output フィルターソースに解決される必要があります。他種別のソースや存在しない UUID は `"UUID does not refer to a Branch Output filter"` で拒否されます。
 - 録画遷移中（ファイル分割、リスタート）にリクエストを連続送信すると、遷移完了までリクエストがブロックされることがあります。
+
+### クライアント側スロットリング
+
+プラグインは `override_recording_filename_format` および `override_replay_buffer_filename_format` に対して**レート制限を行いません**。録画中に `format` が異なるリクエストを受けるたびに、ファイル分割または録画リスタートが発生する可能性があるため、録画側が落ち着くより速く更新を投げ続けるクライアントはファイルを断片化させ、エンコーダパイプラインに負荷をかけます。
+
+同梱の OBS スクリプト（[スロットリング](#recording-filename-from-text)を参照）は同一値を重複排除し、異なる `format` ごとに 30 秒に最大 1 回までの更新に制限しています。vendor request はこのスクリプトを経由しないため、obs-websocket 経由で操作する場合はこのガードを迂回します。**クライアント側で同等のスロットリングを実装してください** — 最低限、同一の `format` 値を抑制し、異なる更新もレート制限してください（30 秒以上を出発点とし、ファイル分割・リスタートの許容度に合わせて調整してください）。
 
 ### `get_filter_list`
 

@@ -294,8 +294,15 @@ Vendor requests require a client authenticated with obs-websocket. The obs-webso
 
 - `filter_uuid` must be a 36-character hyphenated UUID string. Other shapes are rejected with `"filter_uuid must be a UUID string"`.
 - `format` cannot exceed 1024 bytes. Longer strings are rejected with `"format too long"`.
-- `filter_uuid` must resolve to a Branch Output filter source. Any other source (including non-existent UUIDs) is rejected with `"Filter not found"`.
+- `format` must be a relative path expression. Absolute paths (POSIX `/...`, Windows `\...` or `X:\...`) and any `..` segment are rejected with `"format must not contain path traversal or absolute paths"`.
+- `filter_uuid` must resolve to a Branch Output filter source. Any other source (including non-existent UUIDs) is rejected with `"UUID does not refer to a Branch Output filter"`.
 - Do not send bursts of requests while a recording transition (file split, restart) is in progress — a request may block until the transition completes.
+
+### Client-side throttling
+
+The plugin does **not** rate-limit `override_recording_filename_format` or `override_replay_buffer_filename_format`. Each request that produces a different `format` while recording is active may trigger a file split or a recording restart, so a client that fires updates faster than the recording can settle will fragment files and stress the encoder pipeline.
+
+The bundled OBS scripts (see [Throttling](#recording-filename-from-text)) deduplicate by value and apply at most one update every 30 seconds per distinct `format`. Vendor requests do not pass through that script, so this guard is bypassed when driving the plugin over obs-websocket. **Implement equivalent throttling in your client** — at minimum, suppress duplicate `format` values and rate-limit distinct updates (≥ 30 s is a safe starting point; tune to match your file-split and restart tolerance).
 
 ### `get_filter_list`
 

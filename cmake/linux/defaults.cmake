@@ -34,6 +34,7 @@ set(CPACK_SOURCE_IGNORE_FILES
     \\.git/
     \\.github/
     \\.gitignore
+    \\.gitmodules
     build_.*
     cmake/\\.CMakeBuildNumber
     release/)

@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 
 #include <atomic>
+#include <string>
 
 #include <QRegularExpression>
 #include <QThread>
@@ -37,7 +38,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "utils.hpp"
 
 #define SETTINGS_JSON_NAME "recently.json"
-#define FILTER_ID "osi_branch_output"
 #define AVAILAVILITY_CHECK_INTERVAL_NS 1000000000ULL
 #define TASK_INTERVAL_MS 1000
 
@@ -146,12 +146,11 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     // FIXME: libobs has no proc_handler_remove(). If it gains one, pair
     // unregistration with ~BranchOutputFilter().
     proc_handler_t *ph = obs_source_get_proc_handler(filterSource);
-    proc_handler_add(
-        ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat, this
-    );
-    proc_handler_add(
-        ph, "void override_recording_filename_format(in string format)", onOverrideRecordingFilenameFormat, this
-    );
+    auto replayBufferProcDecl =
+        std::string("void ") + PROC_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT + "(in string format)";
+    auto recordingProcDecl = std::string("void ") + PROC_OVERRIDE_RECORDING_FILENAME_FORMAT + "(in string format)";
+    proc_handler_add(ph, replayBufferProcDecl.c_str(), onOverrideReplayBufferFilenameFormat, this);
+    proc_handler_add(ph, recordingProcDecl.c_str(), onOverrideRecordingFilenameFormat, this);
 
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
 }
@@ -1935,15 +1934,10 @@ void obs_module_post_load()
 
 void obs_module_unload()
 {
-    unregisterWebSocketVendorRequests();
-
-    // Publish nullptr before destroying the widget so subsequent loads in
-    // onGetFilterList() bail out. A worker that already holds a non-null
-    // pointer will either (a) take the cross-thread branch and be released
-    // by Qt 6's ~QObject() cleanup with invokeMethod() returning false
-    // (implementation detail, not a spec guarantee), or (b) take the
-    // same-thread branch, which is only reachable on the UI thread and
-    // therefore cannot race this unloader.
+    // Publish nullptr before unregistering vendor requests so that any
+    // vendor callback already in flight observes a null dock and bails out
+    // of the UI dispatch path. Doing this first shrinks (but does not
+    // close) the worker race window.
     //
     // FIXME: narrow worker race remains. Proper fixes are an in-flight
     // counter (wait for zero before remove_dock) or QPointer + deleteLater
@@ -1952,6 +1946,8 @@ void obs_module_unload()
     if (statusDock.exchange(nullptr) != nullptr) {
         obs_frontend_remove_dock("BranchOutputStatusDock");
     }
+
+    unregisterWebSocketVendorRequests();
 
     pthread_mutex_destroy(&pluginMutex);
 

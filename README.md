@@ -125,3 +125,14 @@ See the [API reference](./API.md) for procedure signatures, sample code, and usa
 
 This plugin is developed under [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate)
 
+## Prerequisites
+
+This repository depends on the [obs-websocket](https://github.com/obsproject/obs-websocket) headers, which are included
+as a Git submodule under `lib/obs-websocket`. After cloning, initialize the submodule before configuring the build:
+
+```bash
+git submodule update --init --recursive
+```
+
+If you cloned with `--recurse-submodules`, this step is unnecessary.
+

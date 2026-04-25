@@ -38,7 +38,7 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lib/obs-websocket/lib/obs-websocket-a
   message(FATAL_ERROR "lib/obs-websocket submodule not found. Run: git submodule update --init --recursive")
 endif()
 
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/obs-websocket/lib)
+target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/obs-websocket/lib)
 
 target_sources(
   ${CMAKE_PROJECT_NAME}
