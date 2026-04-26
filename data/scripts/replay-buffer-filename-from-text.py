@@ -37,6 +37,9 @@ OVERRIDE_PROC = "override_replay_buffer_filename_format"
 BRANCH_OUTPUT_FILTER_ID = "osi_branch_output"
 LOG_LABEL = "Replay buffer filename format"
 MAX_READ_SIZE = 4096  # 4 KB read limit to prevent performance issues on large files
+# Truncate to 200 bytes to stay within NTFS filename component (255) /
+# MAX_PATH (260) limits, leaving room for the base format and extension.
+MAX_FILENAME_BYTES = 200
 
 # Windows reserved device names (case-insensitive).
 WINDOWS_RESERVED = {
@@ -115,10 +118,7 @@ def sanitize_filename(text):
         sanitized = sanitized.replace(ch, '-')
     # Strip trailing dots/spaces
     sanitized = sanitized.rstrip(". ")
-    # Truncate to 200 bytes to stay within NTFS filename component (255) /
-    # MAX_PATH (260) limits, leaving room for the base format and extension.
-    # Respect UTF-8 codepoint boundaries.
-    MAX_FILENAME_BYTES = 200
+    # Truncate to MAX_FILENAME_BYTES, respecting UTF-8 codepoint boundaries.
     if len(sanitized.encode('utf-8')) > MAX_FILENAME_BYTES:
         truncated = sanitized.encode('utf-8')[:MAX_FILENAME_BYTES]
         sanitized = truncated.decode('utf-8', errors='ignore')
@@ -156,6 +156,10 @@ def read_text_from_source(text_source):
                     # Limit read size to prevent performance issues on accidental large-file selection.
                     with open(file_path, "rb") as f:
                         data = f.read(MAX_READ_SIZE)
+                        if f.read(1):
+                            obs.script_log(obs.LOG_WARNING,
+                                           f"Text file exceeds {MAX_READ_SIZE} bytes; "
+                                           "only the first chunk is used")
                     # UTF-8 BOM: strip it.
                     if data[:3] == b"\xef\xbb\xbf":
                         data = data[3:]
@@ -251,16 +255,24 @@ def update_replay_buffer_format():
     # Skip if text hasn't changed
     if current_text == last_text:
         return
-    last_text = current_text
 
     # Build the new format string
     sanitized = sanitize_filename(current_text)
-    if sanitized:
+    if sanitized and base_format:
         new_format = f"{sanitized} {base_format}"
-    else:
+    elif sanitized:
+        new_format = sanitized
+    elif base_format:
         new_format = base_format
+    else:
+        # Both text and base format are empty; clear the override
+        # rather than sending an ambiguous empty string.
+        if not override_cleared:
+            clear_override()
+        return
 
     if call_override_proc(filter_uuid, new_format):
+        last_text = current_text
         override_cleared = False
         obs.script_log(obs.LOG_INFO, f"{LOG_LABEL} updated: {new_format}")
 
@@ -353,10 +365,10 @@ def script_update(settings):
                            f"{LOG_LABEL} override cleared on previous filter (uuid: {old_filter_uuid})")
 
     # If text source was deselected, clear the override on the current
-    # filter so it reverts to its own setting.
+    # filter so it reverts to its own setting. clear_override() already
+    # resets last_text.
     if not text_source_uuid:
         clear_override()
-        last_text = None
         return
 
     # Reset state to force update on next tick

@@ -68,7 +68,9 @@ local function get_branch_output_filters()
         local json_str = obs.calldata_string(cd, "json")
         if json_str and json_str ~= "" then
             local data = obs.obs_data_create_from_json(json_str)
-            if data ~= nil then
+            if data == nil then
+                obs.script_log(obs.LOG_WARNING, "Failed to parse filter list JSON")
+            else
                 local array = obs.obs_data_get_array(data, "filters")
                 if array ~= nil then
                     local count = obs.obs_data_array_count(array)
@@ -97,6 +99,46 @@ local function get_branch_output_filters()
 
     obs.calldata_free(cd)
     return filters
+end
+
+local function utf8_validate(s)
+    -- Returns true when every byte in s is part of a valid UTF-8 sequence.
+    -- Returns false when an unexpected non-ASCII byte appears (e.g. CP932).
+    local i = 1
+    local len = #s
+    while i <= len do
+        local b = string.byte(s, i)
+        local size
+        if b < 0x80 then
+            size = 1
+        elseif b >= 0xC2 and b <= 0xDF and i + 1 <= len then
+            local b2 = string.byte(s, i + 1)
+            if b2 >= 0x80 and b2 <= 0xBF then
+                size = 2
+            end
+        elseif b >= 0xE0 and b <= 0xEF and i + 2 <= len then
+            local b2 = string.byte(s, i + 1)
+            local b3 = string.byte(s, i + 2)
+            if b2 >= 0x80 and b2 <= 0xBF and b3 >= 0x80 and b3 <= 0xBF
+                and (b ~= 0xE0 or b2 >= 0xA0) and (b ~= 0xED or b2 <= 0x9F) then
+                size = 3
+            end
+        elseif b >= 0xF0 and b <= 0xF4 and i + 3 <= len then
+            local b2 = string.byte(s, i + 1)
+            local b3 = string.byte(s, i + 2)
+            local b4 = string.byte(s, i + 3)
+            if b2 >= 0x80 and b2 <= 0xBF and b3 >= 0x80 and b3 <= 0xBF
+                and b4 >= 0x80 and b4 <= 0xBF
+                and (b ~= 0xF0 or b2 >= 0x90) and (b ~= 0xF4 or b2 <= 0x8F) then
+                size = 4
+            end
+        end
+        if not size then
+            return false
+        end
+        i = i + size
+    end
+    return true
 end
 
 local function parse_selected_filter(value)
@@ -187,6 +229,9 @@ end
 local function cp_to_utf8(cp)
     -- Encode a Unicode code point to a UTF-8 byte string.
     -- Compatible with LuaJIT / Lua 5.1 (no utf8 library required).
+    if cp >= 0xD800 and cp <= 0xDFFF then
+        return "" -- surrogate halves are not valid UTF-8 scalars
+    end
     if cp <= 0x7F then
         return string.char(cp)
     elseif cp <= 0x7FF then
@@ -206,13 +251,15 @@ local function cp_to_utf8(cp)
 end
 
 local function sanitize_filename(text)
-    -- Produce a filesystem-safe prefix:
-    --   1. Walk the string as UTF-8 code points, dropping strip-list points
-    --      and folding whitespace-like points to a single ASCII space.
+    -- Produce a filesystem-safe prefix. Order matches the Python variant:
+    --   1. Walk as UTF-8 code points, drop strip-list points, fold whitespace-
+    --      like points to a single ASCII space.
     --   2. Collapse runs of whitespace and trim.
     --   3. Replace filesystem-unsafe characters with "-".
-    --   4. Strip trailing dots/spaces (Windows disallows these at end of filename).
-    --   5. Prefix an underscore if the result collides with a Windows reserved name.
+    --   4. Strip trailing dots/spaces (Windows disallows these at end).
+    --   5. Truncate to 200 bytes on UTF-8 codepoint boundaries.
+    --   6. Re-strip trailing dots/spaces that may appear at the new end.
+    --   7. Prefix an underscore if the result collides with a Windows reserved name.
     if text == nil then
         return ""
     end
@@ -231,14 +278,6 @@ local function sanitize_filename(text)
     local trimmed = cleaned:match("^%s*(.-)%s*$") or ""
     local sanitized = trimmed:gsub('[<>:"|?*/\\]', "-")
     sanitized = sanitized:gsub("[%.%s]+$", "")
-    -- Windows treats reserved device names as reserved even when followed by
-    -- an extension (e.g. "CON.txt"). Since this prefix will have the base
-    -- format appended after a dot+space, check the portion before the first
-    -- dot as well.
-    local base_before_dot = sanitized:match("^([^%.]*)") or sanitized
-    if WINDOWS_RESERVED[sanitized:upper()] or WINDOWS_RESERVED[base_before_dot:upper()] then
-        sanitized = "_" .. sanitized
-    end
     -- Truncate to 200 bytes to stay within NTFS filename component (255) /
     -- MAX_PATH (260) limits, leaving room for the base format and extension.
     -- Respect UTF-8 codepoint boundaries.
@@ -257,6 +296,14 @@ local function sanitize_filename(text)
         sanitized = table.concat(parts)
         -- Re-strip trailing dots/spaces that may appear at the new end.
         sanitized = sanitized:gsub("[%.%s]+$", "")
+    end
+    -- Windows treats reserved device names as reserved even when followed by
+    -- an extension (e.g. "CON.txt"). Since this prefix will have the base
+    -- format appended after a dot+space, check the portion before the first
+    -- dot as well.
+    local base_before_dot = sanitized:match("^([^%.]*)") or sanitized
+    if WINDOWS_RESERVED[sanitized:upper()] or WINDOWS_RESERVED[base_before_dot:upper()] then
+        sanitized = "_" .. sanitized
     end
     return sanitized
 end
@@ -280,7 +327,15 @@ local function read_text_from_source(text_source)
             if f then
                 -- Limit read size to prevent performance issues on accidental large-file selection.
                 local data = f:read(MAX_READ_SIZE) or ""
+                -- Detect silent truncation: if more bytes remain past MAX_READ_SIZE, warn.
+                local extra = f:read(1)
+                local truncated = extra ~= nil
                 f:close()
+                if truncated then
+                    obs.script_log(obs.LOG_WARNING,
+                        "Text file exceeds " .. MAX_READ_SIZE ..
+                            " bytes; only the first " .. MAX_READ_SIZE .. " bytes are used")
+                end
                 -- UTF-8 BOM: strip it.
                 if data:sub(1, 3) == "\239\187\191" then
                     data = data:sub(4)
@@ -288,6 +343,13 @@ local function read_text_from_source(text_source)
                 elseif data:sub(1, 2) == "\255\254" or data:sub(1, 2) == "\254\255" then
                     obs.script_log(obs.LOG_WARNING,
                         "UTF-16 text files are not supported; please save the text file as UTF-8")
+                    ok = false
+                end
+                -- Skip strict UTF-8 validation when truncated, since the cut may
+                -- have landed inside a multibyte sequence.
+                if ok and not truncated and not utf8_validate(data) then
+                    obs.script_log(obs.LOG_WARNING,
+                        "Text file is not valid UTF-8 (e.g. CP932); please save as UTF-8")
                     ok = false
                 end
                 if ok then
@@ -375,11 +437,10 @@ local function update_replay_buffer_format()
         return
     end
 
-    -- Skip if text hasn't changed
+    -- Skip if text hasn't changed since last observation
     if current_text == last_text then
         return
     end
-    last_text = current_text
 
     -- Build the new format string
     local sanitized = sanitize_filename(current_text)
@@ -399,7 +460,11 @@ local function update_replay_buffer_format()
         return
     end
 
+    -- Update last_text only after a successful apply so a failed proc call
+    -- is retried on the next tick instead of being swallowed by the equality
+    -- early-return.
     if call_override_proc(filter_uuid, new_format) then
+        last_text = current_text
         override_cleared = false
         obs.script_log(obs.LOG_INFO, LOG_LABEL .. " updated: " .. new_format)
     end
