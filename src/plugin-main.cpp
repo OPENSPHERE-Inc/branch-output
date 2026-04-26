@@ -43,10 +43,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-// Atomic so proc-handler callers on worker threads can load without a race,
-// and obs_module_unload() can publish nullptr with well-defined ordering
-// before obs_frontend_remove_dock() destroys the widget.
-std::atomic<BranchOutputStatusDock *> statusDock{nullptr};
+// Atomic so worker threads can load without a race, and obs_module_unload()
+// can publish nullptr before obs_frontend_remove_dock() destroys the widget.
+static std::atomic<BranchOutputStatusDock *> statusDock{nullptr};
 pthread_mutex_t pluginMutex;
 
 //--- BranchOutputFilter class ---//
