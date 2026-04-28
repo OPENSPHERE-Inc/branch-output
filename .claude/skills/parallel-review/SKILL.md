@@ -107,7 +107,7 @@ Rules:
   - **Major** — Medium risk (should fix)
   - **Minor** — Low risk / advisory
   - **Info** — Informational / future reference
-- When deciding what is worth flagging, follow the rules in `.claude/rules/review-pedantry.md` (auto-loaded).
+- When deciding what is worth flagging, follow the rules in `.claude/rules/review.md` (auto-loaded).
 
 Output findings as a numbered list in the following format:
 [Severity] file_path:line — Description of the issue and why it matters.

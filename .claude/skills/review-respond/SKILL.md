@@ -357,7 +357,7 @@ Procedure:
 - The leader will batch and run those in Step 5. Running builds/formatters concurrently with other parallel-launched fix agents would crosswire the results due to build-cache contention or file-rewrite races.
 - Confine your work to source-code edits and leave build success or formatter diffs for the leader to confirm.
 
-For comments, follow the rules in `.claude/rules/comment-discipline.md` (auto-loaded).
+For comments, follow the rules in `.claude/rules/comment.md` (auto-loaded).
 ```
 
 ### FIXME Insertion for Alternative Findings (Special Form of Fix)
