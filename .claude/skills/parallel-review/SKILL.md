@@ -140,6 +140,9 @@ Produce the final report in the following format:
 
 - **Reviewers:** cpp-sensei, obs-sensei
 
+<!-- METADATA(C-1) -->
+<!-- /METADATA(C-1) -->
+
 **Finding:**
 
 Description of the finding. May span multiple paragraphs and include code snippets, rationale, and references.
@@ -157,6 +160,9 @@ Description of the finding. May span multiple paragraphs and include code snippe
 ### M-1 — `other.cpp:120`
 
 - **Reviewers:** qt-sensei
+
+<!-- METADATA(M-1) -->
+<!-- /METADATA(M-1) -->
 
 **Finding:**
 
@@ -191,6 +197,7 @@ No findings
 
 - Each finding is its own subsection with a `### {finding-id} — `{location}`` heading.
 - List metadata (Reviewers) as bullets per finding, then write the finding under a bold "Finding:" label.
+- Place metadata insertion markers `<!-- METADATA({finding-id}) -->` and `<!-- /METADATA({finding-id}) -->` between the Reviewers line and the Finding label, separated by blank lines. **Output the markers empty** (later stages mechanically inject metadata).
 - Separate findings with a `---` horizontal rule. **Do not output Status lines** (out of scope for this skill).
 - Severity sections (`## Critical` / `## Major` / `## Minor` / `## Info`) with no findings must **not be omitted**: emit the heading and write `No findings` in the body.
 

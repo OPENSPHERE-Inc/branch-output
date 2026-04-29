@@ -1,12 +1,12 @@
 ---
 name: review-respond
 description: Triage, estimate, fix, self-review, and update the review document for review findings
-allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*), Bash(clang-format:*), Bash(cmake-format:*)
+allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*), Bash(clang-format:*), Bash(cmake-format:*), Bash(cat:*), Bash(rm:*), Bash(python .claude/scripts/render-review.py:*)
 ---
 
 # Review Response
 
-You are the **review response leader**. Your role is to process the review document, delegate primary triage to a separate sub-agent, have specialist sub-agents estimate the cost of Will Fix findings, delegate fixes to the appropriate specialist agents, ensure quality through self-review, and update the review document with the resolution status.
+You are the **respond leader**. Your role is to process the review document, delegate primary triage to a separate sub-agent, have specialist sub-agents perform estimates on Will Fix findings, delegate fixes to the appropriate specialist agents, ensure quality through self-review, and finally reflect the accumulated metadata back into the review document via `render-review.py`.
 
 ## Input
 
@@ -16,22 +16,22 @@ The user specifies a path to a review document (markdown). If the argument is `$
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--commit` | OFF | Create a commit per fixed finding |
-| `--confirm` | OFF | Wait for user confirmation immediately after estimates are gathered |
+| `--commit` | OFF | Create a commit for each finding fix |
+| `--confirm` | OFF | Wait for user confirmation immediately after the estimate results are available |
 
 ### `--commit` Option
 
-When enabled, commit the changes via git each time a fix for a finding is completed in Step 4 (Fix). Estimates (Step 3) involve no source code changes and are not subject to commits.
+When enabled, in Step 4 (Fix), once each finding fix is complete, the change is committed to git. Estimates (Step 3) do not produce source code changes and are therefore not subject to commits.
 
 #### Commit Rules
 
-- **Granularity**: Commit per finding whenever possible. The ideal is one commit per finding fix.
-- **Multiple findings in the same file**: Even when sequentially fixing multiple findings that target the same file, commit individually as each finding's fix is completed.
-- **Commit message**: Describe the fix concisely in 1–3 lines. **Do not include** finding IDs (`C-1`, `M-1`, etc.) in commit messages.
-- **Staging**: Stage only the source code files relevant to the fix (do not use `git add -A`). **Do not commit the review document.**
-- **Relation to build verification**: Commit after Step 5 (build verification). If a build error occurs, include its fix as well before committing.
+- **Granularity**: Commit per finding wherever possible. Ideally, one finding fix corresponds to one commit.
+- **Multiple findings in the same file**: Even when fixing multiple findings against the same file sequentially, commit individually upon completion of each finding fix.
+- **Commit messages**: Write 1–3 lines that concisely describe what was fixed. Finding IDs (`C-1`, `M-1`, etc.) **must not be included** in commit messages.
+- **Staging**: Stage only the source code files related to the fix (do not use `git add -A`). **Do not commit the review document.**
+- **Relationship to build verification**: Commits are made after Step 5 (Build Verification). If a build error occurs, include that fix in the commit as well.
 
-#### Example Commit Message
+#### Commit Message Example
 
 ```
 fix: Add null check before accessing output pointer
@@ -39,288 +39,256 @@ fix: Add null check before accessing output pointer
 
 ### `--confirm` Option
 
-When enabled, wait for user confirmation immediately after the Step 3 (Estimate) result table is displayed on the console. Do not confirm right after triage. Reason: triage alone does not surface spread risk and gives the user too little to weigh in on. Only once the estimates (cost / signals / downgrade proposals) are in does the user have meaningful grounds for intervention, so the confirmation point is consolidated into a single pass.
+When enabled, wait for user confirmation immediately after Step 3 (Estimate) prints the result table to the console. Do not confirm immediately after triage. Reason: triage alone does not surface spread risk and provides little material for a meaningful confirmation. The user can intervene meaningfully only once the estimate results (cost / signals / downgrade proposals) are in, so confirmation timing is consolidated into a single point.
 
 ## Review Document Format
 
-The review document is organized into severity-based sections (`## Critical`, `## Major`, `## Minor`, `## Info`). Each finding is a `###` subsection, and as it moves through the workflow, quoted verdict lines (`> ...`) accumulate between the "Finding" paragraph and the `---` delimiter. Verdict lines are **appended, not rewritten**, so the state-transition history is preserved.
+Review documents are generated by parallel-review and contain metadata markers (`<!-- METADATA({finding-id}) -->` ... `<!-- /METADATA({finding-id}) -->`) for each finding:
 
-### Line Types and Verdict Meanings
+```markdown
+### {finding-id} — `{location}`
 
-Verdict lines are classified by three prefixes. At each stage exactly one prefix is appended (no mixing). Each verdict value carries an emoji **placed immediately before the verdict value** for visual identification (e.g., `Triage: 🔧 Will Fix`):
+- **Reviewers:** {reviewer-name}
+
+<!-- METADATA({finding-id}) -->
+<!-- /METADATA({finding-id}) -->
+
+**Finding:**
+
+{description of the issue}
+
+---
+```
+
+review-respond and review-resolve append the following fields between the markers:
+
+| Field | Set by | Value format |
+|-------|--------|--------------|
+| `triage` | review-respond Step 2 | `🔧 Will Fix (assignee: {specialist}) — {triage rationale}` / `🚫 Won't Fix — {reason no action is needed}` |
+| `estimate` | review-respond Step 3 | `▶️ Maintain — Cost: {S/M/L}, Future: {S/M/L}, Signals: {none\|a,b,c,d,e,f}` / `🔻 Downgrade — Cost: ..., Future: ..., Signals: ... — {downgrade rationale}` / `🚧 Alternative — Cost: ..., Future: ..., Signals: ... — FIXME insertion: {direction}` |
+| `status` | review-respond Step 4 | `🟢 Fixed — {concise description of what was fixed}` |
+| `verification` | review-resolve | `✅ Verified — {concise description of the verification result}` |
+
+### Value Constraints
+
+- **Single line only** (no line breaks). Long rationales should go in the finding body; metadata values stay as summaries.
+- **Append-only, no deletion**. To retract a value, run another round of parallel-review.
+- **Same (id, field) is last-write-wins**, but the assumption is each field is set exactly once per round.
+
+### Emoji Reference
 
 | Prefix | Stage | Verdict | Emoji | Meaning |
 |--------|-------|---------|-------|---------|
-| `Triage:` | Step 2 (Triage) | `Will Fix` | 🔧 | Confirmed for fixing |
-| `Triage:` | 〃 | `Won't Fix` | 🚫 | Confirmed as no action needed |
-| `Estimate ({specialist}):` | Step 3 (Estimate) | `Maintain` | ▶️ | Keep the triage verdict (proceed with fix) |
-| `Estimate ({specialist}):` | 〃 | `Downgrade` | 🔻 | Overturn the triage verdict and do not fix (no alternative; "recommend separate PR" may be noted in the rationale) |
-| `Estimate ({specialist}):` | 〃 | `Alternative` | 🚧 | Overturn the triage verdict but address it via an alternative such as adding a FIXME comment ("recommend separate PR" may be noted in the rationale) |
-| `Status:` | Step 6 (Fix complete) | `Fixed` | 🟢 | Fix complete |
+| `triage` | Step 2 | `Will Fix` | 🔧 | Confirmed as a fix target |
+| `triage` | 〃 | `Won't Fix` | 🚫 | Confirmed as no action needed |
+| `estimate` | Step 3 | `Maintain` | ▶️ | Maintain triage verdict (will fix) |
+| `estimate` | 〃 | `Downgrade` | 🔻 | Overturn triage verdict; do not fix (no alternative) |
+| `estimate` | 〃 | `Alternative` | 🚧 | Triage verdict overturned, but addressed via FIXME comment or similar alternative |
+| `status` | Step 4 | `Fixed` | 🟢 | Fix complete |
+| `verification` | review-resolve | `Verified` | ✅ | Verification complete |
 
-After verification (review-resolve) a trailing `✅ Verified` line is appended.
+## Internal Processing (events.jsonl)
 
-### Line Format
+This skill uses `/tmp/parallel-review-events-{timestamp}.jsonl` as an intermediate representation. Each verdict is appended as a single-line JSON object, then `render-review.py` reflects them into the markdown at the end:
 
-```
-> - **{id} Triage: 🔧 Will Fix (assignee: {specialist})** — {triage rationale}
-> - **{id} Triage: 🚫 Won't Fix** — {reason no action is needed}
-
-> - **{id} Estimate ({specialist}): ▶️ Maintain** — Cost: {S/M/L}, Future: {S/M/L}, Signals: {none | the applicable subset of a,b,c,d,e}
-> - **{id} Estimate ({specialist}): 🔻 Downgrade** — Cost: ..., Future: ..., Signals: ... — {downgrade rationale (include "recommend separate PR" if applicable)}
-> - **{id} Estimate ({specialist}): 🚧 Alternative** — Cost: ..., Future: ..., Signals: ... — Add FIXME: {direction of the FIXME} (include "recommend separate PR" if applicable)
-
-> - **{id} Status: 🟢 Fixed** — {concise description of the fix}
+```jsonl
+{"id":"C-1","field":"triage","value":"🔧 Will Fix (assignee: cpp-sensei) — triage rationale"}
+{"id":"C-1","field":"estimate","value":"▶️ Maintain — Cost: M, Future: S, Signals: b,d"}
+{"id":"C-1","field":"status","value":"🟢 Fixed — fix description"}
 ```
 
-Estimate lines must be **complete on a single line**. Maintain carries only the quantitative fields and does not repeat the already-stated triage rationale. Downgrade and Alternative append the rationale (or FIXME direction) at the end.
+events.jsonl is not read directly by the AI; it is a write-only buffer accumulated across steps. State decisions about the review document are always made by inspecting the content between the markers in the markdown.
 
-### At Input (Before Triage)
-
-The input review document is assumed to be **untriaged**. No Triage, Estimate, or Status line has been added yet.
-
-```markdown
-### {finding-id} — `{location}`
-
-- **Reviewers:** {reviewer name}
-
-**Finding:**
-
-{Description of the issue. May span multiple paragraphs. Code snippets are allowed.}
-
----
-```
-
-### After Step 2 (Triage)
-
-```markdown
-### {finding-id} — `{location}`
-
-- **Reviewers:** {reviewer name}
-
-**Finding:**
-
-{Description of the issue}
-
-> - **{id} Triage: 🔧 Will Fix (assignee: {specialist})** — {triage rationale}
-
----
-```
-
-Or a `Triage: 🚫 Won't Fix` line.
-
-### After Step 3 (Estimate, Will Fix only)
-
-Maintain example:
-
-```markdown
-> - **{id} Triage: 🔧 Will Fix (assignee: {specialist})** — {triage rationale}
-> - **{id} Estimate ({specialist}): ▶️ Maintain** — Cost: M, Future: S, Signals: b,d
-```
-
-Downgrade example:
-
-```markdown
-> - **{id} Triage: 🔧 Will Fix (assignee: {specialist})** — {triage rationale}
-> - **{id} Estimate ({specialist}): 🔻 Downgrade** — Cost: L, Future: M, Signals: a,b,c — {downgrade rationale; include "recommend separate PR" when applicable}
-```
-
-Alternative example:
-
-```markdown
-> - **{id} Triage: 🔧 Will Fix (assignee: {specialist})** — {triage rationale}
-> - **{id} Estimate ({specialist}): 🚧 Alternative** — Cost: L, Future: M, Signals: a,b — Add FIXME: {direction of the FIXME; include "recommend separate PR" when applicable}
-```
-
-### After Step 6 (Fix Complete)
-
-Maintain fix:
-
-```markdown
-> - **{id} Triage: 🔧 Will Fix (assignee: {specialist})** — {triage rationale}
-> - **{id} Estimate ({specialist}): ▶️ Maintain** — Cost: ..., Future: ..., Signals: ...
-> - **{id} Status: 🟢 Fixed** — {concise description of the fix}
-```
-
-Alternative FIXME insertion:
-
-```markdown
-> - **{id} Triage: 🔧 Will Fix (assignee: {specialist})** — {triage rationale}
-> - **{id} Estimate ({specialist}): 🚧 Alternative** — Cost: ..., Future: ..., Signals: ... — Add FIXME: ...
-> - **{id} Status: 🟢 Fixed** — Added FIXME comment at {file:line}
-```
-
-### Notes
-
-- Finding ID examples: `C-1` (Critical), `M-1` (Major), `m-1` (Minor), `I-1` (Info).
-- Each finding is delimited by a trailing `---` horizontal rule.
-- Each verdict line is a quoted line (`> ...`) sitting between the "Finding" paragraph and the `---` delimiter.
-- The document may also contain carry-over tracking sections or summaries from previous rounds.
-
-## Step 1 — Parsing the Review Document
+## Step 1 — Parse Review Document and Prepare Temporary File
 
 1. Read the entire review document.
-2. Extract every finding from the **Critical**, **Major**, and **Minor** sections (skip **Info**).
-3. For each finding, extract:
-   - The finding ID (e.g., `C-1`, `M-1`, `m-1`)
-   - The severity (Critical / Major / Minor)
-   - The location (file path and line number)
-   - The description of the issue
-   - The list of current verdict lines (Triage / Estimate / Status) — zero or more
-4. Classify based on the trailing verdict line:
-   - **No verdict line** → Target of Step 2 (Triage)
-   - **Trailing line is `Triage: 🔧 Will Fix`** → Target of Step 3 (Estimate)
-   - **Trailing line is `Estimate: ▶️ Maintain`** → Target of Step 4 (Fix)
-   - **Trailing line is `Estimate: 🚧 Alternative`** → Target of Step 4 (FIXME insertion)
-   - **Trailing line is `Triage: 🚫 Won't Fix`** → Finalized as no action; skip
-   - **Trailing line is `Estimate: 🔻 Downgrade`** → Estimate decided no fix; skip
-   - **Trailing line is `Status: 🟢 Fixed`** → Already fixed; skip
+2. Determine the path `/tmp/parallel-review-events-{timestamp}.jsonl` (referred to as `{events_path}` below). Initialize it as an empty file:
+   ```bash
+   : > {events_path}
+   ```
+3. Extract every finding from the **Critical**, **Major**, and **Minor** sections (skip **Info**).
+4. For each finding, extract:
+   - Finding ID (e.g., `C-1`, `M-1`, `m-1`)
+   - Severity (Critical / Major / Minor)
+   - Location (file path and line number)
+   - Description of the issue
+   - **Existing metadata between the markers** (whether prior-round triage/estimate/status/verification lines exist)
+5. Categorize based on existing metadata:
+   - **Markers are empty** → target of Step 2 (Triage)
+   - **`Triage:` shows `🔧 Will Fix`, no `Estimate:`** → target of Step 3 (Estimate)
+   - **`Estimate:` shows `▶️ Maintain` or `🚧 Alternative`, no `Status:`** → target of Step 4 (Fix)
+   - **`Triage:` shows `🚫 Won't Fix`** → no action needed, skip
+   - **`Estimate:` shows `🔻 Downgrade`** → fell out at estimate as no-action, skip
+   - **`Status:` shows `🟢 Fixed`** → already fixed, skip
 
 ## Step 2 — Triage (Delegated to a Separate Sub-Agent)
 
-Triage is delegated by launching a **single sub-agent that is separate from the specialist agents performing the fixes**. Separating its context from the fix-execution agents ensures the triage decision is not biased by fix-time considerations.
+Triage is delegated by launching a **single sub-agent that is separate from the specialist agents performing fixes**. Separating context from the fix-performing agents ensures the triage decision is made without bias from the fix work.
 
-This triage sub-agent is responsible not only for the decision but also for **writing the verdict back into the review document**.
+This sub-agent **only renders verdicts**. It **does not edit the review document or events.jsonl**. The leader receives the verdict result table and writes it to events.jsonl.
 
 **Launch procedure:**
 
 1. Launch a new sub-agent via the Agent tool. Example prompt:
 
 ```
-You are responsible for the primary triage of the review document and for reflecting the result back into the document.
-**This task does not modify source code.** Only edit the review document and report the triage results.
+Conduct primary triage on a review document.
+**Do not modify any source code or write any files in this task.** Report the verdict results only.
 
 Review document: {document_path}
 
-Tasks:
+What to do:
 
-1. **Triage** — For each Critical / Major / Minor finding without a Triage line, decide one of the following:
+1. **Triage** — For each Critical / Major / Minor finding that has no triage line recorded between the markers, render one of the following verdicts:
    - **Will Fix** — Valid finding, should be addressed
-   - **Won't Fix** — Not applicable / false positive / risk acceptable (record the reason)
-   - **Needs Investigation** — Read the relevant source to decide → ultimately resolve to Will Fix / Won't Fix
+   - **Won't Fix** — Not applicable / false positive / accepted risk (state the reason)
+   - **Needs Investigation** — Read related sources to decide → settle on Will Fix / Won't Fix in the end
 
-   **Won't Fix decision guidelines** — Mark a finding as Won't Fix if any of the following apply:
-   1. The finding is out of scope of the branch diff.
-   2. The finding targets an existing-code bug not introduced by this branch.
-   3. The finding rests on a wrong premise or is technically incorrect.
-   4. The finding is something that, given the project's purpose, intended use, and expected audience, can reasonably be inferred to be tolerated.
-   5. A purely preference-based refactoring (no concrete justification in terms of correctness, safety, performance, or maintainability).
+   **Won't Fix verdict guidelines** — Render Won't Fix when any of the following apply:
+   1. Finding is outside the scope of the branch diff.
+   2. Finding addresses a bug in existing code that this branch did not introduce.
+   3. Finding is based on a wrong assumption or is technically incorrect.
+   4. Finding is something that, given the project's purpose, use case, or expected users, can be inferred to be acceptable.
+   5. Refactoring driven purely by preference (no concrete grounds in correctness, safety, performance, or maintainability).
 
-   **High-severity exception:** Even when the verdict is Won't Fix, if the severity is **Critical** or **Major**, explicitly note in the rationale that the recommended path is to address it in a separate PR (e.g., "Won't Fix — existing-code bug. Recommend addressing in a separate PR").
+   **High-severity exception:** Even with a Won't Fix verdict, when severity is **Critical** or **Major**, explicitly note in the rationale that addressing it in a separate PR is recommended (e.g., "Won't Fix — existing-code bug. Recommend addressing in a separate PR").
 
-2. **Specialist assignment (Will Fix only)** — Assign the most suitable specialist for each Will Fix finding:
+2. **Specialist assignment (Will Fix only)** — Assign the most suitable specialist to each Will Fix:
    - cpp-sensei / qt-sensei / obs-sensei / network-sensei / av-sensei / devops-sensei / python-sensei / lua-sensei
 
-3. **Reflecting in the review document** — Preserving the existing structure, append the following Triage line as a quoted line between each finding's "Finding" paragraph and its `---` delimiter. **Place the emoji immediately before the verdict value.**
-   - **Will Fix:** `> - **{id} Triage: 🔧 Will Fix (assignee: {specialist})** — {triage rationale}`
-   - **Won't Fix:** `> - **{id} Triage: 🚫 Won't Fix** — {reason no action is needed}`
-
-4. **Reporting format:**
+3. **Report format:**
    - Triage result table:
-     | Finding ID | Verdict | Assigned Specialist | Rationale |
-     |------------|---------|---------------------|-----------|
+     | Finding ID | Verdict | Specialist | Rationale |
+     |------------|---------|------------|-----------|
      | C-1 | 🔧 Will Fix | cpp-sensei | ... |
-     | M-2 | 🚫 Won't Fix | — | Existing code, out of scope for this round |
-   - Whether any Will Fix findings exist, and the count.
+     | M-2 | 🚫 Won't Fix | — | Existing code, out of current scope |
+   - Whether any Will Fix findings exist and the count.
+
+Do not edit any source code, the review document, or events.jsonl.
 ```
 
-2. Receive the result from the sub-agent.
-3. Present the triage result to the user (user confirmation prior to fixing happens after the Step 3 estimates; do not confirm immediately after triage).
+2. Receive the result table from the sub-agent.
+
+3. **Append to events.jsonl** (performed by the leader) — Write all findings' triage results in a single cat heredoc:
+
+```bash
+cat >> {events_path} <<'EOF'
+{"id":"C-1","field":"triage","value":"🔧 Will Fix (assignee: cpp-sensei) — {triage rationale}"}
+{"id":"M-1","field":"triage","value":"🔧 Will Fix (assignee: qt-sensei) — {triage rationale}"}
+{"id":"M-2","field":"triage","value":"🚫 Won't Fix — {reason no action is needed}"}
+EOF
+```
+
+Format values to fit on a single line (the policy is to never include line breaks in the first place — do not JSON-escape them with backslashes).
+
+4. Present the triage result table to the user (user confirmation prior to proceeding with fixes happens after the estimate in Step 3, not immediately after triage).
 
 ## Step 3 — Estimate (Delegated in Parallel to Specialist Sub-Agents)
 
-For each finding decided as Will Fix in triage, launch a sub-agent of the **same specialist that will actually perform the fix** in parallel, have it estimate the fix cost, and have it decide whether to keep or overturn the verdict.
+For each finding triaged as Will Fix, launch sub-agents of **the same specialist that will actually perform the fix** in parallel, have them estimate the fix cost, and decide whether to maintain or overturn the verdict.
 
 **Purpose of the estimate phase:**
 
-- **Cost estimate** — Quantify the work required for the fix from the specialist's perspective.
-- **Future-cost projection** — Predict whether this fix will pull in further fixes in future rounds or separate PRs.
-- **Verdict re-examination** — When the cost is disproportionate to the value of the finding, overturn the triage verdict (Downgrade) or switch to an alternative approach (Alternative).
+- **Cost estimation** — Compute the work required to fix from the specialist's viewpoint.
+- **Future cost prediction** — Predict whether the fix will trigger further fixes in future rounds or separate PRs.
+- **Verdict reconsideration** — When cost is disproportionate to the value of the finding, overturn the triage verdict (Downgrade) or switch to an alternative (Alternative).
 
-**Verdict options:**
+**Verdict choices:**
 
-- **▶️ Maintain** — Keep the triage verdict (proceed with the fix). The cost is reasonable; move forward with the fix.
-- **🔻 Downgrade** — Overturn the triage verdict and do not fix. No alternative is taken ("recommend separate PR" may be noted in the rationale).
-- **🚧 Alternative** — Overturn the triage verdict but address it lightweightedly via an alternative such as a FIXME comment ("recommend separate PR" may be noted in the rationale).
+- **▶️ Maintain** — Maintain the triage verdict (will fix). Cost is reasonable; proceed with the fix.
+- **🔻 Downgrade** — Overturn the triage verdict; do not fix. No alternative is offered (a separate-PR recommendation may be mentioned in the rationale).
+- **🚧 Alternative** — Triage verdict is overturned, but address it lightly through an alternative such as adding a FIXME comment (a separate-PR recommendation may be mentioned in the rationale).
 
-**Spread signals** (the criteria the estimate agent uses to judge applicability):
+**Spread signals** (perspectives the estimate agent uses to decide applicability):
 
-- **a. Introduction of a new concept** — The fix requires bringing in a library function / API / language feature not previously used in the codebase.
-- **b. Expansion of fix scope** — The fix drags in files / modules / layers that were not modified on the current branch.
-- **c. Asynchronous-execution timing interference** — Effects on UI thread blocking, callback execution order, signal/slot connection types, etc.
-- **d. Future cost** — Stop-gap measures left in place, FIXMEs deferred, missing abstractions, etc., that invite future rounds or separate PRs.
-- **e. Will Fix originating from a FIXME** — A finding that was originally left intentionally as a `FIXME:` / `TODO:` in the code or in a previous round, or one where the reviewer themselves proposed "make it a FIXME", was triaged as Will Fix.
+- **a. Introduction of new concepts** — A library function / API / language feature not yet used in the existing codebase needs to be introduced.
+- **b. Expansion of fix scope** — Files / modules / layers not yet modified on the current branch get pulled in.
+- **c. Asynchronous-execution timing interference** — Effects on UI thread blocking, callback invocation order, signal/slot connection types, etc.
+- **d. Future cost** — Provisional treatment left in place, FIXME pushed forward, missing abstractions, etc., that invite future rounds or separate PRs.
+- **e. Will Fix originating from a FIXME** — A finding that was originally left intentionally as `FIXME:` / `TODO:` in code or in the previous round, or one that the reviewer themselves proposed turning into a FIXME, fell to Will Fix at triage.
+- **f. Target change** — A change to build / runtime targets (OS, compiler, library/framework versions, etc.). Examples: Ubuntu 22.04 → 24.04, adding an explicit Qt version pin. Side effects on dependencies, CI, build environment, and distributables are large.
 
 **Launch procedure:**
 
-1. For each Will Fix finding, launch a specialist sub-agent **in parallel** via the Agent tool (all findings can be parallelized; since estimates do not edit source code, multiple findings against the same file may also be launched in parallel). Example prompt:
+1. For each finding triaged as Will Fix, **launch specialist sub-agents in parallel** via the Agent tool (full parallelism is fine at the per-finding level. Estimates do not edit source code, so multiple findings against the same file may also be launched in parallel). Example prompt:
 
 ```
-You are {specialist-name}. You are responsible for estimating the fix cost of review finding {finding-id}.
-**This task modifies neither source code nor the review document.** Investigation and verdict only.
+You are {specialist-name}. Estimate the fix cost for review finding {finding-id}.
+**Do not modify any source code, edit the review document, or write to events.jsonl in this task.** Investigation and verdict only.
 
 **Finding:** {description}
 **Location:** {file_paths_and_lines}
 **Triage verdict:** Will Fix — {triage_reason}
 
-Tasks:
+What to do:
 
-1. Read the relevant source and mentally assemble the changes the fix requires.
-2. For each of the following spread signals, decide whether it applies:
-   a. Introduction of a new concept (a previously unused library function / API / language feature)
-   b. Expansion of fix scope (files / modules not modified on the current branch)
-   c. Asynchronous-execution timing interference (UI thread blocking, callback ordering, Qt connection-type changes, etc.)
-   d. Future cost (stop-gap measures / deferred FIXMEs / missing abstractions)
-   e. Will Fix originating from a FIXME (originally left intentionally as a FIXME/TODO, or a "make it a FIXME" proposal that triage flipped to Will Fix)
-3. Compute Cost (S/M/L) and Future cost (S/M/L). The granularity may be coarse, but state the basis in 1–2 sentences.
-4. Verdict (Downgrade / Alternative may be chosen regardless of severity):
-   - **Maintain** — Cost is reasonable, proceed with the fix.
-   - **Downgrade** — Overturn the triage verdict; do not fix. No alternative. Include "recommend separate PR" in the rationale where appropriate.
-   - **Alternative** — Overturn the triage verdict but address it via an alternative such as a FIXME comment. Concisely state the direction of the FIXME wording. Include "recommend separate PR" where appropriate.
+1. Read the related sources and assemble the required changes mentally.
+2. Decide whether each of the following spread signals applies:
+   a. Introduction of new concepts (library functions / APIs / language features not previously used)
+   b. Expansion of fix scope (files / modules not yet modified on the current branch)
+   c. Asynchronous-execution timing interference (UI thread blocking, callback order, Qt connection-type changes, etc.)
+   d. Future cost (provisional treatment / FIXME push-forward / missing abstractions)
+   e. Will Fix originating from a FIXME (originally left as FIXME/TODO intentionally, or a FIXME-conversion proposal that fell to Will Fix at triage)
+   f. Target change (build / runtime target version changes, etc.)
+3. Compute Cost (S/M/L) and Future cost (S/M/L). Granularity may be coarse, but include 1–2 sentences of rationale.
+4. Verdict (regardless of severity, Downgrade / Alternative may be chosen):
+   - **Maintain** — Cost is reasonable; proceed with the fix.
+   - **Downgrade** — Overturn the triage verdict; do not fix. No alternative. Include "recommend separate PR" in the rationale if relevant.
+   - **Alternative** — Overturn the triage verdict, but address it lightly with an alternative such as adding a FIXME comment. Briefly indicate the direction for the FIXME wording. Include "recommend separate PR" in the rationale if relevant.
 
-   The higher the severity, the more strictly the rationale for choosing Downgrade (no alternative) is scrutinized. Critical / Major findings should typically prefer Alternative (add FIXME) or "Downgrade + recommend separate PR". Minor / Info findings tolerate Downgrade more readily.
+   The higher the severity of the finding, the more strictly the grounds for choosing Downgrade (no alternative) are scrutinized. Critical / Major are typically better as Alternative (FIXME insertion) or "Downgrade + separate PR recommendation". Minor / Info more easily tolerate Downgrade.
 
-Reporting format:
+Report format:
 
 - Verdict: Maintain / Downgrade / Alternative
-- Cost: S/M/L, Future: S/M/L, applicable signals: a/b/c/d/e (multiple allowed; none also allowed)
-- Maintain: Do not repeat the triage rationale. Concisely state the basis for the signal selection only.
-- Downgrade: Downgrade rationale (2–4 sentences; include "recommend separate PR" if applicable).
-- Alternative: Direction of the FIXME (a summary of the problem to be recorded in the comment plus the recommended fix direction; include "recommend separate PR" if applicable).
+- Cost: S/M/L, Future: S/M/L, Applicable signals: a/b/c/d/e/f (multiple OK, none OK)
+- For Maintain: Do not repeat the triage rationale. Provide only concise reasoning for the signal computation.
+- For Downgrade: Downgrade rationale (2–4 sentences. If a separate-PR recommendation is included, state so).
+- For Alternative: FIXME direction (the problem summary and recommended fix direction to be written in the comment. If a separate-PR recommendation is included, state so).
 
-Do not edit source code or the review document under any circumstances.
+Do not edit any source code, the review document, or events.jsonl.
 ```
 
-2. Receive the results from every estimate agent.
+2. Receive results from all estimate agents.
 
-3. **Reflecting in the review document** (performed by the leader yourself) — Append a single Estimate line immediately after the `Triage: 🔧 Will Fix` line of each Will Fix finding. Place the emoji (▶️ / 🔻 / 🚧) immediately before the verdict value. See the "Review Document Format" section for the exact format.
+3. **Append to events.jsonl** (performed by the leader) — Write all findings' estimate results in a single cat heredoc:
 
-4. **Display the estimate result table on the console:**
+```bash
+cat >> {events_path} <<'EOF'
+{"id":"C-1","field":"estimate","value":"▶️ Maintain — Cost: M, Future: S, Signals: b,d"}
+{"id":"M-2","field":"estimate","value":"🔻 Downgrade — Cost: L, Future: M, Signals: a,b,c — Recommend separate PR"}
+{"id":"M-3","field":"estimate","value":"🚧 Alternative — Cost: L, Future: M, Signals: a,b — FIXME insertion: direction description"}
+EOF
+```
+
+Values must fit on **a single line**. Maintain carries only the quantitative fields. Downgrade and Alternative append the verdict rationale (or FIXME direction) at the end.
+
+4. **Print the estimate result table to the console:**
 
    | Finding ID | Specialist | Cost | Future | Signals | Verdict | Notes |
    |------------|------------|------|--------|---------|---------|-------|
    | C-1 | cpp-sensei | M | S | b,d | ▶️ Maintain | — |
    | M-2 | qt-sensei | L | M | a,b,c | 🔻 Downgrade | Recommend separate PR |
-   | M-3 | obs-sensei | L | M | a,b | 🚧 Alternative | Add FIXME + recommend separate PR |
+   | M-3 | obs-sensei | L | M | a,b | 🚧 Alternative | FIXME insertion + recommend separate PR |
 
 5. If `--confirm` is enabled, wait for user confirmation before proceeding to fixes.
 
-**When both Maintain and Alternative are zero (all Downgrade):** Skip Steps 4 and 5 and proceed to Step 6 (document update). Estimate lines have already been written in this step, so no additional changes are needed in Step 6. Step 7 (summary) records them as Downgrade.
+**When both Maintain and Alternative are 0 (all Downgrade):** Skip Steps 4 and 5 and proceed to Step 6 (render). Estimate events have already been written, so Step 6 simply renders with no additional changes. Step 7 (Summary) records them as Downgrade.
 
 ## Step 4 — Fix
 
-This step covers two kinds of work, both delegated to the most appropriate specialist agent:
+This step handles two kinds of work, both delegated to the most appropriate specialist agent:
 
-- **Regular fix** — Fix for a finding judged as `Estimate: Maintain`.
-- **FIXME comment insertion** — Adding a `FIXME:` comment for a finding judged as `Estimate: Alternative` (see "FIXME insertion for Alternative findings" at the end of this section for details).
+- **Regular fixes** — Fixes for findings judged `Estimate: ▶️ Maintain`.
+- **FIXME insertion** — Adding `FIXME:` comments for findings judged `Estimate: 🚧 Alternative`.
 
-Choose a specialist based on the nature of the finding:
+Choose specialists based on the nature of the finding:
 
 | Specialist | When to use |
 |------------|-------------|
 | **cpp-sensei** | C++ language issues, memory management, RAII, thread safety, undefined behavior, performance |
 | **qt-sensei** | Qt API usage, signals/slots, object lifetime, thread affinity, UI thread safety |
-| **obs-sensei** | OBS API correctness, plugin lifecycle, source/filter/output, OBS threading model |
+| **obs-sensei** | OBS API correctness, plugin lifecycle, sources/filters/outputs, OBS threading model |
 | **network-sensei** | Networking, protocols, connection lifecycle, security |
 | **av-sensei** | Video/audio/streaming quality, encoder settings, media processing |
 | **devops-sensei** | CI/CD, CMake, build scripts, formatters, packaging |
@@ -337,77 +305,85 @@ You are {specialist-name}. Fix review finding {finding-id}.
 **Finding:** {description}
 **Location:** {file_paths_and_lines}
 **Triage verdict:** Will Fix — {triage_reason}
-**Estimate:** {Maintain | Alternative} — Cost: {S/M/L}, Future: {S/M/L}, Signals: {a,b,...} — {basis for the signal selection if Maintain / direction of the FIXME if Alternative}
+**Estimate:** {Maintain | Alternative} — Cost: {S/M/L}, Future: {S/M/L}, Signals: {a,b,...} — {for Maintain: signal computation rationale / for Alternative: FIXME direction}
 
 Procedure:
-1. Read the relevant source files and understand the current code and surrounding context.
+1. Read the related source files to understand the current code and surrounding context.
 2. Implement the fix. Follow the project's coding conventions (see CLAUDE.md).
-   - **For Maintain:** Apply a regular fix in line with the finding.
-   - **For Alternative:** The change is limited to adding a `FIXME:` comment; do not modify logic. Use wording aligned with the FIXME direction recorded in the Estimate line.
-3. After the fix, perform a self-review:
+   - **For Maintain:** Perform a regular fix in line with the finding.
+   - **For Alternative:** The fix is limited to adding a `FIXME:` comment; no logic changes. Use wording aligned with the FIXME direction stated in Estimate.
+3. After fixing, perform a self-review:
    - Re-read the changed code.
    - Verify that the fix addresses the finding and does not introduce new issues.
    - Check edge cases, thread safety, and resource leaks.
-   - If the self-review uncovers any problems, fix them before reporting.
+   - If the self-review uncovers any issues, fix them before reporting.
 4. Report what you changed and why (including any self-review fixes).
 
-**Forbidden:**
+**Prohibited:**
 - Do not run build commands (`cmake`, `make`, `build.ps1`, `pwsh` build scripts, etc.).
 - Do not run formatters (`clang-format`, `cmake-format`, etc.).
-- The leader will batch and run those in Step 5. Running builds/formatters concurrently with other parallel-launched fix agents would crosswire the results due to build-cache contention or file-rewrite races.
-- Confine your work to source-code edits and leave build success or formatter diffs for the leader to confirm.
+- The above are aggregated and run by the leader in Step 5. If builds / formatters run concurrently with other fix agents launched in parallel, build cache contention and concurrent file rewrites cause the results to interleave.
+- Limit fixes to source code edits; defer build success and format diff verification to the leader.
+- Do not edit the review document or write to events.jsonl (the leader handles those).
 
-For comments, follow the rules in `.claude/rules/comment.md` (auto-loaded).
+Follow the comment rules in `.claude/rules/comment.md` (auto-loaded).
 ```
 
-### FIXME Insertion for Alternative Findings (Special Form of Fix)
-
-For findings judged as `Estimate: Alternative`, this step adds a short `FIXME:` comment at the relevant site. The specialist prompt must explicitly state "the change is limited to adding a FIXME comment; do not modify logic" and "use wording aligned with the FIXME direction recorded in the Estimate line". This is treated as a form of fix; Step 6 appends a `Status: 🟢 Fixed` line.
-
-### Parallelization
+### Parallelism
 
 - Group findings by file to avoid edit conflicts.
-- Findings affecting **different files** can be fixed in parallel by launching multiple agents simultaneously.
-- Findings affecting the **same file** must be fixed sequentially — launch them one at a time, waiting for each to complete before starting the next.
+- Findings affecting **different files** may be fixed in parallel by launching multiple agents simultaneously.
+- Findings affecting **the same file** must be fixed sequentially — launch them one at a time and wait for each to complete before starting the next.
+
+### Appending to events.jsonl After Fixes Complete
+
+After all fixes (regular Maintain fixes and Alternative FIXME insertions) complete, the leader appends statuses in bulk:
+
+```bash
+cat >> {events_path} <<'EOF'
+{"id":"C-1","field":"status","value":"🟢 Fixed — Added null check"}
+{"id":"M-1","field":"status","value":"🟢 Fixed — Changed signal/slot connection type to Qt::QueuedConnection"}
+{"id":"M-3","field":"status","value":"🟢 Fixed — Added FIXME comment at output.cpp:200"}
+EOF
+```
+
+For Alternative findings, the status should clearly indicate the FIXME insertion, e.g., "Added FIXME comment at {file:line}".
 
 ## Step 5 — Format Verification & Build Verification
 
-After all fixes are complete, run code-format verification and a build to validate the quality of the changes.
+Once all fixes are complete, run code format verification and a build to verify the quality of the changes.
 
 ### 5a. Format Verification
 
-1. Identify the source files (`.cpp`, `.hpp`, `.h`, `.c`) modified in Step 4.
-2. Run `clang-format` on each file to check for format violations:
+1. Identify the source files changed in Step 4 (`.cpp`, `.hpp`, `.h`, `.c`).
+2. For each file, run `clang-format` to check for formatting violations:
    ```bash
    clang-format -style=file -fallback-style=none --dry-run -Werror <file>
    ```
-3. If there are format violations:
+3. If there are formatting violations:
    - Auto-fix with `clang-format -i -style=file -fallback-style=none <file>`.
-   - Inspect the resulting diff and verify it does not include unintended changes.
-4. If CMake files (`CMakeLists.txt`, `*.cmake`) were modified, verify and fix them similarly with `cmake-format`.
+   - Inspect the resulting diff and verify no unintended changes are included.
+4. If CMake files (`CMakeLists.txt`, `*.cmake`) were changed, verify and fix them similarly with `cmake-format`.
 
 ### 5b. Build Verification
 
-1. Identify the build command appropriate for the current platform. Check the build script (`build.ps1`, `Makefile`, etc.) or use the CMake preset documented in `CLAUDE.md`.
+1. Identify the build command appropriate for the current platform. Check the build scripts (`build.ps1`, `Makefile`, etc.) or use the CMake presets noted in `CLAUDE.md`.
 2. Run the build. If the build fails:
    - Analyze the error output.
-   - Delegate the fix to the appropriate specialist agent (use the same selection criteria and the same prompt template as Step 4, propagating the prohibition on running builds and formatters).
-   - Re-run the build after the fix. The leader (you) performs the re-run. Repeat until it succeeds.
-3. Report the build result (success, or the errors encountered and how they were resolved).
+   - Delegate the fix to the appropriate specialist agent (use the same selection criteria and prompt template as Step 4, and inherit the prohibition against running builds / formatters).
+   - Re-run the build after the fix. The leader (you yourself) re-runs it. Repeat until success.
+3. Report the build result (success, or the errors that occurred and how they were resolved).
 
-## Step 6 — Updating the Review Document
+## Step 6 — Reflect into the Review Document
 
-For findings fixed under `Estimate: Maintain` and findings that received a FIXME under `Estimate: Alternative`, leave the existing Triage and Estimate lines in place and append the following Status line at the end:
+Reflect the contents of events.jsonl into the markdown via `render-review.py`:
 
+```bash
+python .claude/scripts/render-review.py {document_path} {events_path} {document_path}
+rm {events_path}
 ```
-> - **{finding-id} Status: 🟢 Fixed** — {Concise description of the fix.}
-```
 
-- `Triage: 🚫 Won't Fix` lines were already written by the Step 2 triage sub-agent and are not appended again here.
-- `Estimate: 🔻 Downgrade` lines were already written in Step 3 and, since no fix is performed, no `Status: 🟢 Fixed` is appended either.
-- For Alternative findings, the `Status: 🟢 Fixed` description should make it clear that a FIXME was inserted, e.g., "Added FIXME comment at {file:line}".
-
-Write the description in the same language as the review document.
+`render-review.py` inserts the metadata lines from events into each finding in the markdown immediately before its `<!-- /METADATA({finding-id}) -->`, in fixed order (`triage` → `estimate` → `status` → `verification`). Existing metadata is preserved; new events are appended at the end.
 
 ## Step 7 — Summary
 
@@ -421,12 +397,12 @@ Output a summary of all actions taken:
 
 ## Results
 
-| # | Severity | Verdict | Specialist | Notes |
-|---|----------|---------|------------|-------|
-| C-1 | Critical | 🟢 Fixed (Maintain) | cpp-sensei | Concise description of fix |
-| M-1 | Major | 🟢 Fixed (Alternative) | obs-sensei | FIXME added (output.cpp:200) + recommend separate PR |
+| # | Severity | Decision | Specialist | Note |
+|---|----------|----------|------------|------|
+| C-1 | Critical | 🟢 Fixed (Maintain) | cpp-sensei | Concise description of the fix |
+| M-1 | Major | 🟢 Fixed (Alternative) | obs-sensei | FIXME inserted (output.cpp:200) + recommend separate PR |
 | M-2 | Major | 🔻 Downgrade | qt-sensei | Cost L, Future M, Signals a,b,c. Recommend separate PR. |
-| M-3 | Major | 🚫 Won't Fix | — | Existing code, out of scope for this round |
+| M-3 | Major | 🚫 Won't Fix | — | Existing code, out of current scope |
 | m-1 | Minor | 🚫 Won't Fix | — | Reason |
 | ... | ... | ... | ... | ... |
 
@@ -437,5 +413,5 @@ Output a summary of all actions taken:
 - **🟢 Fixed (Alternative FIXME insertion):** N
 - **🔻 Downgrade (no fix):** N
 - **🚫 Won't Fix:** N
-- **Resolved (skipped):** N
+- **Already resolved (skipped):** N
 ```

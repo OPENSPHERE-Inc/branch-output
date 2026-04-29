@@ -166,26 +166,26 @@ Read the verification result from Step 2.3 and check whether any findings requir
 1. Print to console: `## Round {N} — Step 4.1: Feedback Triage (attempt {M}/3)`
    Use the same triage subagent launch method as Step 2.2 (review-respond § Step 2). Append the following to the "additional constraints" portion of the prompt:
    ```
-   Prioritize the Feedback lines in the review document (`> - **{id} Feedback:** ...`) as triage signals. Focus the triage on findings that have a Feedback line.
+   Prioritize findings whose Verification field between the metadata markers shows "💬 Feedback — ..." as triage signals. Focus the triage on findings that have a Feedback annotation.
    ```
 
 2. Print to console: `## Round {N} — Step 4.2: Feedback Estimate (attempt {M}/3)`
    Run estimates for each Will Fix using the same method as Step 2.2 (review-respond § Step 3). Append the following to the prompt for each estimate agent:
    ```
-   Perform the cost estimate taking into account the Feedback lines in the review document (`> - **{id} Feedback:** ...`). If the feedback inflates the fix cost, consider Downgrade.
+   For findings whose Verification field between the metadata markers shows "💬 Feedback — ...", perform the cost estimate taking that content into account. If the feedback inflates the fix cost, consider Downgrade.
    ```
    If every finding is Downgraded, skip step 3 and proceed to step 4.
 
 3. Print to console: `## Round {N} — Step 4.3: Feedback Fix (attempt {M}/3)`
    Use the same fix / verification / update method as Step 2.2 (review-respond § Step 4 through Step 6). Append the following to the prompt for each specialist:
    ```
-   Re-fix taking into account the Feedback lines in the review document (`> - **{id} Feedback:** ...`).
+   Re-fix the findings whose Verification field between the metadata markers shows "💬 Feedback — ...", taking that content into account.
    ```
 
 4. Print to console: `## Round {N} — Step 4.4: Feedback Verify (attempt {M}/3)`
    Re-run review-resolve using the same method as Step 2.3.
 
-5. If feedback remains, return to step 1. If 3 iterations do not resolve it, end the round (any remaining Feedback lines are preserved as-is and counted as "unresolved" in Step 2.5).
+5. If feedback remains, return to step 1. If 3 iterations do not resolve it, end the round (any remaining 💬 Feedback annotations are preserved as-is and counted as "unresolved" in Step 2.5).
 
 6. If `--confirm-round` is enabled and unresolved items remain, wait for user confirmation before proceeding to the next round.
 
@@ -196,8 +196,8 @@ Record the round's results:
 - **Maintain count** — Number of findings judged Maintain at estimate (subject to regular fixing).
 - **Alternative count** — Number of findings judged Alternative at estimate (subject to FIXME insertion).
 - **Downgrade count** — Number of findings judged Downgrade at estimate (no fix performed; if separate-PR recommendation is included, record that subset count as a breakdown).
-- **Fixed count** — Number of findings that were fixed in Step 2.2 (including regular fixes for Maintain and FIXME insertions for Alternative) and judged **Resolved** by the verification in Step 2.3 / 2.4 (a `✅ Verified` annotation has been appended to the trailing judgment line).
-- **Unresolved count** — Number of findings that still have Feedback after 3 iterations of the re-fix loop in Step 2.4 (those triaged as Will Fix but not resolved within this round).
+- **Fixed count** — Number of findings that were fixed in Step 2.2 (including regular fixes for Maintain and FIXME insertions for Alternative) and judged **Resolved** by the verification in Step 2.3 / 2.4 (`✅ Verified` is recorded in the Verification field).
+- **Unresolved count** — Number of findings whose Verification field still shows `💬 Feedback` after 3 iterations of the re-fix loop in Step 2.4 (those triaged as Will Fix but not resolved within this round).
 
 **Conditions to proceed to the next round:** Increment the round counter and return to Step 2.1 only if **all** of the following are satisfied:
 
@@ -210,7 +210,7 @@ If any of the above is not satisfied, proceed to Step 3 (Final Report) below. Th
 
 After all rounds end, produce the final report. File path: `{base-path}/{branch-dir}/final-report.md`
 
-**You yourself** create the final report by reading the review documents from all rounds (do not delegate to an agent). Each review document carries the Status lines for the fix state and the post-verification Feedback / ✅ Verified annotations, so the information can be retrieved from there (note that the review-resolve verification reports are console output only and are not saved to file).
+**You yourself** create the final report by reading the review documents from all rounds (do not delegate to an agent). Each review document carries the Triage / Estimate / Status / Verification fields between the metadata markers for every finding, so the information can be retrieved from there (note that the review-resolve verification reports are console output only and are not saved to file).
 
 ### Final Report Format
 
