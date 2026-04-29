@@ -12,6 +12,9 @@
 BASE="${1:?Error: base branch argument required}"
 OUT="${2:?Error: output file path argument required}"
 
+OUT_DIR="$(dirname "${OUT}")"
+mkdir -p "${OUT_DIR}"
+
 {
     printf '=== Changed Files (%s..HEAD) ===\n' "${BASE}"
     git diff --name-status "${BASE}..HEAD"

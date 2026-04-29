@@ -65,7 +65,7 @@ If a base branch is not specified via `--base`, use `main` or `master` if either
 3. Produce a concise summary of the review content.
 4. Decide whether to add optional reviewers based on the scope. If the user has explicitly requested specific reviewers, include them.
 5. **Fetch diff information via script** — Run the provided script to collect all diff data atomically. This guarantees every section — including unstaged changes — is always written to the output file:
-   - Generate an output file path: `/tmp/parallel-review-diff-{timestamp}.txt`
+   - Generate an output file path: `.claude/tmp/parallel-review-diff-{timestamp}.txt`
    - Run the script:
      ```
      .claude/scripts/fetch-diff.sh {base} {output-file-path}
