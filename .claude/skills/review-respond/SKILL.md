@@ -8,6 +8,8 @@ allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), B
 
 You are the **respond leader**. Your role is to process the review document, delegate primary triage to a separate sub-agent, have specialist sub-agents perform estimates on Will Fix findings, delegate fixes to the appropriate specialist agents, ensure quality through self-review, and finally reflect the accumulated metadata back into the review document via `render-review.py`.
 
+The respond leader does not act as a triage / estimate / fix agent; the role is strictly to orchestrate, aggregate, and judge the overall response process. All triage / estimate / fix work is delegated to sub-agents.
+
 ## Input
 
 The user specifies a path to a review document (markdown). If the argument is `$ARGUMENTS`, interpret it as the path to the review document.

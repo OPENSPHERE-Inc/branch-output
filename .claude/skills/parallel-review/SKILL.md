@@ -8,6 +8,8 @@ allowed-tools: Agent, Read, Glob, Grep, Bash(.claude/scripts/fetch-diff.sh:*), B
 
 You are the **review leader**. Your role is to orchestrate parallel code reviews using specialist reviewers and consolidate each reviewer's findings into a single report.
 
+The review leader does not act as a reviewer; the role is strictly to orchestrate, aggregate, and judge the overall review process. All reviewer work is delegated to sub-agents.
+
 ## Round Number
 
 If the arguments include a round number (e.g., `Round 1`, `Round 2`), reflect it in the report title.
@@ -83,6 +85,8 @@ Launch all selected reviewers **simultaneously** using the Agent tool. Each revi
 ### Agent Prompt Template
 
 Pass the following prompt to each reviewer agent (filling in `{name}`, `{perspective}`, `{targets}`, `{base}`, and `{diff_content_or_path}`):
+
+**Prohibited: do not omit parts of the template or append extra instructions.**
 
 ```
 You are {name}. Conduct a code review from your specialist perspective.

@@ -6,7 +6,9 @@ allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), B
 
 # Automated Review Rounds
 
-You are the **review round orchestrator**. Your role is to automatically iterate the parallel-review / review-respond / review-resolve flow across multiple rounds, repeating until no actionable findings remain. See "Sub-Agent Usage Rules" for the division of responsibilities between sub-agent delegation and what the orchestrator handles itself.
+You are the **review round orchestrator**. Your role is to automatically iterate the parallel-review / review-respond / review-resolve flow across multiple rounds, comprehensively discovering and fixing important issues. See "Sub-Agent Usage Rules" for the division of responsibilities between sub-agent delegation and what the orchestrator handles itself.
+
+The review round orchestrator does not act as a reviewer or fix agent; the role is strictly to orchestrate, aggregate, and judge the overall round process. All reviewer and fix work is delegated to sub-agents.
 
 ## Input
 
@@ -101,12 +103,13 @@ The orchestrator (you) directly takes on the "review leader" role of parallel-re
 
 - **Do not pass the previous round's review document to reviewers** — to avoid letting prior judgments bias the new round.
 - **Do not deduplicate against previous rounds** — already-resolved findings have been reflected in source code, so they are assumed not to be re-detected.
-- **Convergence-induction prevention — never include the following in reviewer prompts:**
-  - Counts of past-round findings, count trends, or claims like "things are converging."
-  - Past-round finding IDs (`C-1`, `M-1`, etc.).
-  - Past-round Fixed / Won't Fix counts or other statistics.
-  - Instructions to make reviews stricter or looser as rounds progress.
-- **Excluding repeatedly-rejected findings:** Only **findings rejected as Won't Fix in two or more consecutive rounds** may be explicitly listed for exclusion in the reviewer prompt. **A finding marked Won't Fix only once is not excluded** (to leave room for re-judgment). Use a **short summary of the finding content only** for the exclusion notice; do not use IDs (e.g., "the finding about XX in YY function in ZZ file (Won't Fix in the past 2 rounds)").
+- **Convergence-induction prevention** — Review rounds aim to thoroughly examine the diff and surface important issues; steering toward a smaller finding count is an anti-pattern.
+  - **Never include the following in reviewer prompts:**
+    - Counts of past-round findings, count trends, or claims like "things are converging."
+    - Past-round finding IDs (`C-1`, `M-1`, etc.).
+    - Past-round Fixed / Won't Fix counts or other statistics.
+  - Omitting parts of the reviewer prompt template, or appending instructions that try to control finding counts, is prohibited.
+  - The orchestrator must not introduce findings of its own beyond those submitted by reviewers.
 
 ### 2.2 — Review Response (review-respond)
 
