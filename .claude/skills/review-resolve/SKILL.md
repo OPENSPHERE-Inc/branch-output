@@ -64,7 +64,9 @@ Do not write a `verification` for Unresolved findings.
 
 ## Internal Processing (events.jsonl)
 
-This skill uses `/tmp/parallel-review-events-{timestamp}.jsonl` as an intermediate representation. Each finding's verification verdict is held in the leader's context during Step 2, then in Step 4 **all events are written out at once with the Write tool**, and `render-review.py` reflects them into the markdown:
+This skill uses **`{basename}.events.jsonl` in the same directory as the markdown** as an intermediate representation (e.g., `review-round1.md` → `review-round1.events.jsonl`).
+
+Each finding's verification verdict is held in the leader's context during Step 2, then in Step 4 **all events are written out at once with the Write tool**, and `render-review.py` reflects them into the markdown:
 
 ```jsonl
 {"id":"C-1","field":"verification","value":"✅ Verified — Null check fix is correct"}
@@ -76,7 +78,7 @@ This skill uses `/tmp/parallel-review-events-{timestamp}.jsonl` as an intermedia
 ## Step 1 — Re-read and Parse
 
 1. Read the entire review document.
-2. Determine the path `/tmp/parallel-review-events-{timestamp}.jsonl` (referred to as `{events_path}` below). Writing to this file is performed in bulk in Step 4, so no creation is needed in this step.
+2. Determine the events.jsonl path: in the same directory as the markdown, replace the `.md` suffix of the basename with `.events.jsonl` (referred to as `{events_path}` below; e.g., `review-round1.md` → `review-round1.events.jsonl`). Writing to this file is performed in bulk in Step 4, so no creation is needed in this step.
 3. Extract every finding from the **Critical**, **Major**, and **Minor** sections.
 4. For each finding, extract:
    - Finding ID, severity, location (file and line number), description

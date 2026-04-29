@@ -25,6 +25,8 @@
       "Bash(cmake-format:*)",
       "Bash(.claude/scripts/fetch-diff.sh:*)",
       "Bash(python .claude/scripts/render-review.py:*)",
+      "Read(.claude/tmp/**)",
+      "Write(.claude/tmp/**)",
       "Skill(parallel-review)",
       "Skill(review-resolve)",
       "Skill(review-respond)",

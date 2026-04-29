@@ -6,7 +6,9 @@ Usage:
     python render-review.py <markdown-input> <events-jsonl> <markdown-output>
 
 The output may be the same path as the input (in-place rewrite supported).
-If <events-jsonl> is missing or empty, the markdown is copied through unchanged.
+If <events-jsonl> is empty (file exists but no events), the markdown is copied
+through unchanged. If the path does not exist, the script errors out — this
+catches Windows path mismatches (Git Bash's /tmp vs Python's /tmp).
 
 events.jsonl format (one JSON object per line):
     {"id": "C-1", "field": "triage",       "value": "🔧 Will Fix"}
@@ -42,10 +44,21 @@ LABELS = {
 
 
 def load_events(jsonl_path):
-    """Read events.jsonl into {id: {field: value}}. Last write wins."""
-    fields = {}
+    """Read events.jsonl into {id: {field: value}}. Last write wins.
+
+    Errors out loudly if the path does not resolve to an existing file. This
+    catches Windows path mismatches between Git Bash's mounted /tmp and
+    Python's drive-root /tmp interpretation.
+    """
     if not os.path.exists(jsonl_path):
-        return fields
+        sys.exit(
+            f"Error: events.jsonl not found: {jsonl_path}\n"
+            f"  abspath: {os.path.abspath(jsonl_path)}\n"
+            f"  Note: on Windows, /tmp/... resolves to <drive>:/tmp/... in Python\n"
+            f"  but to the Git Bash mount (e.g., C:\\Users\\...\\AppData\\Local\\Temp)\n"
+            f"  in shell. Use the same writing tool throughout to avoid mismatch."
+        )
+    fields = {}
     with open(jsonl_path, encoding="utf-8") as f:
         for raw in f:
             line = raw.strip()
