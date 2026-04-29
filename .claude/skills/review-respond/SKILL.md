@@ -152,6 +152,7 @@ What to do:
    3. Finding is based on a wrong assumption or is technically incorrect.
    4. Finding is something that, given the project's purpose, use case, or expected users, can be inferred to be acceptable.
    5. Refactoring driven purely by preference (no concrete grounds in correctness, safety, performance, or maintainability).
+   6. Finding whose reproducibility is unclear and requires e2e verification before fixing.
 
    **High-severity exception:** Even with a Won't Fix verdict, when severity is **Critical** or **Major**, explicitly note in the rationale that addressing it in a separate PR is recommended (e.g., "Won't Fix — existing-code bug. Recommend addressing in a separate PR").
 
