@@ -1,14 +1,12 @@
 ---
 name: review-resolve
 description: Verify review finding resolutions against actual source code and provide feedback
-allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(rm:*), Bash(python .claude/scripts/render-review.py:*)
+allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(.claude/scripts/rm-tmp.sh:*), Bash(python .claude/scripts/render-review.py:*)
 ---
 
 # Review Verification
 
 You are the **review verifier**. Your role is to re-read the updated review document, verify each finding's resolution against the actual source code, and write the verification result back as `verification` metadata.
-
-Verification results are reflected into the review document (Step 4) and also printed as a report to the console (Step 3).
 
 ## Input
 
@@ -64,41 +62,35 @@ Do not write a `verification` for Unresolved findings.
 
 ## Internal Processing (events.jsonl)
 
-This skill uses **`{basename}.events.jsonl` in the same directory as the markdown** as an intermediate representation (e.g., `review-round1.md` → `review-round1.events.jsonl`).
+This skill uses **`{basename}.events.jsonl` in the same directory as the markdown** as an intermediate representation (e.g., `review-round1.md` → `review-round1.events.jsonl`; referred to as `{events_path}` below).
 
-Each finding's verification verdict is held in the leader's context during Step 2, then in Step 4 **all events are written out at once with the Write tool**, and `render-review.py` reflects them into the markdown:
+Each finding's verification verdict is held in the leader's context during Step 2, then in Step 4 **all events are written out at once with the Write tool**.
 
 ```jsonl
 {"id":"C-1","field":"verification","value":"✅ Verified — Null check fix is correct"}
 {"id":"M-1","field":"verification","value":"💬 Feedback — LOG_ERROR is missing in the else branch at line 85"}
 ```
 
-**Important:** Do not use Bash cat heredoc (`cat >> file <<'EOF' ... EOF`). Apostrophes inside values (e.g., `Won't`) interfere with the outer quoting and cause bash syntax errors. Instead, use the Write tool to write the entire file at once.
+Use the **Write tool** for the file. Bash cat heredoc is unusable because apostrophes inside values (e.g., `Won't`) break the outer quoting.
 
 ## Step 1 — Re-read and Parse
 
 1. Read the entire review document.
-2. Determine the events.jsonl path: in the same directory as the markdown, replace the `.md` suffix of the basename with `.events.jsonl` (referred to as `{events_path}` below; e.g., `review-round1.md` → `review-round1.events.jsonl`). Writing to this file is performed in bulk in Step 4, so no creation is needed in this step.
-3. Extract every finding from the **Critical**, **Major**, and **Minor** sections.
-4. For each finding, extract:
+2. Extract every finding from the **Critical**, **Major**, and **Minor** sections.
+3. For each finding, extract:
    - Finding ID, severity, location (file and line number), description
    - The metadata between the markers (presence and values of triage / estimate / status)
 
 ## Step 2 — Verify Each Finding
 
-Depending on the metadata between the markers, read the actual source code and verify the resolution status:
-
 ### `Status: 🟢 Fixed` is present
-
-The expected fix differs depending on whether the immediately preceding Estimate is `▶️ Maintain` or `🚧 Alternative`.
 
 1. Read the referenced files and lines.
 2. Confirm that the recorded fix is actually present in the code.
-   - **When Estimate is `▶️ Maintain`:** Confirm that a regular fix (including logic changes) addressing the finding is reflected.
-   - **When Estimate is `🚧 Alternative`:** Confirm that an appropriate `FIXME:` / `TODO:` comment has been added at the relevant location. Also check that the comment wording roughly matches the FIXME direction recorded in Estimate. Logic changes are not expected.
-3. Confirm that the fix fully addresses the original problem (for Maintain), or that the FIXME comment carries enough information for a future fix (for Alternative).
-4. Confirm that the fix has not introduced new issues (regressions, new bugs, style violations, thread safety problems, resource leaks, etc.).
-5. Verdict:
+   - **When Estimate is `▶️ Maintain`:** Confirm that a regular fix (including logic changes) addressing the finding is reflected and that it fully addresses the original problem.
+   - **When Estimate is `🚧 Alternative`:** Confirm that an appropriate `FIXME:` / `TODO:` comment has been added at the relevant location. Also check that the comment wording roughly matches the FIXME direction recorded in Estimate and carries enough information for a future fix. Logic changes are not expected.
+3. Confirm that the fix has not introduced new issues (regressions, new bugs, style violations, thread safety problems, resource leaks, etc.).
+4. Verdict:
    - **Resolved** — The fix is correct, complete, and introduces no new issues.
    - **Feedback** — The fix is missing, incomplete, or introduces a new issue. Describe what remains.
 
@@ -153,25 +145,19 @@ The expected fix differs depending on whether the immediately preceding Estimate
 |---|----------|----------------|---------|
 | C-1 | Critical | Status: 🟢 Fixed | Fix is correct and complete. |
 | M-2 | Major | Triage: 🚫 Won't Fix | Rationale is valid. |
-| M-3 | Major | Estimate: 🔻 Downgrade | Downgrade rationale is valid. Separate-PR recommendation noted. |
-| M-4 | Major | Status: 🟢 Fixed | Alternative FIXME inserted. Wording matches the Estimate's direction. |
 
 ### Feedback Required
 
 | # | Severity | Trailing field | Issue |
 |---|----------|----------------|-------|
 | M-1 | Major | Status: 🟢 Fixed | The fix addresses the null check, but the `else` branch at line 85 returns without logging. |
-| m-1 | Minor | Status: 🟢 Fixed | The added `disconnect()` call at line 102 fires on destruction and may cause a double disconnect. |
-| M-5 | Major | Estimate: 🔻 Downgrade | The downgrade reason is solely "FIXME-origin", but no existing FIXME is found at the location, so the rationale does not match the current code. |
 
 ### Unresolved
 
 | # | Severity | Trailing field | Note |
 |---|----------|----------------|------|
 | m-3 | Minor | (none) | No verdict line recorded (not yet triaged). |
-| m-4 | Minor | Triage: 🔧 Will Fix | Triaged, but estimate not yet completed. |
 | m-5 | Minor | Estimate: ▶️ Maintain | Estimated, but fix not yet completed. |
-| m-6 | Minor | Estimate: 🚧 Alternative | FIXME insertion not yet completed. |
 
 ## Summary
 
@@ -203,23 +189,9 @@ For each finding requiring feedback, write a detailed description after the summ
 
 Write all verification events accumulated in the leader's context during Step 2 to events.jsonl in one shot, then reflect them into the markdown via `render-review.py`.
 
-### 4a. Write events.jsonl (Write tool)
+### 4a. Write events.jsonl
 
-Use the **Write tool** to write the entire events.jsonl content to `{events_path}`. JSONL format with one event per line:
-
-```jsonl
-{"id":"C-1","field":"verification","value":"✅ Verified — Null check fix is correct"}
-{"id":"M-2","field":"verification","value":"✅ Verified — Won't Fix rationale is valid"}
-{"id":"M-3","field":"verification","value":"✅ Verified — Downgrade rationale is valid; separate-PR recommendation noted"}
-{"id":"M-1","field":"verification","value":"💬 Feedback — LOG_ERROR is missing in the else branch at line 85"}
-{"id":"M-5","field":"verification","value":"💬 Feedback — No existing FIXME at the location; downgrade reason does not match the current code"}
-```
-
-**Important:** Do not use Bash cat heredoc (apostrophes inside values would interfere with the outer quoting and cause errors). The Write tool can output values without worrying about special characters.
-
-Do not write events for **Unresolved** findings (since the fix or estimate is not yet complete, they are not at the stage of receiving a verification).
-
-Values must fit on a **single line**. When a feedback verdict requires a detailed explanation, write it in the report's Feedback Details section and keep the events value as a summary of that.
+Use the Write tool to write all events to `{events_path}` (one event per line in JSONL). Format: see Internal Processing section. Do not write events for **Unresolved** findings (they are not at the stage of receiving a verification).
 
 ### 4b. Run render
 
@@ -230,13 +202,5 @@ python .claude/scripts/render-review.py {document_path} {events_path} {document_
 ### 4c. Delete the temporary file
 
 ```bash
-rm {events_path}
+.claude/scripts/rm-tmp.sh {events_path}
 ```
-
-`render-review.py` inserts the metadata from events into each finding in the markdown immediately before its `<!-- /METADATA({finding-id}) -->`, in fixed order (`triage` → `estimate` → `status` → `verification`). Existing metadata is preserved, and verification is appended at the end.
-
-## Guidelines
-
-- Be precise — when reporting an issue, cite specific file paths and line numbers.
-- Do not speculate — only report issues you have confirmed by reading the actual source code.
-- Do not modify the source code. The only change made to the review document is appending the `verification` field via events.jsonl.

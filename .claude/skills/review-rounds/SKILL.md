@@ -29,7 +29,7 @@ The user may optionally specify an output base path. If the argument is `$ARGUME
 - **Format:** `{base-path}/{branch-dir}/review-round{N}.md`
 - **Branch name retrieval:** Use `git branch --show-current` to obtain the current branch name.
 - **Branch name as directory path** — The whole branch name (including `/`) becomes the directory hierarchy verbatim.
-- **Sequential suffixing on re-runs of the same branch:** If `{base-path}/{branch-name}` already exists, create a new directory with a numeric suffix `{branch-name}_1`, `{branch-name}_2`, ... so existing review results are not overwritten.
+- **Sequential suffixing on re-runs of the same branch:** If `{base-path}/{branch-name}` already exists, create a new directory with a numeric suffix `{branch-name}_1`, `{branch-name}_2`, ...
   - Suffix selection: probe `{branch-name}_1`, `{branch-name}_2`, ... in order and use the smallest suffix that does not yet exist.
 - **Examples:**
   - First run: branch `feat/add-replay` → `{base-path}/feat/add-replay/review-round1.md`
@@ -38,7 +38,6 @@ The user may optionally specify an output base path. If the argument is `$ARGUME
   - Branch `dev` → `{base-path}/dev/review-round1.md` (first run), `{base-path}/dev_1/review-round1.md` (second run)
 - **Default base-path:** `.claude/tmp/`
 - Create directories as needed.
-- Keep all per-round review documents; do not overwrite them.
 
 ## Review Document Language
 
@@ -54,8 +53,8 @@ Write the review document in **the user's chat language**. If the user is conver
   - **Individual fixes (Step 2.2 / 2.4)** — Delegate each finding to the appropriate specialist subagent.
   - **review-resolve verification (Step 2.3 / 2.4)** — A read-only verification task.
 - Conversely, **aggregation and orchestration responsibilities stay with the orchestrator (you yourself)**:
-  - **parallel-review aggregation (Step 2.1)** — Aggregate results from individual reviewers into a report. Do not delegate the entire parallel-review skill to a separate agent (because that would launch further sub-agents).
-  - **review-respond leader role (Step 2.2 / 2.4)** — After triage, aggregate fix delegation, format verification, build verification, review-document update, and commit. Do not delegate the entire review-respond skill to a separate agent.
+  - **parallel-review aggregation (Step 2.1)** — Aggregate results from individual reviewers into a report.
+  - **review-respond leader role (Step 2.2 / 2.4)** — After triage, aggregate fix delegation, format verification, build verification, review-document update, and commit.
 - Per-round results are propagated to subsequent steps and rounds **only via the review document**.
 
 ## Flow Overview
@@ -91,7 +90,7 @@ While the round counter is less than or equal to `--max-rounds`, repeat the foll
 
 ### 2.1 — Review Execution (parallel-review)
 
-The orchestrator (you) directly takes on the "review leader" role of parallel-review. Reviewer roster, reviewer prompt template, severity labels, report format, and format rules follow each section of `.claude/skills/parallel-review/SKILL.md`.
+The orchestrator (you) directly takes on the "review leader" role of parallel-review. Procedure, templates, and formats follow `.claude/skills/parallel-review/SKILL.md`.
 
 **Procedure:**
 
@@ -101,9 +100,9 @@ The orchestrator (you) directly takes on the "review leader" role of parallel-re
 
 **Round-specific overrides:**
 
-- **Do not pass the previous round's review document to reviewers** — to avoid letting prior judgments bias the new round.
-- **Do not deduplicate against previous rounds** — already-resolved findings have been reflected in source code, so they are assumed not to be re-detected.
-- **Convergence-induction prevention** — Review rounds aim to thoroughly examine the diff and surface important issues; steering toward a smaller finding count is an anti-pattern.
+- **Do not pass the previous round's review document to reviewers** (bias avoidance).
+- **Do not deduplicate against previous rounds.**
+- **Convergence-induction prevention:**
   - **Never include the following in reviewer prompts:**
     - Counts of past-round findings, count trends, or claims like "things are converging."
     - Past-round finding IDs (`C-1`, `M-1`, etc.).
@@ -113,31 +112,27 @@ The orchestrator (you) directly takes on the "review leader" role of parallel-re
 
 ### 2.2 — Review Response (review-respond)
 
-The orchestrator (you) directly takes on the "review response leader" role of review-respond. Refer to `.claude/skills/review-respond/SKILL.md` for detailed procedures, formats, and prompt templates.
+The orchestrator (you) directly takes on the "review response leader" role of review-respond. Procedure and templates follow `.claude/skills/review-respond/SKILL.md`.
 
 **Input document:** {this round's file path}
 
-**Responsibility breakdown:**
+**Responsibility breakdown (mapped to review-respond steps):**
 
 - **Step 1 (Parse) · Step 5 (Format & Build Verification) · Step 6 (Document Update) · Step 7 (Summary)** — Performed directly by the orchestrator.
-- **Step 2 (Triage)** — Delegated to a single triage subagent following review-respond § Step 2.
-- **Step 3 (Estimate)** — Each Will Fix finding delegated in parallel to its assigned specialist subagent following review-respond § Step 3 (a read-only investigation and verdict task).
-- **Step 4 (Fix)** — Regular fixes for Maintain findings and FIXME insertion for Alternative findings delegated to the appropriate specialist subagents following review-respond § Step 4 (parallelization rules also follow that skill).
+- **Step 2 (Triage) · Step 3 (Estimate) · Step 4 (Fix)** — Delegated to subagents following review-respond § (parallelization rules also follow that skill).
 
 **Round-specific overrides:**
 
-- **Progress display (console output):**
+- **Progress display console output:**
   - At triage start: `## Round {N} — Step 2: Triage`
   - At estimate start: `## Round {N} — Step 2.5: Estimate`
   - At fix / verify / update / commit start: `## Round {N} — Step 3: Review Respond (Fix & Verify)`
-- **Additional constraints for the triage subagent (Step 2):**
-  - Do not reference the previous round's review document (to avoid bias).
-  - Explicitly state the Will Fix count in the report (including when zero).
-- **Additional constraints for the estimate subagents (Step 3):**
-  - Do not reference the previous round's review document (to avoid bias).
-  - When evaluating Spread signal e (Will Fix originating from a FIXME), check whether the finding has its origin in a `FIXME:` / `TODO:` in the review text or in the target files.
+- **Additional constraints for triage / estimate subagents:**
+  - Do not reference the previous round's review document.
+  - The triage report must explicitly state the Will Fix count (including when zero).
+  - When the estimate evaluates Spread signal e (Will Fix originating from a FIXME), check whether the finding has its origin in a `FIXME:` / `TODO:` in the review text or in the target files.
 - **Round-loop control after triage:**
-  - **0 Will Fix findings:** Skip Steps 2.3–2.4 (verification and feedback re-fix) and proceed to Step 2.5 (Round End). No source code changes have occurred this round, so the condition for proceeding to the next round is not satisfied and the flow advances to the final report.
+  - **0 Will Fix findings:** Skip Steps 2.3–2.4 and proceed to Step 2.5 (Round End).
   - **1 or more Will Fix findings:** Proceed to the estimate phase.
 - **Round-loop control after estimate:**
   - **Both Maintain and Alternative are 0 (all Downgrade):** Skip the fix and build-verification phases; perform only the document update (review-respond § Step 6) and end the round.
@@ -207,13 +202,13 @@ Record the round's results:
 1. The round counter is less than or equal to `--max-rounds`.
 2. At least one line of source code was changed in this round.
 
-If any of the above is not satisfied, proceed to Step 3 (Final Report) below. The intent of condition 2: if any source code change occurred, the next round should re-review it. Conversely, if no change was made at all, the next round would run against the same target in the same state and would only surface the same findings — a meaningless repetition.
+If any of the above is not satisfied, proceed to Step 3 (Final Report) below.
 
 ## Step 3 — Final Report
 
 After all rounds end, produce the final report. File path: `{base-path}/{branch-dir}/final-report.md`
 
-**You yourself** create the final report by reading the review documents from all rounds (do not delegate to an agent). Each review document carries the Triage / Estimate / Status / Verification fields between the metadata markers for every finding, so the information can be retrieved from there (note that the review-resolve verification reports are console output only and are not saved to file).
+**You yourself** create the final report by reading the review documents from all rounds (do not delegate to an agent). Retrieve information from the Triage / Estimate / Status / Verification fields between the metadata markers of each finding.
 
 ### Final Report Format
 
@@ -230,7 +225,6 @@ After all rounds end, produce the final report. File path: `{base-path}/{branch-
 | Round | Findings | 🔧 Will Fix | ▶️ Maintain | 🚧 Alternative | 🔻 Downgrade | 🟢 Fixed | Unresolved | Feedback re-fixes |
 |-------|----------|------------|-------------|----------------|--------------|----------|------------|-------------------|
 | Round 1 | ... | ... | ... | ... | ... | ... | ... | ... |
-| Round 2 | ... | ... | ... | ... | ... | ... | ... | ... |
 | **Total** | ... | ... | ... | ... | ... | ... | ... | ... |
 
 Column definitions:
@@ -247,14 +241,12 @@ Aggregate all findings with `Status: 🟢 Fixed` (covers both regular Maintain f
 |---|-------|----------|----------|-----------------|------------|
 | 1 | Round 1 | Critical | file:line | Summary | 🟢 Fixed (Maintain) — fix description |
 | 2 | Round 1 | Major | file:line | Summary | 🟢 Fixed (Alternative) — FIXME comment added at {file:line} |
-| ... | ... | ... | ... | ... | ... |
 
 ### Unresolved
 
 | # | Round | Severity | Location | Finding Summary | Status |
 |---|-------|----------|----------|-----------------|--------|
 | 1 | Round 2 | Major | file:line | Summary | Not resolved even after feedback re-fix |
-| ... | ... | ... | ... | ... | ... |
 
 ### Decided as No Action Needed
 
@@ -264,7 +256,6 @@ List here all `Triage: 🚫 Won't Fix` and `Estimate: 🔻 Downgrade` findings t
 |---|-------|----------|----------|-----------------|--------|
 | 1 | Round 1 | Minor | file:line | Summary | Triage: 🚫 Won't Fix — reason |
 | 2 | Round 1 | Minor | file:line | Summary | Estimate: 🔻 Downgrade — Cost L, Signals a,b. Neither alternative response nor separate-PR recommendation. |
-| ... | ... | ... | ... | ... | ... |
 
 ## Recommended for Future Action
 
@@ -281,7 +272,6 @@ This is mutually exclusive with "Decided as No Action Needed". Alternative FIXME
 | 1 | Minor | file:line | Summary | Triage: 🚫 Won't Fix — existing-code bug. Recommend addressing in a separate PR. |
 | 2 | Major | file:line | Summary | Estimate: 🔻 Downgrade — Cost L, Signals a,b,c. Recommend addressing in a separate PR. |
 | 3 | Major | file:line | Summary | Estimate: 🚧 Alternative — FIXME already added (output.cpp:200). Recommend full fix in a separate PR. |
-| ... | ... | ... | ... | ... |
 
 ## Review Document Index
 

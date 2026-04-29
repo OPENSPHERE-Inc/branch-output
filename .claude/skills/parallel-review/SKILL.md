@@ -1,7 +1,7 @@
 ---
 name: parallel-review
 description: Launch parallel code review with multiple specialist reviewers
-allowed-tools: Agent, Read, Glob, Grep, Bash(.claude/scripts/fetch-diff.sh:*), Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(rm:*)
+allowed-tools: Agent, Read, Glob, Grep, Bash(.claude/scripts/fetch-diff.sh:*), Bash(.claude/scripts/rm-tmp.sh:*), Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*)
 ---
 
 # Parallel Code Review
@@ -36,8 +36,6 @@ If the user does not explicitly specify a review target, use the following as th
 1. **Commits unique to the current branch** — All commits since the divergence point from the base branch (equivalent to `git log {base}..HEAD`).
 2. **Working tree changes** — Both staged (`git diff --cached`) and unstaged (`git diff`) changes.
 
-In other words, changes that already exist in the base branch are excluded from review.
-
 If a base branch is not specified via `--base`, use `main` or `master` if either exists on the remote (prefer `main` when both exist).
 
 ## Reviewers
@@ -64,23 +62,20 @@ If a base branch is not specified via `--base`, use `main` or `master` if either
 
 1. Based on the user's input, identify the files or diff to review.
 2. Read the target files or diff to grasp the scope.
-3. Produce a concise summary of the review content.
-4. Decide whether to add optional reviewers based on the scope. If the user has explicitly requested specific reviewers, include them.
-5. **Fetch diff information via script** — Run the provided script to collect all diff data atomically. This guarantees every section — including unstaged changes — is always written to the output file:
+3. Decide whether to add optional reviewers based on the scope. If the user has explicitly requested specific reviewers, include them.
+4. **Fetch diff information via script:**
    - Generate an output file path: `.claude/tmp/parallel-review-diff-{timestamp}.txt`
    - Run the script:
      ```
      .claude/scripts/fetch-diff.sh {base} {output-file-path}
      ```
-   - The script writes the following sections in order:
-     Changed Files / Commit Log / Commit Diff (`{base}..HEAD`) / Staged Changes / Unstaged Changes
-6. **Decide how to pass the diff to reviewers based on file size:**
+5. **Decide how to pass the diff to reviewers based on file size:**
    - **Less than 1,000 lines:** Read the file and embed its contents directly in the reviewer prompt.
    - **1,000 lines or more:** Pass the **file path** to reviewers, who will read it via Read.
 
 ## Step 2 — Launching Parallel Reviewers
 
-Launch all selected reviewers **simultaneously** using the Agent tool. Each reviewer runs as a **read-only** sub-agent.
+Launch all selected reviewers **simultaneously** using the Agent tool.
 
 ### Agent Prompt Template
 
@@ -99,8 +94,7 @@ Review target:
 
 Diff and context (pre-fetched by the review leader via script):
 {diff_content_or_path}
-(Contains these sections: Changed Files / Commit Log / Commit Diff / Staged Changes / Unstaged Changes.
-For under 1,000 lines, the contents are embedded above. For 1,000+ lines, a file path is shown — read it via Read.)
+(Contains these sections: Changed Files / Commit Log / Commit Diff / Staged Changes / Unstaged Changes.)
 
 Rules:
 - You are read-only. Do not edit or write any files under any circumstances.
@@ -124,7 +118,7 @@ Once all reviewers have completed, consolidate their findings into a single repo
 1. **Deduplicate** — When multiple reviewers point out the same issue, merge them into a single entry and record which reviewers identified it.
 2. **Reorder** — Group by severity: Critical → Major → Minor → Info.
 
-**Triage of whether to act on findings is out of scope for this skill.** The review leader focuses solely on deduplicating and ordering raw findings.
+**Triage of whether to act on findings is out of scope for this skill.**
 
 ### Report Format
 
@@ -146,16 +140,10 @@ Produce the final report in the following format:
 
 **Finding:**
 
-Description of the finding. May span multiple paragraphs and include code snippets, rationale, and references.
+{description of the finding}
 
 <!-- METADATA(C-1) -->
 <!-- /METADATA(C-1) -->
-
----
-
-### C-2 — `file.cpp:88`
-
-...
 
 ---
 
@@ -167,7 +155,7 @@ Description of the finding. May span multiple paragraphs and include code snippe
 
 **Finding:**
 
-...
+{description of the finding}
 
 <!-- METADATA(M-1) -->
 <!-- /METADATA(M-1) -->
@@ -182,9 +170,7 @@ No findings
 
 ## Info
 
-### I-1 — `bar.cpp:7`
-
-...
+No findings
 
 ---
 
@@ -207,4 +193,8 @@ No findings
 
 ## Step 4 — Clean Up Temporary Files
 
-If the diff was saved to a temporary file in Step 1 item 6, delete that file after report integration completes. The diff is no longer needed once all reviewers have finished.
+After report integration completes, delete the diff file fetched in Step 1 item 4.
+
+```bash
+.claude/scripts/rm-tmp.sh {diff-file-path}
+```

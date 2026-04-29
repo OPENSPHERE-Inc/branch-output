@@ -1,7 +1,7 @@
 ---
 name: review-respond
 description: Triage, estimate, fix, self-review, and update the review document for review findings
-allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*), Bash(clang-format:*), Bash(cmake-format:*), Bash(rm:*), Bash(python .claude/scripts/render-review.py:*)
+allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*), Bash(clang-format:*), Bash(cmake-format:*), Bash(.claude/scripts/rm-tmp.sh:*), Bash(python .claude/scripts/render-review.py:*)
 ---
 
 # Review Response
@@ -23,7 +23,7 @@ The user specifies a path to a review document (markdown). If the argument is `$
 
 ### `--commit` Option
 
-When enabled, in Step 4 (Fix), once each finding fix is complete, the change is committed to git. Estimates (Step 3) do not produce source code changes and are therefore not subject to commits.
+When enabled, in Step 4 (Fix), once each finding fix is complete, the change is committed to git.
 
 #### Commit Rules
 
@@ -41,7 +41,7 @@ fix: Add null check before accessing output pointer
 
 ### `--confirm` Option
 
-When enabled, wait for user confirmation immediately after Step 3 (Estimate) prints the result table to the console. Do not confirm immediately after triage. Reason: triage alone does not surface spread risk and provides little material for a meaningful confirmation. The user can intervene meaningfully only once the estimate results (cost / signals / downgrade proposals) are in, so confirmation timing is consolidated into a single point.
+When enabled, wait for user confirmation immediately after Step 3 (Estimate) prints the result table to the console. Do not confirm immediately after triage.
 
 ## Review Document Format
 
@@ -74,8 +74,8 @@ review-respond and review-resolve append the following fields between the marker
 ### Value Constraints
 
 - **Single line only** (no line breaks). Long rationales should go in the finding body; metadata values stay as summaries.
-- **Append-only, no deletion**. To retract a value, run another round of parallel-review.
-- **Same (id, field) is last-write-wins**, but the assumption is each field is set exactly once per round.
+- **Append-only, no deletion**.
+- **Same (id, field) is last-write-wins.**
 
 ### Emoji Reference
 
@@ -91,9 +91,9 @@ review-respond and review-resolve append the following fields between the marker
 
 ## Internal Processing (events.jsonl)
 
-This skill uses **`{basename}.events.jsonl` in the same directory as the markdown** as an intermediate representation (e.g., `review-round1.md` → `review-round1.events.jsonl`).
+This skill uses **`{basename}.events.jsonl` in the same directory as the markdown** as an intermediate representation (e.g., `review-round1.md` → `review-round1.events.jsonl`; referred to as `{events_path}` below).
 
-Each verdict (triage / estimate / status) is held in the leader's context during Steps 2–4, then in Step 6 **all events are written out at once with the Write tool**, and `render-review.py` reflects them into the markdown:
+Each verdict (triage / estimate / status) is held in the leader's context during Steps 2–4, then in Step 6 **all events are written out at once with the Write tool**. Triage / estimate hand-off to sub-agents is performed directly from the leader's context (not via events.jsonl). State decisions about the review document are made by inspecting the content between the markers in the markdown.
 
 ```jsonl
 {"id":"C-1","field":"triage","value":"🔧 Will Fix (assignee: cpp-sensei) — triage rationale"}
@@ -101,22 +101,19 @@ Each verdict (triage / estimate / status) is held in the leader's context during
 {"id":"C-1","field":"status","value":"🟢 Fixed — fix description"}
 ```
 
-events.jsonl is not read directly by the AI; it is a temporary buffer written out in Step 6. State decisions about the review document are always made by inspecting the content between the markers in the markdown. Triage / estimate hand-off to sub-agents is performed directly from the leader's context (not via events.jsonl).
-
-**Important:** Do not use Bash cat heredoc (`cat >> file <<'EOF' ... EOF`). Apostrophes inside values (e.g., `Won't Fix`) interfere with the outer quoting and cause bash syntax errors. Instead, use the Write tool to write the entire file at once.
+Use the **Write tool** for the file. Bash cat heredoc is unusable because apostrophes inside values (e.g., `Won't Fix`) break the outer quoting.
 
 ## Step 1 — Parse Review Document
 
 1. Read the entire review document.
-2. Determine the events.jsonl path: in the same directory as the markdown, replace the `.md` suffix of the basename with `.events.jsonl` (referred to as `{events_path}` below; e.g., `review-round1.md` → `review-round1.events.jsonl`). Writing to this file is performed in bulk in Step 6, so no creation is needed in this step.
-3. Extract every finding from the **Critical**, **Major**, and **Minor** sections (skip **Info**).
-4. For each finding, extract:
+2. Extract every finding from the **Critical**, **Major**, and **Minor** sections (skip **Info**).
+3. For each finding, extract:
    - Finding ID (e.g., `C-1`, `M-1`, `m-1`)
    - Severity (Critical / Major / Minor)
    - Location (file path and line number)
    - Description of the issue
    - **Existing metadata between the markers** (whether prior-round triage/estimate/status/verification lines exist)
-5. Categorize based on existing metadata (when the same field accumulates over time, treat **the last occurrence of that field** as the current value):
+4. Categorize based on existing metadata (when the same field accumulates over time, treat **the last occurrence of that field** as the current value):
    - **Markers are empty** → target of Step 2 (Triage)
    - **`Triage:` shows `🔧 Will Fix`, no `Estimate:`** → target of Step 3 (Estimate)
    - **`Estimate:` shows `▶️ Maintain` or `🚧 Alternative`, no `Status:`** → target of Step 4 (Fix)
@@ -127,9 +124,7 @@ events.jsonl is not read directly by the AI; it is a temporary buffer written ou
 
 ## Step 2 — Triage (Delegated to a Separate Sub-Agent)
 
-Triage is delegated by launching a **single sub-agent that is separate from the specialist agents performing fixes**. Separating context from the fix-performing agents ensures the triage decision is made without bias from the fix work.
-
-This sub-agent **only renders verdicts**. It **does not edit the review document or events.jsonl**. The leader receives the verdict result table and writes it to events.jsonl.
+Triage is delegated by launching a **single sub-agent that is separate from the specialist agents performing fixes** (to avoid bias).
 
 **Launch procedure:**
 
@@ -173,49 +168,22 @@ Do not edit any source code, the review document, or events.jsonl.
 ```
 
 2. Receive the result table from the sub-agent.
+3. **Hold triage values in context.** Format (written to events.jsonl in Step 6):
 
-3. **Hold triage results in context** (performed by the leader) — Remember each finding's triage value (in the form to be written out to events.jsonl in Step 6). **No file write occurs in this step.** Hand-off to sub-agents (estimate / fix) is done directly from this context.
+   ```jsonl
+   {"id":"C-1","field":"triage","value":"🔧 Will Fix (assignee: cpp-sensei) — {triage rationale}"}
+   {"id":"M-2","field":"triage","value":"🚫 Won't Fix — {reason no action is needed}"}
+   ```
 
-Format of the triage events to be written in Step 6 (for reference):
-
-```jsonl
-{"id":"C-1","field":"triage","value":"🔧 Will Fix (assignee: cpp-sensei) — {triage rationale}"}
-{"id":"M-1","field":"triage","value":"🔧 Will Fix (assignee: qt-sensei) — {triage rationale}"}
-{"id":"M-2","field":"triage","value":"🚫 Won't Fix — {reason no action is needed}"}
-```
-
-Format values to fit on a single line (do not include line breaks).
-
-4. Present the triage result table to the user (user confirmation prior to proceeding with fixes happens after the estimate in Step 3, not immediately after triage).
+4. Present the triage result table to the user.
 
 ## Step 3 — Estimate (Delegated in Parallel to Specialist Sub-Agents)
 
-For each finding triaged as Will Fix, launch sub-agents of **the same specialist that will actually perform the fix** in parallel, have them estimate the fix cost, and decide whether to maintain or overturn the verdict.
-
-**Purpose of the estimate phase:**
-
-- **Cost estimation** — Compute the work required to fix from the specialist's viewpoint.
-- **Future cost prediction** — Predict whether the fix will trigger further fixes in future rounds or separate PRs.
-- **Verdict reconsideration** — When cost is disproportionate to the value of the finding, overturn the triage verdict (Downgrade) or switch to an alternative (Alternative).
-
-**Verdict choices:**
-
-- **▶️ Maintain** — Maintain the triage verdict (will fix). Cost is reasonable; proceed with the fix.
-- **🔻 Downgrade** — Overturn the triage verdict; do not fix. No alternative is offered (a separate-PR recommendation may be mentioned in the rationale).
-- **🚧 Alternative** — Triage verdict is overturned, but address it lightly through an alternative such as adding a FIXME comment (a separate-PR recommendation may be mentioned in the rationale).
-
-**Spread signals** (perspectives the estimate agent uses to decide applicability):
-
-- **a. Introduction of new concepts** — A library function / API / language feature not yet used in the existing codebase needs to be introduced.
-- **b. Expansion of fix scope** — Files / modules / layers not yet modified on the current branch get pulled in.
-- **c. Asynchronous-execution timing interference** — Effects on UI thread blocking, callback invocation order, signal/slot connection types, etc.
-- **d. Future cost** — Provisional treatment left in place, FIXME pushed forward, missing abstractions, etc., that invite future rounds or separate PRs.
-- **e. Will Fix originating from a FIXME** — A finding that was originally left intentionally as `FIXME:` / `TODO:` in code or in the previous round, or one that the reviewer themselves proposed turning into a FIXME, fell to Will Fix at triage.
-- **f. Target change** — A change to build / runtime targets (OS, compiler, library/framework versions, etc.). Examples: Ubuntu 22.04 → 24.04, adding an explicit Qt version pin. Side effects on dependencies, CI, build environment, and distributables are large.
+For each Will Fix finding, launch sub-agents of **the same specialist that will perform the fix** in parallel to estimate cost and reconsider the verdict. Verdict values: ▶️ Maintain (proceed) / 🔻 Downgrade (no fix) / 🚧 Alternative (light treatment via FIXME).
 
 **Launch procedure:**
 
-1. For each finding triaged as Will Fix, **launch specialist sub-agents in parallel** via the Agent tool (full parallelism is fine at the per-finding level. Estimates do not edit source code, so multiple findings against the same file may also be launched in parallel). Example prompt:
+1. For each Will Fix finding, **launch specialist sub-agents in parallel** via the Agent tool. Example prompt:
 
 ```
 You are {specialist-name}. Estimate the fix cost for review finding {finding-id}.
@@ -255,18 +223,15 @@ Do not edit any source code, the review document, or events.jsonl.
 ```
 
 2. Receive results from all estimate agents.
+3. **Hold estimate values in context.** Format (written to events.jsonl in Step 6):
 
-3. **Hold estimate results in context** (performed by the leader) — Remember each finding's estimate value. **No file write occurs in this step.** Hand-off to fix sub-agents is done directly from this context.
+   ```jsonl
+   {"id":"C-1","field":"estimate","value":"▶️ Maintain — Cost: M, Future: S, Signals: b,d"}
+   {"id":"M-2","field":"estimate","value":"🔻 Downgrade — Cost: L, Future: M, Signals: a,b,c — Recommend separate PR"}
+   {"id":"M-3","field":"estimate","value":"🚧 Alternative — Cost: L, Future: M, Signals: a,b — FIXME insertion: direction description"}
+   ```
 
-Format of the estimate events to be written in Step 6 (for reference):
-
-```jsonl
-{"id":"C-1","field":"estimate","value":"▶️ Maintain — Cost: M, Future: S, Signals: b,d"}
-{"id":"M-2","field":"estimate","value":"🔻 Downgrade — Cost: L, Future: M, Signals: a,b,c — Recommend separate PR"}
-{"id":"M-3","field":"estimate","value":"🚧 Alternative — Cost: L, Future: M, Signals: a,b — FIXME insertion: direction description"}
-```
-
-Values must fit on **a single line**. Maintain carries only the quantitative fields. Downgrade and Alternative append the verdict rationale (or FIXME direction) at the end.
+   Maintain carries only the quantitative fields. Downgrade and Alternative append the verdict rationale (or FIXME direction) at the end.
 
 4. **Print the estimate result table to the console:**
 
@@ -278,16 +243,11 @@ Values must fit on **a single line**. Maintain carries only the quantitative fie
 
 5. If `--confirm` is enabled, wait for user confirmation before proceeding to fixes.
 
-**When both Maintain and Alternative are 0 (all Downgrade):** Skip Steps 4 and 5 and proceed to Step 6 (render). Estimate events have already been written, so Step 6 simply renders with no additional changes. Step 7 (Summary) records them as Downgrade.
+**When both Maintain and Alternative are 0 (all Downgrade):** Skip Steps 4 and 5 and proceed to Step 6 (render). Step 7 records them as Downgrade.
 
 ## Step 4 — Fix
 
-This step handles two kinds of work, both delegated to the most appropriate specialist agent:
-
-- **Regular fixes** — Fixes for findings judged `Estimate: ▶️ Maintain`.
-- **FIXME insertion** — Adding `FIXME:` comments for findings judged `Estimate: 🚧 Alternative`.
-
-Choose specialists based on the nature of the finding:
+Delegate `Estimate: ▶️ Maintain` (regular fix) and `Estimate: 🚧 Alternative` (FIXME insertion) to specialists chosen by the nature of the finding:
 
 | Specialist | When to use |
 |------------|-------------|
@@ -325,11 +285,9 @@ Procedure:
 4. Report what you changed and why (including any self-review fixes).
 
 **Prohibited:**
-- Do not run build commands (`cmake`, `make`, `build.ps1`, `pwsh` build scripts, etc.).
-- Do not run formatters (`clang-format`, `cmake-format`, etc.).
-- The above are aggregated and run by the leader in Step 5. If builds / formatters run concurrently with other fix agents launched in parallel, build cache contention and concurrent file rewrites cause the results to interleave.
-- Limit fixes to source code edits; defer build success and format diff verification to the leader.
-- Do not edit the review document or write to events.jsonl (the leader handles those).
+- Build commands (`cmake`, `make`, `build.ps1`, `pwsh` build scripts, etc.) — the leader aggregates and runs these in Step 5.
+- Formatters (`clang-format`, `cmake-format`, etc.) — same.
+- Editing the review document or writing to events.jsonl (the leader handles those).
 
 Follow the comment rules in `.claude/rules/comment.md` (auto-loaded).
 ```
@@ -340,23 +298,18 @@ Follow the comment rules in `.claude/rules/comment.md` (auto-loaded).
 - Findings affecting **different files** may be fixed in parallel by launching multiple agents simultaneously.
 - Findings affecting **the same file** must be fixed sequentially — launch them one at a time and wait for each to complete before starting the next.
 
-### Hold Status in Context After Fixes Complete
+### Hold Status in Context
 
-After all fixes (regular Maintain fixes and Alternative FIXME insertions) complete, the leader holds each finding's status value in context. **No file write occurs in this step.**
-
-Format of the status events to be written in Step 6 (for reference):
+After all fixes complete, hold each finding's status value in context. Format (written to events.jsonl in Step 6):
 
 ```jsonl
 {"id":"C-1","field":"status","value":"🟢 Fixed — Added null check"}
-{"id":"M-1","field":"status","value":"🟢 Fixed — Changed signal/slot connection type to Qt::QueuedConnection"}
 {"id":"M-3","field":"status","value":"🟢 Fixed — Added FIXME comment at output.cpp:200"}
 ```
 
 For Alternative findings, the status should clearly indicate the FIXME insertion, e.g., "Added FIXME comment at {file:line}".
 
 ## Step 5 — Format Verification & Build Verification
-
-Once all fixes are complete, run code format verification and a build to verify the quality of the changes.
 
 ### 5a. Format Verification
 
@@ -383,21 +336,9 @@ Once all fixes are complete, run code format verification and a build to verify 
 
 Write all events (triage / estimate / status) accumulated in the leader's context during Steps 2–4 to events.jsonl in one shot, then reflect them into the markdown via `render-review.py`.
 
-### 6a. Write events.jsonl (Write tool)
+### 6a. Write events.jsonl
 
-Use the **Write tool** to write the entire events.jsonl content to `{events_path}`. JSONL format with one event per line:
-
-```jsonl
-{"id":"C-1","field":"triage","value":"🔧 Will Fix (assignee: cpp-sensei) — triage rationale"}
-{"id":"C-1","field":"estimate","value":"▶️ Maintain — Cost: M, Future: S, Signals: b,d"}
-{"id":"C-1","field":"status","value":"🟢 Fixed — fix description"}
-{"id":"M-1","field":"triage","value":"🔧 Will Fix (assignee: qt-sensei) — triage rationale"}
-{"id":"M-1","field":"estimate","value":"▶️ Maintain — Cost: S, Future: S, Signals: none"}
-{"id":"M-1","field":"status","value":"🟢 Fixed — fix description"}
-... (all findings × all fields)
-```
-
-**Important:** Do not use Bash cat heredoc (apostrophes inside values would interfere with the outer quoting and cause errors). The Write tool can output values without worrying about special characters.
+Use the Write tool to write all events to `{events_path}` (one event per line in JSONL). Format: see Internal Processing section.
 
 ### 6b. Run render
 
@@ -408,14 +349,10 @@ python .claude/scripts/render-review.py {document_path} {events_path} {document_
 ### 6c. Delete the temporary file
 
 ```bash
-rm {events_path}
+.claude/scripts/rm-tmp.sh {events_path}
 ```
 
-`render-review.py` inserts the metadata lines from events into each finding in the markdown immediately before its `<!-- /METADATA({finding-id}) -->`, in fixed order (`triage` → `estimate` → `status` → `verification`). Existing metadata is preserved; new events are appended at the end.
-
 ## Step 7 — Summary
-
-Output a summary of all actions taken:
 
 ```
 # Review Response Summary
@@ -431,8 +368,6 @@ Output a summary of all actions taken:
 | M-1 | Major | 🟢 Fixed (Alternative) | obs-sensei | FIXME inserted (output.cpp:200) + recommend separate PR |
 | M-2 | Major | 🔻 Downgrade | qt-sensei | Cost L, Future M, Signals a,b,c. Recommend separate PR. |
 | M-3 | Major | 🚫 Won't Fix | — | Existing code, out of current scope |
-| m-1 | Minor | 🚫 Won't Fix | — | Reason |
-| ... | ... | ... | ... | ... |
 
 ## Statistics
 
