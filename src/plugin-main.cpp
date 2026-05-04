@@ -34,7 +34,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "video/filter-video-capture.hpp"
 #include "plugin-support.h"
 #include "plugin-main.hpp"
+#ifdef ENABLE_OBS_WEBSOCKET
 #include "plugin-websocket.hpp"
+#endif
 #include "utils.hpp"
 
 #define SETTINGS_JSON_NAME "recently.json"
@@ -146,9 +148,12 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     // FIXME: libobs has no proc_handler_remove(). If it gains one, pair
     // unregistration with ~BranchOutputFilter().
     proc_handler_t *ph = obs_source_get_proc_handler(filterSource);
-    auto replayBufferProcDecl =
+    // static: proc_handler_add() does not document whether it copies the decl string,
+    // so the buffer must outlive every registered handler.
+    static const std::string replayBufferProcDecl =
         std::string("void ") + PROC_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT + "(in string format)";
-    auto recordingProcDecl = std::string("void ") + PROC_OVERRIDE_RECORDING_FILENAME_FORMAT + "(in string format)";
+    static const std::string recordingProcDecl =
+        std::string("void ") + PROC_OVERRIDE_RECORDING_FILENAME_FORMAT + "(in string format)";
     proc_handler_add(ph, replayBufferProcDecl.c_str(), onOverrideReplayBufferFilenameFormat, this);
     proc_handler_add(ph, recordingProcDecl.c_str(), onOverrideRecordingFilenameFormat, this);
 
@@ -1929,25 +1934,26 @@ void obs_module_post_load()
     proc_handler_t *ph = obs_get_proc_handler();
     proc_handler_add(ph, "void osi_branch_output_get_filter_list(out string json)", onGetFilterList, nullptr);
 
+#ifdef ENABLE_OBS_WEBSOCKET
     registerWebSocketVendorRequests();
+#endif
 }
 
 void obs_module_unload()
 {
-    // Publish nullptr before unregistering vendor requests so that any
-    // vendor callback already in flight observes a null dock and bails out
-    // of the UI dispatch path. Doing this first shrinks (but does not
-    // close) the worker race window.
+    // Stop accepting new vendor dispatches before tearing down the dock so
+    // a worker cannot start a fresh UI invocation against a destroyed dock.
     //
-    // FIXME: narrow worker race remains. Proper fixes are an in-flight
-    // counter (wait for zero before remove_dock) or QPointer + deleteLater
-    // + processEvents drain. Current code accepts the race because the
-    // worst observable effect is a silent empty result.
+    // FIXME: narrow worker race remains for a callback that already loaded
+    // a non-null dock pointer. Proper fixes are an in-flight counter or
+    // QPointer + deleteLater + processEvents drain.
+#ifdef ENABLE_OBS_WEBSOCKET
+    unregisterWebSocketVendorRequests();
+#endif
+
     if (statusDock.exchange(nullptr) != nullptr) {
         obs_frontend_remove_dock("BranchOutputStatusDock");
     }
-
-    unregisterWebSocketVendorRequests();
 
     pthread_mutex_destroy(&pluginMutex);
 

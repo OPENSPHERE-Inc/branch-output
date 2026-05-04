@@ -30,6 +30,8 @@
 !screenshot2.jpg
 !build.ps1
 !/lib
+/lib/*
+!/lib/obs-websocket
 !.gitmodules
 !README_ja.md
 !API.md

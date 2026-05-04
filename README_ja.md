@@ -137,3 +137,17 @@ git submodule update --init --recursive
 
 `--recurse-submodules` 付きでクローンした場合は、この手順は不要です。
 
+このサブモジュールは obs-websocket の特定のリリースタグに固定されています。`git submodule update --remote`
+は実行しないでください。アップストリームのデフォルトブランチへサブモジュールを移動させ、意図しない変更が
+混入します。固定バージョンを更新する場合は、サブモジュールのアップストリームを fetch し、目的のリリースタグを
+チェックアウトしたうえで、新しいポインタをステージしてコミットしてください。
+
+```bash
+cd lib/obs-websocket
+git fetch --tags origin
+git checkout <new-tag>
+cd ../..
+git add lib/obs-websocket
+git commit -m "Bump obs-websocket submodule to <new-tag>"
+```
+

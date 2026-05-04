@@ -11,6 +11,15 @@ include(compilerconfig)
 include(defaults)
 include(helpers)
 
+option(ENABLE_OBS_WEBSOCKET "Enable obs-websocket vendor request integration" ON)
+
+if(ENABLE_OBS_WEBSOCKET AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lib/obs-websocket/lib/obs-websocket-api.h")
+  message(
+    FATAL_ERROR
+      "ENABLE_OBS_WEBSOCKET is ON but lib/obs-websocket submodule is missing. Run: git submodule update --init --recursive (or pass -DENABLE_OBS_WEBSOCKET=OFF to disable obs-websocket vendor request integration)"
+  )
+endif()
+
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
 find_package(libobs REQUIRED)
@@ -34,11 +43,11 @@ if(ENABLE_QT)
                AUTORCC ON)
 endif()
 
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lib/obs-websocket/lib/obs-websocket-api.h")
-  message(FATAL_ERROR "lib/obs-websocket submodule not found. Run: git submodule update --init --recursive")
+if(ENABLE_OBS_WEBSOCKET)
+  target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/obs-websocket/lib)
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ENABLE_OBS_WEBSOCKET)
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-websocket.cpp)
 endif()
-
-target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/obs-websocket/lib)
 
 target_sources(
   ${CMAKE_PROJECT_NAME}
@@ -46,7 +55,6 @@ target_sources(
           src/plugin-streaming.cpp
           src/plugin-stream-recording.cpp
           src/plugin-replay-buffer.cpp
-          src/plugin-websocket.cpp
           src/plugin-ui.cpp
           src/utils.cpp
           src/audio/audio-capture.cpp

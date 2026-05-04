@@ -136,3 +136,17 @@ git submodule update --init --recursive
 
 If you cloned with `--recurse-submodules`, this step is unnecessary.
 
+The submodule is pinned to a specific release tag of obs-websocket. Do **not** run
+`git submodule update --remote`, which would move the submodule to the upstream default branch
+and silently introduce unintended changes. To bump the pinned version, fetch the submodule's
+upstream, check out the desired release tag, then stage and commit the new pointer:
+
+```bash
+cd lib/obs-websocket
+git fetch --tags origin
+git checkout <new-tag>
+cd ../..
+git add lib/obs-websocket
+git commit -m "Bump obs-websocket submodule to <new-tag>"
+```
+

@@ -24,6 +24,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <atomic>
 #include <cstring>
 #include <string>
+#include <type_traits>
 
 #include "plugin-main.hpp"
 #include "plugin-support.h"
@@ -31,16 +32,35 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #define VENDOR_NAME "osi_branch_output"
 
+// Vendor request type names. Shared between register, unregister, and any
+// future dispatch sites so a rename cannot silently desynchronize them.
+// Distinct from PROC_OVERRIDE_* constants, which name proc handler entries.
+static constexpr char WS_REQUEST_GET_FILTER_LIST[] = "get_filter_list";
+static constexpr char WS_REQUEST_OVERRIDE_RECORDING_FILENAME_FORMAT[] = "override_recording_filename_format";
+static constexpr char WS_REQUEST_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT[] = "override_replay_buffer_filename_format";
+
 // DoS guard: recording filename templates are typically <100 chars.
 // Reject pathologically long inputs before they reach libobs's path expander.
 static constexpr size_t MAX_FORMAT_LENGTH = 1024;
 
 // Reject formats that would let an authenticated obs-websocket client write
 // outside the configured recording directory.
+// Assumes os_generate_formatted_filename() expansion tokens (%CCYY, %hh, etc.)
+// do not introduce '/', '\\', or ".." sequences.
 static bool isPathTraversalFormat(const char *format, size_t length)
 {
     if (length == 0) {
         return false;
+    }
+
+    // Leading ASCII control chars (< 0x20) or space can be silently stripped by
+    // downstream path handling, letting " /etc/x" bypass the absolute-path check
+    // below; rejecting the full class also narrows log injection surface.
+    {
+        unsigned char c = static_cast<unsigned char>(format[0]);
+        if (c < 0x20 || c == ' ') {
+            return true;
+        }
     }
 
     // Absolute path on POSIX or UNC/rooted path on Windows.
@@ -78,9 +98,12 @@ static bool isPathTraversalFormat(const char *format, size_t length)
 // Validate canonical 8-4-4-4-12 lowercase-hex UUID with hyphens at fixed positions.
 // Matches the form produced by obs_source_get_uuid(), which is what
 // obs_get_source_by_uuid() compares against byte-for-byte.
-// Caller must guarantee the buffer is at least 36 bytes long.
+// Returns false for null. For non-null pointers, the buffer must be at least 36 bytes long.
 static bool isValidUuidString(const char *uuid)
 {
+    if (!uuid) {
+        return false;
+    }
     constexpr size_t UUID_LENGTH = 36;
     for (size_t i = 0; i < UUID_LENGTH; i++) {
         char c = uuid[i];
@@ -101,6 +124,14 @@ static bool isValidUuidString(const char *uuid)
 // these from a non-main thread; the early-return in registerWebSocketVendorRequests()
 // reads `vendor` without any external lock.
 static std::atomic<obs_websocket_vendor> vendor{nullptr};
+static_assert(
+    std::is_pointer_v<obs_websocket_vendor>,
+    "obs_websocket_vendor must remain a pointer typedef for nullptr / atomic semantics to be sound"
+);
+static_assert(
+    decltype(vendor)::is_always_lock_free,
+    "obs_websocket_vendor (void*) must be lock-free for register/unregister synchronization"
+);
 
 static void onVendorGetFilterList(obs_data_t *, obs_data_t *response, void *)
 {
@@ -154,25 +185,17 @@ static void overrideFilenameFormat(obs_data_t *request, obs_data_t *response, co
     constexpr size_t UUID_LENGTH = 36;
     if (strnlen(filterUuid, UUID_LENGTH + 1) != UUID_LENGTH) {
         obs_data_set_bool(response, "success", false);
-        obs_data_set_string(response, "error", "filter_uuid must be a UUID string");
+        obs_data_set_string(response, "error", "filter_uuid must be a lowercase canonical UUID string");
         return;
     }
 
-    // obs_get_source_by_uuid() does a case-sensitive compare against
-    // the canonical lowercase form, so normalize before validating.
-    std::string normalizedUuid(filterUuid, UUID_LENGTH);
-    for (char &c : normalizedUuid) {
-        if (c >= 'A' && c <= 'Z') {
-            c = static_cast<char>(c - 'A' + 'a');
-        }
-    }
-    if (!isValidUuidString(normalizedUuid.c_str())) {
+    if (!isValidUuidString(filterUuid)) {
         obs_data_set_bool(response, "success", false);
-        obs_data_set_string(response, "error", "filter_uuid must be a UUID string");
+        obs_data_set_string(response, "error", "filter_uuid must be a lowercase canonical UUID string");
         return;
     }
 
-    OBSSourceAutoRelease source = obs_get_source_by_uuid(normalizedUuid.c_str());
+    OBSSourceAutoRelease source = obs_get_source_by_uuid(filterUuid);
     const char *sourceId = source ? obs_source_get_id(source) : nullptr;
     if (!sourceId || strcmp(sourceId, FILTER_ID) != 0 || obs_source_get_type(source) != OBS_SOURCE_TYPE_FILTER ||
         obs_source_removed(source)) {
@@ -208,6 +231,7 @@ static void overrideFilenameFormat(obs_data_t *request, obs_data_t *response, co
 
     obs_data_set_bool(response, "success", ok);
     if (!ok) {
+        obs_log(LOG_WARNING, "Vendor request: proc handler '%s' unavailable on filter %s", procName, filterUuid);
         obs_data_set_string(response, "error", "Internal error: filter proc handler unavailable");
     }
 }
@@ -238,11 +262,11 @@ void registerWebSocketVendorRequests()
         return;
     }
 
-    if (!obs_websocket_vendor_register_request(v, "get_filter_list", onVendorGetFilterList, nullptr)) {
+    if (!obs_websocket_vendor_register_request(v, WS_REQUEST_GET_FILTER_LIST, onVendorGetFilterList, nullptr)) {
         obs_log(LOG_ERROR, "Failed to register vendor request 'get_filter_list'; clients will get UnknownRequestType");
     }
     if (!obs_websocket_vendor_register_request(
-            v, "override_recording_filename_format", onVendorOverrideRecordingFilenameFormat, nullptr
+            v, WS_REQUEST_OVERRIDE_RECORDING_FILENAME_FORMAT, onVendorOverrideRecordingFilenameFormat, nullptr
         )) {
         obs_log(
             LOG_ERROR,
@@ -250,7 +274,7 @@ void registerWebSocketVendorRequests()
         );
     }
     if (!obs_websocket_vendor_register_request(
-            v, "override_replay_buffer_filename_format", onVendorOverrideReplayBufferFilenameFormat, nullptr
+            v, WS_REQUEST_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT, onVendorOverrideReplayBufferFilenameFormat, nullptr
         )) {
         obs_log(
             LOG_ERROR,
@@ -276,13 +300,13 @@ void unregisterWebSocketVendorRequests()
     // FIXME: obs_websocket_vendor_unregister_request() does not block until
     // in-flight callbacks return. The same worker race as the statusDock
     // FIXME in obs_module_unload() applies to vendor callbacks too.
-    if (!obs_websocket_vendor_unregister_request(v, "get_filter_list")) {
+    if (!obs_websocket_vendor_unregister_request(v, WS_REQUEST_GET_FILTER_LIST)) {
         obs_log(LOG_DEBUG, "Failed to unregister vendor request: get_filter_list");
     }
-    if (!obs_websocket_vendor_unregister_request(v, "override_recording_filename_format")) {
+    if (!obs_websocket_vendor_unregister_request(v, WS_REQUEST_OVERRIDE_RECORDING_FILENAME_FORMAT)) {
         obs_log(LOG_DEBUG, "Failed to unregister vendor request: override_recording_filename_format");
     }
-    if (!obs_websocket_vendor_unregister_request(v, "override_replay_buffer_filename_format")) {
+    if (!obs_websocket_vendor_unregister_request(v, WS_REQUEST_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT)) {
         obs_log(LOG_DEBUG, "Failed to unregister vendor request: override_replay_buffer_filename_format");
     }
     vendor.store(nullptr, std::memory_order_release);

@@ -70,7 +70,7 @@ invoke_formatter() {
 
       local -a source_files=(**/(CMakeLists.txt|*.cmake)(.N))
       source_files=(${source_files:#(build_*)/*})
-      # Exclude vendored submodules under lib/ from cmake-format (nested paths included)
+      # Exclude vendored submodules: drop every file at any depth under lib/
       source_files=(${source_files:#lib/**/*})
 
       local -a format_args=()
