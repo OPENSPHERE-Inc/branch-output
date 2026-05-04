@@ -79,6 +79,13 @@ Use the **Write tool** for the file. Bash cat heredoc is unusable because apostr
 
 ## Step 2 — Verify Each Finding
 
+### Common Additional Checks for All Verification Branches
+
+For the code-verification branches below (`Status: 🟢 Fixed` is present / `Triage: 🚫 Won't Fix` is present / `Estimate: 🔻 Downgrade` is present), perform the following additional checks immediately before rendering the verdict. The step **Run the common additional checks** inside each branch refers back to here.
+
+- If comments were added or changed, verify that they do not violate the rules in `.claude/rules/comment.md` (auto-loaded). If they do, treat as Feedback.
+- If human-facing documentation (README, API reference, etc.; AI-facing prompts under `.claude/` are out of scope) was added or changed, verify that it does not violate the rules in `.claude/rules/document.md` (auto-loaded). If it does, treat as Feedback.
+
 ### `Status: 🟢 Fixed` is present
 
 1. Read the referenced files and lines.
@@ -86,7 +93,8 @@ Use the **Write tool** for the file. Bash cat heredoc is unusable because apostr
    - **When Estimate is `▶️ Maintain`:** Confirm that a regular fix (including logic changes) addressing the finding is reflected and that it fully addresses the original problem.
    - **When Estimate is `🚧 Alternative`:** Confirm that an appropriate `FIXME:` / `TODO:` comment has been added at the relevant location. Also check that the comment wording roughly matches the FIXME direction recorded in Estimate and carries enough information for a future fix. Logic changes are not expected.
 3. Confirm that the fix has not introduced new issues (regressions, new bugs, style violations, thread safety problems, resource leaks, etc.).
-4. Verdict:
+4. **Run the common additional checks**.
+5. Verdict:
    - **Resolved** — The fix is correct, complete, and introduces no new issues.
    - **Feedback** — The fix is missing, incomplete, or introduces a new issue. Describe what remains.
 
@@ -94,7 +102,8 @@ Use the **Write tool** for the file. Bash cat heredoc is unusable because apostr
 
 1. Read the referenced files and review the current state.
 2. Evaluate whether the "won't fix" rationale still holds against the current code.
-3. Verdict:
+3. **Run the common additional checks**.
+4. Verdict:
    - **Resolved** — The rationale is valid and the decision is appropriate.
    - **Feedback** — The rationale is flawed or the situation has changed. Explain why.
 
@@ -103,7 +112,8 @@ Use the **Write tool** for the file. Bash cat heredoc is unusable because apostr
 1. Read the referenced files and review the current state.
 2. Evaluate whether the Estimate's downgrade rationale (spread signals, Cost, Future, decision reason) still holds against the current code.
 3. If a separate-PR recommendation is included at the end of the value, confirm that this judgment is appropriate (be especially careful for Critical / Major findings without a separate-PR recommendation).
-4. Verdict:
+4. **Run the common additional checks**.
+5. Verdict:
    - **Resolved** — The downgrade rationale is valid.
    - **Feedback** — The downgrade rationale is flawed or the situation has changed. Explain why.
 
