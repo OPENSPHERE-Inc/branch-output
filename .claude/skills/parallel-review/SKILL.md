@@ -25,9 +25,7 @@ If the argument is `$ARGUMENTS`, interpret it as the review target specification
 
 ## Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--base {branch}` | `main` or `master` | Specifies the base branch |
+- `--base {branch}` — Specifies the base branch. Defaults to `main` or `master`.
 
 ### Default Review Targets
 
@@ -42,21 +40,17 @@ If a base branch is not specified via `--base`, use `main` or `master` if either
 
 ### Required (always launched)
 
-| Reviewer | Perspective |
-|----------|-------------|
-| **cpp-sensei** | C++ language specification, coding conventions, memory management, RAII, type safety, undefined behavior, multithreading, thread safety, performance |
-| **qt-sensei** | Qt API usage, signal/slot correctness, object ownership and lifetime, QObject thread affinity, UI thread safety (QMetaObject::invokeMethod), resource management, Qt best practices |
-| **obs-sensei** | OBS Studio API correctness, plugin lifecycle, source/filter/output management, OBS threading model, RAII wrappers (OBSSourceAutoRelease, etc.), settings handling, frontend API usage, OBS plugin conventions |
-| **network-sensei** | Networking correctness, TCP/IP, HTTP, SSL/TLS, WebSocket, socket communication, streaming protocols (RTMP/SRT/WebRTC), connection lifecycle, error handling, reconnection logic, security |
+- `cpp-sensei` — C++ language specification, coding conventions, memory management, RAII, type safety, undefined behavior, multithreading, thread safety, performance.
+- `qt-sensei` — Qt API usage, signal/slot correctness, object ownership and lifetime, QObject thread affinity, UI thread safety (QMetaObject::invokeMethod), resource management, Qt best practices.
+- `obs-sensei` — OBS Studio API correctness, plugin lifecycle, source/filter/output management, OBS threading model, RAII wrappers (OBSSourceAutoRelease, etc.), settings handling, frontend API usage, OBS plugin conventions.
+- `network-sensei` — Networking correctness, TCP/IP, HTTP, SSL/TLS, WebSocket, socket communication, streaming protocols (RTMP/SRT/WebRTC), connection lifecycle, error handling, reconnection logic, security.
 
 ### Optional (launched based on user request or review scope)
 
-| Reviewer | Perspective | Inclusion Criteria |
-|----------|-------------|--------------------|
-| **av-sensei** | Video/audio/streaming quality, encoder settings, media processing, codec behavior, distribution operations | Reviews involving encoder settings, media pipelines, A/V quality, or streaming output configuration |
-| **devops-sensei** | CI/CD (GitHub Actions), CMake, clang-format, build scripts, Inno Setup, development tooling | Reviews involving the build system, CI workflows, packaging, or tool changes |
-| **python-sensei** | Python scripting, OBS Studio script design and conventions | Reviews involving Python scripts or OBS Script files |
-| **lua-sensei** | Lua scripting, OBS Studio Script (Lua) design and conventions | Reviews involving Lua scripts or OBS Lua Script files |
+- `av-sensei` — Video/audio/streaming quality, encoder settings, media processing, codec behavior, distribution operations. Include for reviews involving encoder settings, media pipelines, A/V quality, or streaming output configuration.
+- `devops-sensei` — CI/CD (GitHub Actions), CMake, clang-format, build scripts, Inno Setup, development tooling. Include for reviews involving the build system, CI workflows, packaging, or tool changes.
+- `python-sensei` — Python scripting, OBS Studio script design and conventions. Include for reviews involving Python scripts or OBS Script files.
+- `lua-sensei` — Lua scripting, OBS Studio Script (Lua) design and conventions. Include for reviews involving Lua scripts or OBS Lua Script files.
 
 ## Step 1 — Identify Review Scope and Fetch Diff
 

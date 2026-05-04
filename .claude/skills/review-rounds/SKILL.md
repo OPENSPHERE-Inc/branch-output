@@ -16,13 +16,11 @@ The user may optionally specify an output base path. If the argument is `$ARGUME
 
 ## Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--confirm` | OFF | Wait for user confirmation immediately after estimates are gathered (before proceeding to fixes) |
-| `--confirm-round` | OFF | After review-resolve, if unresolved findings remain, wait for user confirmation before proceeding to the next round |
-| `--commit` | OFF | Create a git commit after each finding fix (the orchestrator performs aggregated commits) |
-| `--max-rounds N` | 5 | Change the maximum number of outer-loop rounds (1–10) |
-| `--base {branch}` | `main` or `master` | Specify the base branch (passed through to parallel-review) |
+- `--confirm` (default OFF) — Wait for user confirmation immediately after estimates are gathered (before proceeding to fixes).
+- `--confirm-round` (default OFF) — After review-resolve, if unresolved findings remain, wait for user confirmation before proceeding to the next round.
+- `--commit` (default OFF) — Create a git commit after each finding fix (the orchestrator performs aggregated commits).
+- `--max-rounds N` (default 5, range 1–10) — Change the maximum number of outer-loop rounds.
+- `--base {branch}` (default `main` or `master`) — Specify the base branch (passed through to parallel-review).
 
 ## Review Document File Naming
 
