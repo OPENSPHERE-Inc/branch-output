@@ -1,14 +1,14 @@
 ---
 name: review-respond
 description: Triage, estimate, fix, self-review, and update the review document for review findings
-allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*), Bash(clang-format:*), Bash(cmake-format:*), Bash(.claude/scripts/rm-tmp.sh:*), Bash(python .claude/scripts/render-review.py:*)
+allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(mkdir:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*), Bash(clang-format:*), Bash(cmake-format:*), Bash(.claude/scripts/rm-tmp.sh:*), Bash(python .claude/scripts/render-review.py:*)
 ---
 
 # Review Response
 
-You are the **respond leader**. Your role is to process the review document, delegate primary triage to a separate sub-agent, have specialist sub-agents perform estimates on Will Fix findings, delegate fixes to the appropriate specialist agents, ensure quality through self-review, and finally reflect the accumulated metadata back into the review document via `render-review.py`.
+You are the **respond leader**. Process the review document, delegate primary triage to a separate sub-agent, have specialist sub-agents perform estimates on Will Fix findings, delegate fixes to the appropriate specialist agents, ensure quality through self-review, and finally reflect the accumulated metadata back into the review document via `render-review.py`.
 
-The respond leader does not act as a triage / estimate / fix agent; the role is strictly to orchestrate, aggregate, and judge the overall response process. All triage / estimate / fix work is delegated to sub-agents.
+The respond leader does not act as a triage / estimate / fix agent. The role is strictly to orchestrate, aggregate, and judge the overall response. All triage / estimate / fix work is delegated to sub-agents.
 
 ## Input
 
@@ -25,11 +25,11 @@ When enabled, in Step 4 (Fix), once each finding fix is complete, the change is 
 
 #### Commit Rules
 
-- **Granularity**: Commit per finding wherever possible. Ideally, one finding fix corresponds to one commit.
-- **Multiple findings in the same file**: Even when fixing multiple findings against the same file sequentially, commit individually upon completion of each finding fix.
-- **Commit messages**: Write 1–3 lines that concisely describe what was fixed. Finding IDs (`C-1`, `M-1`, etc.) **must not be included** in commit messages.
-- **Staging**: Stage only the source code files related to the fix (do not use `git add -A`). **Do not commit the review document.**
-- **Relationship to build verification**: Commits are made after Step 5 (Build Verification). If a build error occurs, include that fix in the commit as well.
+- Granularity: commit per finding wherever possible. Ideally, one finding fix corresponds to one commit.
+- Multiple findings in the same file: even when fixing multiple findings against the same file sequentially, commit individually upon completion of each finding fix.
+- Commit messages: write 1–3 lines that concisely describe what was fixed. Finding IDs (`C-1`, `M-1`, etc.) **must not be included** in commit messages.
+- Staging: stage only the source code files related to the fix (do not use `git add -A`). **Do not commit the review document.**
+- Relationship to build verification: commits are made after Step 5 (Build Verification). If a build error occurs, include that fix in the commit as well.
 
 #### Commit Message Example
 
@@ -39,7 +39,7 @@ fix: Add null check before accessing output pointer
 
 ### `--confirm` Option
 
-When enabled, wait for user confirmation immediately after Step 3 (Estimate) prints the result table to the console. Do not confirm immediately after triage.
+When enabled, wait for user confirmation immediately after the estimate result table is printed to the console in Step 3 (Estimate). Do not confirm immediately after triage.
 
 ## Review Document Format
 
@@ -69,9 +69,9 @@ review-respond and review-resolve append the following fields between the marker
 
 ### Value Constraints
 
-- **Single line only** (no line breaks). Long rationales should go in the finding body; metadata values stay as summaries.
-- **Append-only, no deletion**.
-- **Same (id, field) is last-write-wins.**
+- Single line only (no line breaks). Long rationales should go in the finding body; metadata values stay as summaries.
+- Append-only, no deletion.
+- Same (id, field) is last-write-wins.
 
 ### Emoji Reference
 
@@ -83,11 +83,27 @@ review-respond and review-resolve append the following fields between the marker
 - `status` / Step 4 / `Fixed` → 🟢 (fix complete)
 - `verification` / review-resolve / `Verified` → ✅ (verification complete)
 
-## Internal Processing (events.jsonl)
+## Sub-Agent Common Instructions
 
-This skill uses **`{basename}.events.jsonl` in the same directory as the markdown** as an intermediate representation (e.g., `review-round1.md` → `review-round1.events.jsonl`; referred to as `{events_path}` below).
+For common prohibitions, see `.claude/rules/sub-agent.md`. The leader appends this file's content to each sub-agent prompt before passing it to the Agent tool.
 
-Each verdict (triage / estimate / status) is held in the leader's context during Steps 2–4, then in Step 6 **all events are written out at once with the Write tool**. Triage / estimate hand-off to sub-agents is performed directly from the leader's context (not via events.jsonl). State decisions about the review document are made by inspecting the content between the markers in the markdown.
+## Internal Processing (Intermediate Files)
+
+Each verdict is written to an intermediate file, and the aggregator sub-agent consolidates them. The leader (you) does not load verdict bodies into context.
+
+### Working Directory
+
+```
+{tmp_dir} = .claude/tmp/review-respond-{timestamp}/
+{tmp_dir}/findings.json        ← parsing sub-agent output
+{tmp_dir}/triage.json          ← triage sub-agent output
+{tmp_dir}/estimates/{id}.json  ← estimate sub-agent output (one file per finding)
+{tmp_dir}/statuses/{id}.json   ← fix sub-agent output (one file per finding)
+```
+
+### events.jsonl
+
+Final markdown reflection still uses **`{basename}.events.jsonl` in the same directory as the markdown** (e.g., `review-round1.md` → `review-round1.events.jsonl`; referred to as `{events_path}` below). The **aggregator sub-agent** generates events.jsonl in one shot from the files under `{tmp_dir}/` (Step 6). Format:
 
 ```jsonl
 {"id":"C-1","field":"triage","value":"🔧 Will Fix (assignee: cpp-sensei) — triage rationale"}
@@ -97,191 +113,177 @@ Each verdict (triage / estimate / status) is held in the leader's context during
 
 Use the **Write tool** for the file. Bash cat heredoc is unusable because apostrophes inside values (e.g., `Won't Fix`) break the outer quoting.
 
-## Step 1 — Parse Review Document
+### Creating the Working Directory
 
-1. Read the entire review document.
-2. Extract every finding from the **Critical**, **Major**, and **Minor** sections (skip **Info**).
-3. For each finding, extract:
-   - Finding ID (e.g., `C-1`, `M-1`, `m-1`)
-   - Severity (Critical / Major / Minor)
-   - Location (file path and line number)
-   - Description of the issue
-   - **Existing metadata between the markers** (whether prior-round triage/estimate/status/verification lines exist)
-4. Categorize based on existing metadata (when the same field accumulates over time, treat **the last occurrence of that field** as the current value):
-   - **Markers are empty** → target of Step 2 (Triage)
-   - **`Triage:` shows `🔧 Will Fix`, no `Estimate:`** → target of Step 3 (Estimate)
-   - **`Estimate:` shows `▶️ Maintain` or `🚧 Alternative`, no `Status:`** → target of Step 4 (Fix)
-   - **`Verification:` last value is `💬 Feedback`** → re-fix target. Occurs when called from the inner loop of review-rounds. Re-process from Step 2 (Triage) taking the Feedback content into account.
-   - **`Triage:` shows `🚫 Won't Fix`** → no action needed, skip
-   - **`Estimate:` shows `🔻 Downgrade`** → fell out at estimate as no-action, skip
-   - **`Status:` shows `🟢 Fixed`, no `Verification:` or last value is `✅ Verified`** → already fixed, skip
+The leader (you) creates `{tmp_dir}` with `mkdir -p {tmp_dir}/estimates {tmp_dir}/statuses` at the start of Step 1. Pass the `{tmp_dir}` path to each sub-agent.
 
-## Step 2 — Triage (Delegated to a Separate Sub-Agent)
+## Step 1 — Parse Review Document (Delegated to Parsing Sub-Agent)
 
-Triage is delegated by launching a **single sub-agent that is separate from the specialist agents performing fixes** (to avoid bias).
+Launch the parsing sub-agent to extract findings. The leader (you) receives only the result file path and the count; do not load the review document body into context.
 
-**Launch procedure:**
+Launch procedure:
 
 1. Launch a new sub-agent via the Agent tool. Example prompt:
 
 ```
-Conduct primary triage on a review document.
-**Do not modify any source code or write any files in this task.** Report the verdict results only.
+You are responsible for parsing the review document. Read {document_path} and Write the metadata for each finding to {tmp_dir}/findings.json.
 
-Review document: {document_path}
+Extraction targets: Critical / Major / Minor sections (skip Info). For each finding extract id (C-1, M-1, m-1, etc.) / severity / location / description (body up to the markers) / current_meta (current values of triage / estimate / status / verification; when the same field appears multiple times, take the last value).
 
-What to do:
+stage classification (based on current_meta):
+- markers empty → pending_triage
+- triage: 🔧 Will Fix, no estimate → pending_estimate
+- estimate: ▶️ Maintain or 🚧 Alternative, no status → pending_fix
+- verification last value is 💬 Feedback → feedback (re-fix target)
+- triage: 🚫 Won't Fix → wontfix_skip
+- estimate: 🔻 Downgrade → downgrade_skip
+- status: 🟢 Fixed, no verification or last value is ✅ Verified → fixed_skip
 
-1. **Triage** — For each Critical / Major / Minor finding that has no triage line recorded between the markers, render one of the following verdicts:
-   - **Will Fix** — Valid finding, should be addressed
-   - **Won't Fix** — Not applicable / false positive / accepted risk (state the reason)
-   - **Needs Investigation** — Read related sources to decide → settle on Will Fix / Won't Fix in the end
+{tmp_dir}/findings.json: {document_path, findings: [{id, severity, location, description, current_meta: {triage, estimate, status, verification}, stage}], by_stage: {<stage>: <int>}}
 
-   **Won't Fix verdict guidelines** — Render Won't Fix when any of the following apply:
-   1. Finding is outside the scope of the branch diff.
-   2. Finding addresses a bug in existing code that this branch did not introduce.
-   3. Finding is based on a wrong assumption or is technically incorrect.
-   4. Finding is something that, given the project's purpose, use case, or expected users, can be inferred to be acceptable.
-   5. Refactoring driven purely by preference (no concrete grounds in correctness, safety, performance, or maintainability).
-   6. Finding whose reproducibility is unclear and requires e2e verification before fixing.
-
-   **High-severity exception:** Even with a Won't Fix verdict, when severity is **Critical** or **Major**, explicitly note in the rationale that addressing it in a separate PR is recommended (e.g., "Won't Fix — existing-code bug. Recommend addressing in a separate PR").
-
-2. **Specialist assignment (Will Fix only)** — Assign the most suitable specialist to each Will Fix:
-   - cpp-sensei / qt-sensei / obs-sensei / network-sensei / av-sensei / devops-sensei / python-sensei / lua-sensei
-
-3. **Report format:**
-   - Triage result table:
-     | Finding ID | Verdict | Specialist | Rationale |
-     |------------|---------|------------|-----------|
-     | C-1 | 🔧 Will Fix | cpp-sensei | ... |
-     | M-2 | 🚫 Won't Fix | — | Existing code, out of current scope |
-   - Whether any Will Fix findings exist and the count.
-
-Do not edit any source code, the review document, or events.jsonl.
+Return value: {path, total, by_stage, items: [{id, stage}]} (items is a lightweight array for dispatch list use; do not include description / current_meta)
 ```
 
-2. Receive the result table from the sub-agent.
-3. **Hold triage values in context.** Format (written to events.jsonl in Step 6):
+2. Receive the return value from the parsing sub-agent and hold `{path, total, by_stage, items}` in context (do not read the body of findings.json). Pass the path to `findings.json` to subsequent sub-agents.
 
-   ```jsonl
-   {"id":"C-1","field":"triage","value":"🔧 Will Fix (assignee: cpp-sensei) — {triage rationale}"}
-   {"id":"M-2","field":"triage","value":"🚫 Won't Fix — {reason no action is needed}"}
-   ```
+## Step 2 — Triage (Delegated to a Separate Sub-Agent)
 
-4. Present the triage result table to the user.
+Triage is delegated to a **single sub-agent that is separate from the specialist agents performing fixes** (to avoid bias). The verdict is written to a **file**, and the leader does not load verdict bodies into context.
+
+Launch procedure:
+
+1. Launch a new sub-agent via the Agent tool. Example prompt:
+
+```
+You are responsible for primary triage of the review document. From {tmp_dir}/findings.json, target findings whose stage is pending_triage or feedback, render verdicts, and Write to {tmp_dir}/triage.json.
+
+Review document: {document_path} (reference only; pull bodies from findings.json)
+
+Verdict types:
+- Will Fix — Valid finding, should be addressed
+- Won't Fix — Not applicable / false positive / accepted risk (state the reason)
+- Needs Investigation — Read related sources to decide → settle on Will Fix / Won't Fix in the end
+
+Won't Fix guidelines (any of the following):
+1. Outside the scope of the branch diff.
+2. Bug in existing code (not introduced by this branch).
+3. Wrong assumption / technically incorrect.
+4. Acceptable given the project's purpose, use case, or expected users.
+5. Refactoring driven purely by preference (no concrete grounds in correctness, safety, performance, maintainability).
+6. Reproducibility unclear; requires e2e verification.
+
+High-severity exception: even with a Won't Fix verdict, when severity is Critical / Major, explicitly note "recommend addressing in a separate PR" in the rationale (e.g., "Won't Fix — existing-code bug. Recommend addressing in a separate PR").
+
+Specialist assignment (Will Fix only): assign the most suitable from cpp-sensei / qt-sensei / obs-sensei / network-sensei / av-sensei / devops-sensei / python-sensei / lua-sensei.
+
+{tmp_dir}/triage.json: {items: [{id, verdict, assignee (null for Won't Fix), reason, memo_value}], will_fix_count, wontfix_count}
+
+memo_value format:
+- Will Fix: "🔧 Will Fix (assignee: {assignee}) — {reason}"
+- Won't Fix: "🚫 Won't Fix — {reason}"
+
+memo_value becomes the value in events.jsonl in Step 6.
+
+Return value: {path, will_fix_count, wontfix_count, assignments: [{id, assignee}]} (Will Fix only; exclude Won't Fix; do not include reason / memo_value bodies in the return value)
+```
+
+2. Receive the return value (`{path, will_fix_count, wontfix_count, assignments}`) from the sub-agent. Do not read the triage body.
+3. Present the triage result summary (counts) to the user. Read `{tmp_dir}/triage.json` only when details are needed (usually unnecessary).
 
 ## Step 3 — Estimate (Delegated in Parallel to Specialist Sub-Agents)
 
 For each Will Fix finding, launch sub-agents of **the same specialist that will perform the fix** in parallel to estimate cost and reconsider the verdict. Verdict values: ▶️ Maintain (proceed) / 🔻 Downgrade (no fix) / 🚧 Alternative (light treatment via FIXME).
 
-**Launch procedure:**
+Launch procedure:
 
-1. For each Will Fix finding, **launch specialist sub-agents in parallel** via the Agent tool. Example prompt:
+1. Loop over the `assignments` array received in Step 2. For each `{id, assignee}` pair, launch a specialist sub-agent in parallel via `Agent(subagent_type=assignee, prompt=...)` (the agent definition's persona and specialty perspective load automatically). The sub-agent itself looks up `description` / `file_paths_and_lines` / `triage_reason` from `{tmp_dir}/findings.json` and `{tmp_dir}/triage.json` by `id`, so the leader does not need to embed them in the prompt. Example prompt (do not include persona):
 
 ```
-You are {specialist-name}. Estimate the fix cost for review finding {finding-id}.
-**Do not modify any source code, edit the review document, or write to events.jsonl in this task.** Investigation and verdict only.
+Estimate the fix cost for finding {finding-id} (investigation and verdict only; the fix is the next step).
 
-**Finding:** {description}
-**Location:** {file_paths_and_lines}
-**Triage verdict:** Will Fix — {triage_reason}
+Look up description / location from the id == "{finding-id}" item in {tmp_dir}/findings.json, and verdict / reason from the same id in {tmp_dir}/triage.json.
 
 What to do:
-
-1. Read the related sources and assemble the required changes mentally.
-2. Decide whether each of the following spread signals applies:
-   a. Introduction of new concepts (library functions / APIs / language features not previously used)
+1. Read related sources and assemble the required changes mentally.
+2. Decide whether each spread signal applies (multiple OK, none OK):
+   a. Introduction of new concepts (library / API / language features not previously used)
    b. Expansion of fix scope (files / modules not yet modified on the current branch)
    c. Asynchronous-execution timing interference (UI thread blocking, callback order, Qt connection-type changes, etc.)
    d. Future cost (provisional treatment / FIXME push-forward / missing abstractions)
-   e. Will Fix originating from a FIXME (originally left as FIXME/TODO intentionally, or a FIXME-conversion proposal that fell to Will Fix at triage)
+   e. Will Fix originating from a FIXME (originally left as FIXME/TODO, or a FIXME-conversion proposal that fell to Will Fix at triage)
    f. Target change (build / runtime target version changes, etc.)
-3. Compute Cost (S/M/L) and Future cost (S/M/L). Granularity may be coarse, but include 1–2 sentences of rationale.
+3. Compute cost (S/M/L) and future (S/M/L). Provide 1–2 sentences of rationale.
 4. Verdict (regardless of severity, Downgrade / Alternative may be chosen):
-   - **Maintain** — Cost is reasonable; proceed with the fix.
-   - **Downgrade** — Overturn the triage verdict; do not fix. No alternative. Include "recommend separate PR" in the rationale if relevant.
-   - **Alternative** — Overturn the triage verdict, but address it lightly with an alternative such as adding a FIXME comment. Briefly indicate the direction for the FIXME wording. Include "recommend separate PR" in the rationale if relevant.
+   - Maintain — cost is reasonable; proceed with the fix.
+   - Downgrade — overturn the triage verdict; do not fix. No alternative. Include "recommend separate PR" in the rationale if relevant.
+   - Alternative — overturn the triage verdict, but address it lightly with an alternative such as adding a FIXME comment. Briefly indicate the direction for the FIXME wording. Include "recommend separate PR" in the rationale if relevant.
 
-   The higher the severity of the finding, the more strictly the grounds for choosing Downgrade (no alternative) are scrutinized. Critical / Major are typically better as Alternative (FIXME insertion) or "Downgrade + separate PR recommendation". Minor / Info more easily tolerate Downgrade.
+The higher the severity of the finding, the more strictly the grounds for choosing Downgrade are scrutinized. Critical / Major are typically better as Alternative or "Downgrade + separate PR recommendation". Minor / Info more easily tolerate Downgrade.
 
-Report format:
+{tmp_dir}/estimates/{finding-id}.json: {id, specialist, verdict (Maintain | Downgrade | Alternative), cost (S|M|L), future (S|M|L), signals (["a","b",...] or []), rationale, memo_value}
 
-- Verdict: Maintain / Downgrade / Alternative
-- Cost: S/M/L, Future: S/M/L, Applicable signals: a/b/c/d/e/f (multiple OK, none OK)
-- For Maintain: Do not repeat the triage rationale. Provide only concise reasoning for the signal computation.
-- For Downgrade: Downgrade rationale (2–4 sentences. If a separate-PR recommendation is included, state so).
-- For Alternative: FIXME direction (the problem summary and recommended fix direction to be written in the comment. If a separate-PR recommendation is included, state so).
+memo_value format (used as the value in events.jsonl in Step 6):
+- Maintain: "▶️ Maintain — Cost: {cost}, Future: {future}, Signals: {a,b,... or none}"
+- Downgrade: "🔻 Downgrade — Cost: ..., Future: ..., Signals: ... — {downgrade rationale}"
+- Alternative: "🚧 Alternative — Cost: ..., Future: ..., Signals: ... — FIXME insertion: {direction}"
 
-Do not edit any source code, the review document, or events.jsonl.
+Return value: {path, verdict}
 ```
 
-2. Receive results from all estimate agents.
-3. **Hold estimate values in context.** Format (written to events.jsonl in Step 6):
+2. Receive the return values (`{path, verdict}` only) from all estimate agents. Do not read the estimate body. Each agent has written `{tmp_dir}/estimates/{id}.json`. The leader holds an `{id → verdict}` map in context for selecting fix targets in Step 4.
 
-   ```jsonl
-   {"id":"C-1","field":"estimate","value":"▶️ Maintain — Cost: M, Future: S, Signals: b,d"}
-   {"id":"M-2","field":"estimate","value":"🔻 Downgrade — Cost: L, Future: M, Signals: a,b,c — Recommend separate PR"}
-   {"id":"M-3","field":"estimate","value":"🚧 Alternative — Cost: L, Future: M, Signals: a,b — FIXME insertion: direction description"}
+3. Launch an aggregator sub-agent to print the estimate result table to the console. Reading each `{tmp_dir}/estimates/{id}.json` and generating the table is the aggregator sub-agent's responsibility.
+
+   Aggregator sub-agent prompt example:
+
+   ```
+   You are responsible for generating the estimate-result summary. Read all {tmp_dir}/estimates/*.json, cross-reference with {tmp_dir}/triage.json, and Write a markdown table to {tmp_dir}/estimate-summary.md.
+
+   Table columns: Finding ID / Specialist / Cost / Future / Signals / Verdict (▶️ Maintain | 🔻 Downgrade | 🚧 Alternative) / Notes (separate-PR recommendation, FIXME insertion, etc.)
+
+   Return value: {summary_path, summary_line (<=200 chars; e.g., "C-1 Maintain / M-2 Downgrade(separate PR) / M-3 Alternative"), maintain_count, downgrade_count, alternative_count}
    ```
 
-   Maintain carries only the quantitative fields. Downgrade and Alternative append the verdict rationale (or FIXME direction) at the end.
+   The leader holds only the `summary_line` from the return value in context (not the table body). If `--confirm` is enabled, Read `summary_path` and present it to the user.
 
-4. **Print the estimate result table to the console:**
+4. If `--confirm` is enabled, wait for user confirmation before proceeding to fixes.
 
-   | Finding ID | Specialist | Cost | Future | Signals | Verdict | Notes |
-   |------------|------------|------|--------|---------|---------|-------|
-   | C-1 | cpp-sensei | M | S | b,d | ▶️ Maintain | — |
-   | M-2 | qt-sensei | L | M | a,b,c | 🔻 Downgrade | Recommend separate PR |
-   | M-3 | obs-sensei | L | M | a,b | 🚧 Alternative | FIXME insertion + recommend separate PR |
-
-5. If `--confirm` is enabled, wait for user confirmation before proceeding to fixes.
-
-**When both Maintain and Alternative are 0 (all Downgrade):** Skip Steps 4 and 5 and proceed to Step 6 (render). Step 7 records them as Downgrade.
+When both Maintain and Alternative are 0 (all Downgrade): skip Steps 4 and 5 and proceed to Step 6 (render). Step 7 records them as Downgrade.
 
 ## Step 4 — Fix
 
-Delegate `Estimate: ▶️ Maintain` (regular fix) and `Estimate: 🚧 Alternative` (FIXME insertion) to specialists chosen by the nature of the finding:
+Delegate `Estimate: ▶️ Maintain` (regular fix) and `Estimate: 🚧 Alternative` (FIXME insertion) findings to the specialist agent assigned at triage.
 
-- `cpp-sensei` — C++ language issues, memory management, RAII, thread safety, undefined behavior, performance.
-- `qt-sensei` — Qt API usage, signals/slots, object lifetime, thread affinity, UI thread safety.
-- `obs-sensei` — OBS API correctness, plugin lifecycle, sources/filters/outputs, OBS threading model.
-- `network-sensei` — Networking, protocols, connection lifecycle, security.
-- `av-sensei` — Video/audio/streaming quality, encoder settings, media processing.
-- `devops-sensei` — CI/CD, CMake, build scripts, formatters, packaging.
-- `python-sensei` — Python scripts, OBS Python Script.
-- `lua-sensei` — Lua scripts, OBS Lua Script.
+Launch procedure:
+
+Cross-reference the `assignments` array received in Step 2 with the `{id → verdict}` map collected in Step 3, and loop over only the `{id, assignee}` pairs whose `verdict` is `Maintain` or `Alternative`. For each pair, launch a fix sub-agent via `Agent(subagent_type=assignee, prompt=...)` (the agent definition's persona and specialty perspective load automatically). The sub-agent itself looks up `description` / `file_paths_and_lines` / `triage_reason` / estimate details from `{tmp_dir}/findings.json` / `{tmp_dir}/triage.json` / `{tmp_dir}/estimates/{id}.json` by `id`.
 
 ### Agent Prompt Template
 
-Pass the following to each fix agent:
+Pass the following to each fix agent (do not include persona):
 
 ```
-You are {specialist-name}. Fix review finding {finding-id}.
+Fix finding {finding-id}.
 
-**Finding:** {description}
-**Location:** {file_paths_and_lines}
-**Triage verdict:** Will Fix — {triage_reason}
-**Estimate:** {Maintain | Alternative} — Cost: {S/M/L}, Future: {S/M/L}, Signals: {a,b,...} — {for Maintain: signal computation rationale / for Alternative: FIXME direction}
+Input (look up by id == "{finding-id}"):
+- {tmp_dir}/findings.json — description / location
+- {tmp_dir}/triage.json — verdict / reason
+- {tmp_dir}/estimates/{finding-id}.json — verdict / cost / future / signals / rationale
 
 Procedure:
-1. Read the related source files to understand the current code and surrounding context.
-2. Implement the fix. Follow the project's coding conventions (see CLAUDE.md).
-   - **For Maintain:** Perform a regular fix in line with the finding.
-   - **For Alternative:** The fix is limited to adding a `FIXME:` comment; no logic changes. Use wording aligned with the FIXME direction stated in Estimate.
-3. After fixing, perform a self-review:
-   - Re-read the changed code.
-   - Verify that the fix addresses the finding and does not introduce new issues.
-   - Check edge cases, thread safety, and resource leaks.
-   - If the self-review uncovers any issues, fix them before reporting.
-4. Report what you changed and why (including any self-review fixes).
+1. Read related sources to grasp the context.
+2. Implement the fix (follow the coding conventions in CLAUDE.md):
+   - Maintain: regular fix in line with the finding.
+   - Alternative: add a FIXME: comment only (no logic changes). Use wording aligned with estimate.rationale's direction.
+3. Self-review: re-read the changed code, verify no new issues (regressions / thread safety / resource leaks, etc.) were introduced; fix any before reporting.
 
-**Prohibited:**
-- Build commands (`cmake`, `make`, `build.ps1`, `pwsh` build scripts, etc.) — the leader aggregates and runs these in Step 5.
-- Formatters (`clang-format`, `cmake-format`, etc.) — same.
-- Editing the review document or writing to events.jsonl (the leader handles those).
+{tmp_dir}/statuses/{finding-id}.json: {id, specialist, description (concise description of the fix), memo_value}
 
-Follow the comment rules in `.claude/rules/comment.md` (auto-loaded).
+memo_value format:
+- Maintain: "🟢 Fixed — {fix description}"
+- Alternative: "🟢 Fixed — Added FIXME comment at {file:line}" (description should also reflect this)
+
+Return value: {path}
 ```
 
 ### Parallelism
@@ -290,83 +292,117 @@ Follow the comment rules in `.claude/rules/comment.md` (auto-loaded).
 - Findings affecting **different files** may be fixed in parallel by launching multiple agents simultaneously.
 - Findings affecting **the same file** must be fixed sequentially — launch them one at a time and wait for each to complete before starting the next.
 
-### Hold Status in Context
+### Status Saved to Intermediate Files
 
-After all fixes complete, hold each finding's status value in context. Format (written to events.jsonl in Step 6):
-
-```jsonl
-{"id":"C-1","field":"status","value":"🟢 Fixed — Added null check"}
-{"id":"M-3","field":"status","value":"🟢 Fixed — Added FIXME comment at output.cpp:200"}
-```
-
-For Alternative findings, the status should clearly indicate the FIXME insertion, e.g., "Added FIXME comment at {file:line}".
+After all fixes complete, each agent has written `{tmp_dir}/statuses/{id}.json`. The leader collects only the return values (`{path}` only); status bodies are not loaded into context.
 
 ## Step 5 — Format Verification & Build Verification
 
-### 5a. Format Verification
+The leader (you) does not run formatters or build commands directly, and does not read source code. The format & build verification sub-agent runs format → build once and, on build failure, reads the code to determine which specialist is responsible (it does not perform fixes). The leader sees the result, launches the specialist sub-agent to fix, then alternates the format & build verification sub-agent and the specialist sub-agent in a loop until the build succeeds.
 
-1. Identify the source files changed in Step 4 (`.cpp`, `.hpp`, `.h`, `.c`).
-2. For each file, run `clang-format` to check for formatting violations:
+### Loop Control (Leader)
+
+Maximum attempts: 5
+
+The leader repeats up to the maximum:
+
+1. Launch the format & build verification sub-agent (see "Format & Build Verification Sub-Agent Prompt" section). The sub-agent runs format → build once and, on failure, determines the specialist.
+2. Receive the return value (`{path, success, summary_line}`) from the sub-agent.
+3. If `success == true`, exit the loop (success).
+4. If `success == false`:
+   a. Read `{tmp_dir}/format-build-result.json` and obtain `suggested_specialist` / `error_summary` / `error_files` / `fix_guidance` / `build_log_path` (build-error info is operational data, not verdict body, so it may be loaded into context; do not Read source code).
+   b. Launch the build-fix specialist sub-agent via `Agent(subagent_type=suggested_specialist, prompt=...)` (the agent definition's persona and specialty perspective load automatically; see "Build-Fix Specialist Sub-Agent Prompt" section).
+   c. After the fix completes, return to the top of the loop (re-running the format & build verification sub-agent restarts from format because the code has changed).
+5. If the maximum attempts are reached without success, present `error_summary` to the user, exit the loop, and proceed to Step 6 (aggregator sub-agent).
+
+### Format & Build Verification Sub-Agent Prompt
+
+```
+You are responsible for format & build verification. Run format verification → build verification exactly once. Do not run a fix loop (the leader has the specialist sub-agent fix, then re-launches this sub-agent). On failure, read code to analyze the cause and determine which specialist is responsible. Source changes are limited to formatter auto-fixes (no logic changes).
+
+Input: working directory {tmp_dir}, attempt number {attempt_num} (informational)
+
+What to do:
+
+1. Format verification:
+   - Get the list of changed files via git. Verify C/C++ (.cpp/.hpp/.h/.c) with clang-format and CMake (CMakeLists.txt/*.cmake) with cmake-format.
+   - Verification commands: `clang-format -style=file -fallback-style=none --dry-run -Werror <file>` / on violations `clang-format -i -style=file -fallback-style=none <file>` to auto-fix. Same for CMake.
+
+2. Build verification:
+   - Choose a platform-appropriate command from build.ps1 / Makefile / build scripts, or from the CMake presets noted in CLAUDE.md.
+   - Run the build, save stdout/stderr to {tmp_dir}/build.log. Use the exit code to determine success/failure.
+
+3. On failure, determine the specialist:
+   - Read build.log and the error files to analyze the cause; concisely summarize the fix direction (fix_guidance).
+   - Specialist selection: cpp-sensei (C++ compile/link/language spec) / qt-sensei (Qt API/MOC/signal-slot) / obs-sensei (OBS Studio API) / network-sensei (TCP/IP/HTTP/SSL/RTMP/SRT/WebSocket) / av-sensei (AV/encoder/media pipeline) / devops-sensei (CMake/CI/build script/Inno Setup) / python-sensei (.py) / lua-sensei (.lua).
+
+4. Write to {tmp_dir}/format-build-result.json.
+
+{tmp_dir}/format-build-result.json:
+{
+  "format": {changed_files: [...], format_violations_fixed: <int>, format_violations_remaining: <int>},
+  "build": {success: <bool>, build_log_path, error_summary | null, error_files: ["src/foo.cpp:42", ...] | null, suggested_specialist | null, fix_guidance | null}
+}
+
+Return value: {path, success, format_violations_fixed, summary_line (<=200 chars; e.g., "format ok / build ok" or "format ok / build failed: cpp-sensei suggested for src/foo.cpp:42")}
+```
+
+### Build-Fix Specialist Sub-Agent Prompt
+
+Do not include persona (loaded via `subagent_type` from the agent definition).
+
+```
+Fix the build error.
+
+Input (Read the build section of {tmp_dir}/format-build-result.json):
+- error_summary / error_files / fix_guidance / build_log_path
+- The full build log is at {tmp_dir}/build.log (Read only when needed)
+
+Procedure:
+1. Read the sources listed in error_files and surrounding code to identify the cause.
+2. Implement the fix (follow the coding conventions in CLAUDE.md).
+3. Self-review: re-read changed code, verify the error is resolved and no new issues are introduced.
+
+Return value: {description}
+```
+
+## Step 6 — Reflect into the Review Document (Delegated to Aggregator Sub-Agent)
+
+The aggregator sub-agent consolidates the intermediate files under `{tmp_dir}/` (triage.json / estimates/*.json / statuses/*.json) and performs events.jsonl write and `render-review.py` execution in one shot. The leader (you) does not load verdict bodies into context.
+
+Launch procedure:
+
+1. Launch a new sub-agent via the Agent tool. Example prompt:
+
+```
+You are responsible for review-response aggregation. Consolidate the intermediate files and reflect them into the markdown via events.jsonl.
+
+Input:
+- triage: {tmp_dir}/triage.json
+- estimate: {tmp_dir}/estimates/
+- status: {tmp_dir}/statuses/
+- Target markdown: {document_path}
+
+Output:
+- events.jsonl: {events_path} ({basename}.events.jsonl in the same directory as {document_path})
+- The reflected {document_path}
+
+What to do:
+1. Read triage.json / estimates/*.json / statuses/*.json. Collect each item's memo_value as an event for the corresponding field (triage / estimate / status).
+2. Write to {events_path} as JSONL (one event per line). Format: {"id":"...","field":"triage|estimate|status","value":"..."}
+3. Run `python .claude/scripts/render-review.py {document_path} {events_path} {document_path}`.
+4. Run `.claude/scripts/rm-tmp.sh {events_path}` to delete the events.jsonl.
+
+Return value: {events_path, fixed_count (number of files in statuses = Maintain fixes + Alternative FIXME insertions), code_changed (true if 1+ statuses, false if all Downgrade), summary_line (<=200 chars; e.g., "3 fixed (2 Maintain + 1 Alternative), 1 Downgrade, 1 Wontfix")}
+```
+
+2. The leader holds the return value (`{events_path, fixed_count, code_changed, summary_line}`) in context.
+
+3. The leader removes `{tmp_dir}` in one shot:
    ```bash
-   clang-format -style=file -fallback-style=none --dry-run -Werror <file>
+   .claude/scripts/rm-tmp.sh {tmp_dir}
    ```
-3. If there are formatting violations:
-   - Auto-fix with `clang-format -i -style=file -fallback-style=none <file>`.
-   - Inspect the resulting diff and verify no unintended changes are included.
-4. If CMake files (`CMakeLists.txt`, `*.cmake`) were changed, verify and fix them similarly with `cmake-format`.
-
-### 5b. Build Verification
-
-1. Identify the build command appropriate for the current platform. Check the build scripts (`build.ps1`, `Makefile`, etc.) or use the CMake presets noted in `CLAUDE.md`.
-2. Run the build. If the build fails:
-   - Analyze the error output.
-   - Delegate the fix to the appropriate specialist agent (use the same selection criteria and prompt template as Step 4, and inherit the prohibition against running builds / formatters).
-   - Re-run the build after the fix. The leader (you yourself) re-runs it. Repeat until success.
-3. Report the build result (success, or the errors that occurred and how they were resolved).
-
-## Step 6 — Reflect into the Review Document
-
-Write all events (triage / estimate / status) accumulated in the leader's context during Steps 2–4 to events.jsonl in one shot, then reflect them into the markdown via `render-review.py`.
-
-### 6a. Write events.jsonl
-
-Use the Write tool to write all events to `{events_path}` (one event per line in JSONL). Format: see Internal Processing section.
-
-### 6b. Run render
-
-```bash
-python .claude/scripts/render-review.py {document_path} {events_path} {document_path}
-```
-
-### 6c. Delete the temporary file
-
-```bash
-.claude/scripts/rm-tmp.sh {events_path}
-```
 
 ## Step 7 — Summary
 
-```
-# Review Response Summary
-
-**Review document:** {path}
-**Date:** YYYY-MM-DD
-
-## Results
-
-| # | Severity | Decision | Specialist | Note |
-|---|----------|----------|------------|------|
-| C-1 | Critical | 🟢 Fixed (Maintain) | cpp-sensei | Concise description of the fix |
-| M-1 | Major | 🟢 Fixed (Alternative) | obs-sensei | FIXME inserted (output.cpp:200) + recommend separate PR |
-| M-2 | Major | 🔻 Downgrade | qt-sensei | Cost L, Future M, Signals a,b,c. Recommend separate PR. |
-| M-3 | Major | 🚫 Won't Fix | — | Existing code, out of current scope |
-
-## Statistics
-
-- **Findings processed:** N
-- **🟢 Fixed (Maintain fix):** N
-- **🟢 Fixed (Alternative FIXME insertion):** N
-- **🔻 Downgrade (no fix):** N
-- **🚫 Won't Fix:** N
-- **Already resolved (skipped):** N
-```
+The leader prints the `summary_line` received from the aggregator sub-agent to the console. If a detailed table is needed, Read the updated `{document_path}` and display following the format in `.claude/skills/review-respond/templates/respond-summary.md` (usually the summary line alone is sufficient).

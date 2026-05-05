@@ -1,12 +1,12 @@
 ---
 name: review-resolve
-description: Verify review finding resolutions against actual source code and provide feedback
-allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(.claude/scripts/rm-tmp.sh:*), Bash(python .claude/scripts/render-review.py:*)
+description: Verify review finding resolutions against actual source code and write back verification metadata
+allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(mkdir:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(.claude/scripts/rm-tmp.sh:*), Bash(python .claude/scripts/render-review.py:*)
 ---
 
 # Review Verification
 
-You are the **review verifier**. Your role is to re-read the updated review document, verify each finding's resolution against the actual source code, and write the verification result back as `verification` metadata.
+You are the **review verifier**. Re-read the updated review document, verify each finding's resolution against the actual source code, and write the verification result back as `verification` metadata.
 
 ## Input
 
@@ -53,14 +53,29 @@ Do not write a `verification` for Unresolved findings.
 
 ### Value Constraints
 
-- **Single line only** (no line breaks). Long descriptions go in other sections of this document (e.g., feedback details); keep metadata values as summaries.
-- **Append-only, no deletion**.
+- Single line only (no line breaks). Long descriptions go in other sections of this document (e.g., feedback details); keep metadata values as summaries.
+- Append-only, no deletion.
 
-## Internal Processing (events.jsonl)
+## Sub-Agent Common Instructions
 
-This skill uses **`{basename}.events.jsonl` in the same directory as the markdown** as an intermediate representation (e.g., `review-round1.md` → `review-round1.events.jsonl`; referred to as `{events_path}` below).
+For common prohibitions, see `.claude/rules/sub-agent.md`. The leader appends this file's content to each sub-agent prompt before passing it to the Agent tool.
 
-Each finding's verification verdict is held in the leader's context during Step 2, then in Step 4 **all events are written out at once with the Write tool**.
+## Internal Processing (Intermediate Files)
+
+Each finding's verification verdict is written to an intermediate file, and the aggregator sub-agent consolidates them. The leader (you) does not load verification bodies into context.
+
+### Working Directory
+
+```
+{tmp_dir} = .claude/tmp/review-resolve-{timestamp}/
+{tmp_dir}/verifications/{id}.json  ← verification sub-agent output (one file per finding)
+```
+
+The leader creates `{tmp_dir}` with `mkdir -p {tmp_dir}/verifications` at the start of Step 1, and removes it with `.claude/scripts/rm-tmp.sh {tmp_dir}` after Step 4 completes.
+
+### events.jsonl
+
+Final markdown reflection still uses **`{basename}.events.jsonl` in the same directory as the markdown** (e.g., `review-round1.md` → `review-round1.events.jsonl`; referred to as `{events_path}` below). The **aggregator sub-agent** generates events.jsonl in one shot from the files under `{tmp_dir}/verifications/` (Step 4). Format:
 
 ```jsonl
 {"id":"C-1","field":"verification","value":"✅ Verified — Null check fix is correct"}
@@ -69,144 +84,144 @@ Each finding's verification verdict is held in the leader's context during Step 
 
 Use the **Write tool** for the file. Bash cat heredoc is unusable because apostrophes inside values (e.g., `Won't`) break the outer quoting.
 
-## Step 1 — Re-read and Parse
+**Unresolved** findings (not yet triaged / estimate not completed / fix not completed) are not written to events.jsonl (they are not at the stage of receiving a verification).
 
-1. Read the entire review document.
-2. Extract every finding from the **Critical**, **Major**, and **Minor** sections.
-3. For each finding, extract:
-   - Finding ID, severity, location (file and line number), description
-   - The metadata between the markers (presence and values of triage / estimate / status)
+## Step 1 — Parse (Delegated to Parsing Sub-Agent)
 
-## Step 2 — Verify Each Finding
+Launch the parsing sub-agent to extract findings. The leader (you) receives only the result file path, the count, and the dispatch `items`; do not load the review document body into context.
+Use the same prompt template as review-respond Step 1 to generate `{tmp_dir}/findings.json` (see review-respond § Step 1).
 
-### Common Additional Checks for All Verification Branches
-
-For the code-verification branches below (`Status: 🟢 Fixed` is present / `Triage: 🚫 Won't Fix` is present / `Estimate: 🔻 Downgrade` is present), perform the following additional checks immediately before rendering the verdict. The step **Run the common additional checks** inside each branch refers back to here.
-
-- If comments were added or changed, verify that they do not violate the rules in `.claude/rules/comment.md` (auto-loaded). If they do, treat as Feedback.
-- If human-facing documentation (README, API reference, etc.; AI-facing prompts under `.claude/` are out of scope) was added or changed, verify that it does not violate the rules in `.claude/rules/document.md` (auto-loaded). If it does, treat as Feedback.
-
-### `Status: 🟢 Fixed` is present
-
-1. Read the referenced files and lines.
-2. Confirm that the recorded fix is actually present in the code.
-   - **When Estimate is `▶️ Maintain`:** Confirm that a regular fix (including logic changes) addressing the finding is reflected and that it fully addresses the original problem.
-   - **When Estimate is `🚧 Alternative`:** Confirm that an appropriate `FIXME:` / `TODO:` comment has been added at the relevant location. Also check that the comment wording roughly matches the FIXME direction recorded in Estimate and carries enough information for a future fix. Logic changes are not expected.
-3. Confirm that the fix has not introduced new issues (regressions, new bugs, style violations, thread safety problems, resource leaks, etc.).
-4. **Run the common additional checks**.
-5. Verdict:
-   - **Resolved** — The fix is correct, complete, and introduces no new issues.
-   - **Feedback** — The fix is missing, incomplete, or introduces a new issue. Describe what remains.
-
-### `Triage: 🚫 Won't Fix` is present
-
-1. Read the referenced files and review the current state.
-2. Evaluate whether the "won't fix" rationale still holds against the current code.
-3. **Run the common additional checks**.
-4. Verdict:
-   - **Resolved** — The rationale is valid and the decision is appropriate.
-   - **Feedback** — The rationale is flawed or the situation has changed. Explain why.
-
-### `Estimate: 🔻 Downgrade` is present
-
-1. Read the referenced files and review the current state.
-2. Evaluate whether the Estimate's downgrade rationale (spread signals, Cost, Future, decision reason) still holds against the current code.
-3. If a separate-PR recommendation is included at the end of the value, confirm that this judgment is appropriate (be especially careful for Critical / Major findings without a separate-PR recommendation).
-4. **Run the common additional checks**.
-5. Verdict:
-   - **Resolved** — The downgrade rationale is valid.
-   - **Feedback** — The downgrade rationale is flawed or the situation has changed. Explain why.
-
-### `Estimate: 🚧 Alternative` is present, no `Status`
-
-- Report as **Unresolved** — The estimate plans an alternative (FIXME insertion), but the FIXME comment has not yet been added.
-
-### `Estimate: ▶️ Maintain` is present, no `Status`
-
-- Report as **Unresolved** — The estimate decided Maintain, but the fix has not yet been completed.
-
-### `Triage: 🔧 Will Fix` only
-
-- Report as **Unresolved** — Triage is done, but the estimate has not yet been completed.
-
-### No metadata at all between the markers
-
-- Report as **Unresolved** — Not even triage has been performed yet.
-
-## Step 3 — Verification Report
-
-**Print** the verification report to the console in the following format (do not write it to a file):
-
+Return value (the leader receives this JSON):
 ```
-# Review Verification Report
-
-**Review document:** {path}
-**Verification date:** YYYY-MM-DD
-
-## Verification Results
-
-### Resolved
-
-| # | Severity | Trailing field | Verdict |
-|---|----------|----------------|---------|
-| C-1 | Critical | Status: 🟢 Fixed | Fix is correct and complete. |
-| M-2 | Major | Triage: 🚫 Won't Fix | Rationale is valid. |
-
-### Feedback Required
-
-| # | Severity | Trailing field | Issue |
-|---|----------|----------------|-------|
-| M-1 | Major | Status: 🟢 Fixed | The fix addresses the null check, but the `else` branch at line 85 returns without logging. |
-
-### Unresolved
-
-| # | Severity | Trailing field | Note |
-|---|----------|----------------|------|
-| m-3 | Minor | (none) | No verdict line recorded (not yet triaged). |
-| m-5 | Minor | Estimate: ▶️ Maintain | Estimated, but fix not yet completed. |
-
-## Summary
-
-- **Findings verified:** N
-- **Resolved:** N
-- **Feedback required:** N
-- **Unresolved:** N
+{
+  "path": "{tmp_dir}/findings.json",
+  "total": <int>,
+  "by_stage": {...},
+  "items": [{"id": "C-1", "stage": "fixed_skip"}, ...]
+}
 ```
 
-### Feedback Details
+Each element of `items` (only `id` and `stage`) is used as the dispatch list for launching verification sub-agents in the next step.
 
-For each finding requiring feedback, write a detailed description after the summary table:
+## Step 2 — Verify Each Finding (Delegated in Parallel to Verification Sub-Agents)
+
+Loop over the `items` array received in Step 1 and launch a verification sub-agent in parallel for each `id` via the Agent tool. Findings have no inter-dependencies, so parallel launch is allowed. Each sub-agent looks up its id in `{tmp_dir}/findings.json` to obtain the trailing metadata, and Writes the result to `{tmp_dir}/verifications/{id}.json`.
+
+Launch procedure:
+
+1. Launch a verification sub-agent in parallel for each element of `items` via the Agent tool. Example prompt:
 
 ```
----
+Verify the resolution of finding {finding-id} (verification and JSON Write only).
 
-### M-1 — Feedback
+Input: the item with id == "{finding-id}" in {tmp_dir}/findings.json (read trailing field from current_meta).
+Output: {tmp_dir}/verifications/{finding-id}.json
 
-**Original finding:** {concise description}
-**Trailing field:** Status: 🟢 Fixed
-**Actual state:** {what was observed in the code}
-**Issue:** {what is incorrect or incomplete}
-**Suggestion:** {what should be done to fully resolve it}
+Decision: based on the trailing field (final value of triage / estimate / status / verification), apply the rules in this SKILL § "Step 2 § Verification Logic" to determine Resolved / Feedback / Unresolved.
 
----
+{tmp_dir}/verifications/{finding-id}.json: {id, outcome (Resolved | Feedback | Unresolved), reason (1–3 sentences), memo_value, feedback_detail}
+
+memo_value:
+- Resolved: "✅ Verified — {verification result}"
+- Feedback: "💬 Feedback — {what is missing and what is needed for full resolution}"
+- Unresolved: ""
+
+feedback_detail (include only when outcome == Feedback): {current_state, issue, suggestion}
+
+Return value: {path, outcome}
 ```
 
-## Step 4 — Reflect into the Review Document
+2. Receive the return values (`{path, outcome}` only) from all verification agents. **Do not load verification bodies into context.**
 
-Write all verification events accumulated in the leader's context during Step 2 to events.jsonl in one shot, then reflect them into the markdown via `render-review.py`.
+### Verification Logic
 
-### 4a. Write events.jsonl
+The decision branches that the verification sub-agent applies based on the finding's trailing field.
 
-Use the Write tool to write all events to `{events_path}` (one event per line in JSONL). Format: see Internal Processing section. Do not write events for **Unresolved** findings (they are not at the stage of receiving a verification).
+#### Common Additional Checks (Run Immediately Before the Verdict in Each Code-Verification Branch)
 
-### 4b. Run render
+Apply in each of `Status: 🟢 Fixed` / `Triage: 🚫 Won't Fix` / `Estimate: 🔻 Downgrade`:
 
-```bash
-python .claude/scripts/render-review.py {document_path} {events_path} {document_path}
+- If comments were added or changed, verify that they do not violate `.claude/rules/comment.md` (auto-loaded). If they do, treat as Feedback.
+- If human-facing documentation (README, API reference, etc.; AI-facing prompts under `.claude/` are out of scope) was added or changed, verify that it does not violate `.claude/rules/document.md` (auto-loaded). If it does, treat as Feedback.
+
+#### `Status: 🟢 Fixed` is present
+
+1. Read the referenced files and lines, and confirm that the recorded fix is actually present:
+   - Estimate ▶️ Maintain: a regular fix (including logic changes) addressing the finding is fully reflected.
+   - Estimate 🚧 Alternative: a `FIXME:` / `TODO:` comment is at the relevant location, roughly matches the FIXME direction recorded in Estimate, and carries enough information for a future fix (logic changes are not expected).
+2. Confirm that the fix has not introduced new issues (regressions / new bugs / style violations / thread safety problems / resource leaks, etc.).
+3. Run the common additional checks.
+4. Verdict: Resolved (correct, complete, no new issues) / Feedback (missing, incomplete, or introduces new issues; describe what remains).
+
+#### `Triage: 🚫 Won't Fix` is present
+
+1. Read the referenced files and review the current state. Evaluate whether the "won't fix" rationale still holds.
+2. Run the common additional checks.
+3. Verdict: Resolved (rationale valid) / Feedback (rationale flawed or situation changed; explain why).
+
+#### `Estimate: 🔻 Downgrade` is present
+
+1. Read the referenced files and evaluate whether the Estimate's downgrade rationale (spread signals / Cost / Future / reason) still holds.
+2. Confirm whether a separate-PR recommendation is included and appropriate (be especially careful for Critical / Major findings without a separate-PR recommendation).
+3. Run the common additional checks.
+4. Verdict: Resolved (rationale valid) / Feedback (rationale flawed or situation changed; explain why).
+
+#### Cases to Report as Unresolved
+
+- `Estimate: 🚧 Alternative` is present but no `Status` — FIXME insertion not yet completed.
+- `Estimate: ▶️ Maintain` is present but no `Status` — fix not yet completed.
+- `Triage: 🔧 Will Fix` only — estimate not yet completed.
+- No metadata at all between the markers — not yet triaged.
+
+## Step 3 — Verification Report and Reflection (Delegated to Aggregator Sub-Agent)
+
+The aggregator sub-agent consolidates the verification results under `{tmp_dir}/verifications/` and performs verification-report generation, events.jsonl write, and `render-review.py` execution in one shot. The leader (you) does not load verification bodies into context.
+
+Launch procedure:
+
+1. Launch a new sub-agent via the Agent tool. Example prompt:
+
+```
+You are responsible for review-verification aggregation. Generate the verification report and events.jsonl from the intermediate files, and reflect them into the markdown.
+
+Input:
+- {tmp_dir}/verifications/ — verification result for each finding
+- {tmp_dir}/findings.json — severity / trailing field reference
+- Target markdown: {document_path}
+
+Output:
+- Verification report: {tmp_dir}/resolve-summary.md
+- events.jsonl: {events_path} ({basename}.events.jsonl in the same directory as {document_path})
+- The reflected {document_path}
+
+What to do:
+
+1. Read {tmp_dir}/verifications/*.json, cross-reference with findings.json, and Write the verification report to {tmp_dir}/resolve-summary.md. Format:
+   - Heading: "# Review Verification Report"
+   - Meta info: "Review document: {document_path}", "Verification date: YYYY-MM-DD" (bold)
+   - Under "## Verification Results", three tables:
+     - "### Resolved": # / Severity / Trailing field / Verdict (outcome == Resolved)
+     - "### Feedback Required": # / Severity / Trailing field / Issue (outcome == Feedback)
+     - "### Unresolved": # / Severity / Trailing field / Note (outcome == Unresolved)
+   - "## Summary": findings verified / Resolved / Feedback required / Unresolved as a bullet list
+   - "## Feedback Details": for each outcome == Feedback finding, write "### {finding-id} — Feedback", "Original finding", "Trailing field", "Actual state (feedback_detail.current_state)", "Issue (feedback_detail.issue)", "Suggestion (feedback_detail.suggestion)"; separate entries with ---
+
+2. Write verification events to {events_path} as JSONL (one event per line). Format: {"id":"...","field":"verification","value":"<memo_value>"}. Do not write events for outcome == Unresolved.
+
+3. Run `python .claude/scripts/render-review.py {document_path} {events_path} {document_path}`.
+4. Run `.claude/scripts/rm-tmp.sh {events_path}` to delete the temporary file.
+
+Return value: {events_path, summary_path, summary_line (<=200 chars; e.g., "3 resolved, 1 feedback (M-1), 2 unresolved"), resolved_count, feedback_count, unresolved_count}
 ```
 
-### 4c. Delete the temporary file
+2. The leader holds the return value (`{events_path, summary_path, summary_line, resolved_count, feedback_count, unresolved_count}`) in context.
 
-```bash
-.claude/scripts/rm-tmp.sh {events_path}
-```
+3. The leader removes `{tmp_dir}` in one shot:
+   ```bash
+   .claude/scripts/rm-tmp.sh {tmp_dir}
+   ```
+
+## Step 4 — Completion Report
+
+The leader prints the `summary_line` received from the aggregator sub-agent to the console.
+If a detailed report is needed, Read `summary_path` (`resolve-summary.md` while `{tmp_dir}` still exists). Usually the `summary_line` alone is sufficient.

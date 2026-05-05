@@ -1,14 +1,12 @@
 ---
 name: review-rounds
 description: Automatically iterate parallel review, respond, and resolve across multiple rounds until no actionable findings remain
-allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git branch:*), Bash(mkdir:*)
+allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git status:*), Bash(git branch:*), Bash(mkdir:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*), Bash(clang-format:*), Bash(cmake-format:*), Bash(.claude/scripts/rm-tmp.sh:*)
 ---
 
 # Automated Review Rounds
 
-You are the **review round orchestrator**. Your role is to automatically iterate the parallel-review / review-respond / review-resolve flow across multiple rounds, comprehensively discovering and fixing important issues. See "Sub-Agent Usage Rules" for the division of responsibilities between sub-agent delegation and what the orchestrator handles itself.
-
-The review round orchestrator does not act as a reviewer or fix agent; the role is strictly to orchestrate, aggregate, and judge the overall round process. All reviewer and fix work is delegated to sub-agents.
+You are the **review round orchestrator**. Automatically iterate the parallel-review / review-respond / review-resolve flow across multiple rounds, comprehensively discovering and fixing important issues. The orchestrator does not act as a reviewer or fix agent; all such work is delegated to sub-agents. See "Sub-Agent Usage Rules" for the detailed division of responsibilities.
 
 ## Input
 
@@ -24,55 +22,71 @@ The user may optionally specify an output base path. If the argument is `$ARGUME
 
 ## Review Document File Naming
 
-- **Format:** `{base-path}/{branch-dir}/review-round{N}.md`
-- **Branch name retrieval:** Use `git branch --show-current` to obtain the current branch name.
-- **Branch name as directory path** — The whole branch name (including `/`) becomes the directory hierarchy verbatim.
-- **Sequential suffixing on re-runs of the same branch:** If `{base-path}/{branch-name}` already exists, create a new directory with a numeric suffix `{branch-name}_1`, `{branch-name}_2`, ...
-  - Suffix selection: probe `{branch-name}_1`, `{branch-name}_2`, ... in order and use the smallest suffix that does not yet exist.
-- **Examples:**
-  - First run: branch `feat/add-replay` → `{base-path}/feat/add-replay/review-round1.md`
-  - Second run: `feat/add-replay` already exists → `{base-path}/feat/add-replay_1/review-round1.md`
-  - Third run: `feat/add-replay_1` also exists → `{base-path}/feat/add-replay_2/review-round1.md`
-  - Branch `dev` → `{base-path}/dev/review-round1.md` (first run), `{base-path}/dev_1/review-round1.md` (second run)
-- **Default base-path:** `.claude/tmp/`
-- Create directories as needed.
+- Format: `{base-path}/{branch-dir}/review-round{N}.md`
+- Branch name retrieval: use `git branch --show-current` to obtain the current branch name.
+- Branch name as directory path — the whole branch name (including `/`) becomes the directory hierarchy verbatim.
+- Sequential suffixing on re-runs of the same branch: append `_1`, `_2`, ... (smallest number that does not yet exist).
+  - Example: branch `feat/add-replay`, first run → `{base-path}/feat/add-replay/review-round1.md`; re-run → `{base-path}/feat/add-replay_1/review-round1.md`.
+- Default base-path: `.claude/tmp/`. Create the directory as needed.
 
 ## Review Document Language
 
-Write the review document in **the user's chat language**. If the user is conversing in Japanese, write it in Japanese; if in English, write it in English.
+Write the review document in the user's chat language.
 
 ## Sub-Agent Usage Rules
 
-- **No nesting of sub-agents** — If you yourself were launched as a sub-agent, you cannot launch further sub-agents from within.
-- **Tasks that themselves do not launch sub-agents may be delegated to subagents** (one level of nesting is allowed):
-  - **Individual reviewers (Step 2.1)** — Launch cpp-sensei / qt-sensei / obs-sensei / network-sensei, etc. in parallel for individual reviews.
-  - **Triage / review-document edits (Step 2.2 / 2.4)** — Have a separate context perform the decision and edits to avoid bias.
-  - **Individual estimates (Step 2.2 / 2.4)** — Delegate each Will Fix finding to its assigned specialist subagent in parallel (a read-only investigation and verdict task).
-  - **Individual fixes (Step 2.2 / 2.4)** — Delegate each finding to the appropriate specialist subagent.
-  - **review-resolve verification (Step 2.3 / 2.4)** — A read-only verification task.
-- Conversely, **aggregation and orchestration responsibilities stay with the orchestrator (you yourself)**:
-  - **parallel-review aggregation (Step 2.1)** — Aggregate results from individual reviewers into a report.
-  - **review-respond leader role (Step 2.2 / 2.4)** — After triage, aggregate fix delegation, format verification, build verification, review-document update, and commit.
-- Per-round results are propagated to subsequent steps and rounds **only via the review document**.
+- **For common prohibitions, see `.claude/rules/sub-agent.md`** — append this file's content to each sub-agent prompt before passing it to the Agent tool.
+- **No nesting of sub-agents** — if you yourself were launched as a sub-agent, you cannot launch further sub-agents from within.
+- **Most work, including aggregation and consolidation, is delegated to sub-agents** (one level of nesting is allowed):
+  - Individual reviewers (Step 2.1) — launch cpp-sensei / qt-sensei / obs-sensei / network-sensei, etc. in parallel for individual reviews. Each reviewer Writes findings to a file; the return value is only the path and counts.
+  - Aggregator sub-agent (Step 2.1) — Read the individual reviewer output files and consolidate them into the review document (parallel-review § Step 3).
+  - Parsing sub-agent (Steps 2.2 / 2.3 / 2.4) — Read the review document and Write `findings.json`. Subsequent sub-agents take this JSON as input (review-respond § Step 1 / review-resolve § Step 1).
+  - Triage sub-agent (Steps 2.2 / 2.4) — render verdicts in a separate context to avoid bias (review-respond § Step 2).
+  - Individual estimates (Steps 2.2 / 2.4) — delegate each Will Fix in parallel to its assigned specialist sub-agent (read-only).
+  - Estimate aggregator sub-agent (Steps 2.2 / 2.4) — generate a summary of individual estimate results (review-respond § Step 3).
+  - Individual fixes (Steps 2.2 / 2.4) — delegate each finding to the appropriate specialist sub-agent.
+  - Format & build verification sub-agent (Steps 2.2 / 2.4) — run clang-format / cmake-format + build once; on failure, analyze code and determine the responsible specialist (no fix; recommendation only).
+  - Build-fix specialist sub-agent (Steps 2.2 / 2.4) — fix build errors as the specialist determined by the format & build verification sub-agent. The leader re-launches the format & build verification sub-agent afterwards (review-respond § Step 5).
+  - Verification sub-agent (Steps 2.3 / 2.4) — verify each finding in parallel (review-resolve § Step 2; read-only).
+  - Aggregator sub-agent (Steps 2.2 / 2.3 / 2.4) — generate events.jsonl from intermediate files and run render-review.py (review-respond § Step 6 / review-resolve § Step 3).
+  - Final-report aggregator sub-agent (Step 3) — generate the final report from all rounds' review documents.
+- **The orchestrator (you) directly handles only the following**:
+  - Control between steps and the round-loop decision (including the format & build verification sub-agent ⇄ build-fix specialist sub-agent retry loop). Operational data files from sub-agents may be Read; do not Read source code itself.
+  - Sub-agent launch and aggregation of return values (lightweight counters, paths, 1-line summaries).
+  - Final summary presentation to the user.
+- **The orchestrator does not load review-finding or verdict bodies into context.** Hold only file paths and lightweight counters; details are handled by sub-agents.
+- Per-round results are propagated to subsequent steps and rounds **only via the review document**. Intermediate data between sub-agents must be self-contained within a step (a single Instruction) and must not persist across steps.
 
 ## Flow Overview
 
 ```
 Round 1 starts
-  ├─ 2.1 parallel-review leader role (orchestrator)
-  │     [specialist reviewers] launched in parallel → round1.md generated (untriaged)
-  ├─ 2.2 review-respond leader role (orchestrator)
-  │     [Triage A] → if 0 Will Fix, end the round
-  │     [estimate agents] cost-estimate each Will Fix in parallel → Maintain / Downgrade / Alternative
-  │       → if both Maintain and Alternative are 0, skip fix and build verification
-  │     [specialist agents] fix Maintain findings, add FIXMEs for Alternative findings
-  │     orchestrator performs format verification, build verification, document update, and commit
-  ├─ 2.3 review-resolve ([Verify B] sub-agent) → verifies round1.md
+  ├─ 2.1 parallel-review (orchestrator)
+  │     [specialist reviewers] launched in parallel → each Writes reviews/{name}.md
+  │     [aggregator Sub] Reads each reviews/{name}.md → emits round1.md (untriaged)
+  ├─ 2.2 review-respond (orchestrator)
+  │     [parsing Sub] Reads round1.md → emits findings.json
+  │     [triage Sub] Reads findings.json → emits triage.json
+  │     ↳ if 0 Will Fix, end the round
+  │     [estimate Sub group] cost-estimates each Will Fix in parallel → emits estimates/{id}.json
+  │     [estimate aggregator Sub] estimates/*.json → emits estimate-summary.md
+  │     ↳ if both Maintain and Alternative are 0, skip fix and build verification
+  │     [fix Sub group] Maintain fixes, Alternative FIXME insertions → emits statuses/{id}.json
+  │     [format & build verification Sub] ⇄ [build-fix specialist Sub] loop (max 5, leader-controlled)
+  │     [aggregator Sub] triage.json + estimates/*.json + statuses/*.json → events.jsonl → render-review.py
+  ├─ 2.3 review-resolve
+  │     [parsing Sub] Reads round1.md → emits findings.json
+  │     [verification Sub group] verifies each finding in parallel → emits verifications/{id}.json
+  │     [aggregator Sub] verifications/*.json → events.jsonl → render-review.py
   ├─ 2.4 Feedback re-fix loop (up to 3 iterations)
-  │     If any feedback: [Triage C] → [estimate agents] → [specialist agents] re-fix → [Verify D]
+  │     [parsing Sub] → [triage Sub] → [estimate Sub group] → [fix Sub group]
+  │       → [format & build verification Sub] ⇄ [build-fix specialist Sub] loop
+  │       → [aggregator Sub] → [verification Sub group] → [aggregator Sub]
   └─ 2.5 Round end → evaluate condition for proceeding to the next round
 Round 2 starts (the previous round's review document is not passed in)
   └─ ...
+Final step
+  └─ [final-report aggregator Sub] all round{N}.md + template → final-report.md
 ```
 
 ## Step 1 — Initialization
@@ -90,194 +104,142 @@ While the round counter is less than or equal to `--max-rounds`, repeat the foll
 
 The orchestrator (you) directly takes on the "review leader" role of parallel-review. Procedure, templates, and formats follow `.claude/skills/parallel-review/SKILL.md`.
 
-**Procedure:**
+Procedure:
 
 1. Print to console: `## Round {N} — Step 1: Parallel Review`
-2. Following the reviewer selection criteria in parallel-review § Reviewers, **launch reviewers in parallel** via the Agent tool. Use the template in parallel-review § Step 2 as the prompt.
-3. Following the procedure and report format in parallel-review § Step 3, aggregate the results and emit the review document (file path: {this round's file path}; language: the user's chat language).
+2. Following parallel-review § Step 1, prepare the working directory and diff file, and launch the scope-analysis sub-agent. Hold only the return value (`line_count` / `recommended_reviewers`) in context.
+3. Launch each `recommended_reviewers.name` in parallel via `Agent(subagent_type=name, prompt=...)` (the agent definition's persona and perspective load automatically). Each reviewer Writes findings to `{tmp_dir}/reviews/{name}.md` and returns only `{path, severity counts}`.
+4. Following parallel-review § Step 3, launch the aggregator sub-agent to generate the review document (output: this round's file path; language: the user's chat language). Hold only the aggregator sub-agent's return value (`{doc_path, findings_total, severity_counts}`) in context.
+5. Following parallel-review § Step 4, remove `{tmp_dir}`.
 
-**Round-specific overrides:**
+Round-specific overrides:
 
-- **Do not pass the previous round's review document to reviewers** (bias avoidance).
-- **Do not deduplicate against previous rounds.**
-- **Convergence-induction prevention:**
-  - **Never include the following in reviewer prompts:**
-    - Counts of past-round findings, count trends, or claims like "things are converging."
+- Do not pass the previous round's review document to reviewers (bias avoidance).
+- Do not deduplicate against previous rounds.
+- Convergence-induction prevention:
+  - **Never include the following in reviewer prompts**:
+    - Counts of past-round findings, count trends, or claims like "things are converging".
     - Past-round finding IDs (`C-1`, `M-1`, etc.).
     - Past-round Fixed / Won't Fix counts or other statistics.
   - Omitting parts of the reviewer prompt template, or appending instructions that try to control finding counts, is prohibited.
-  - The orchestrator must not introduce findings of its own beyond those submitted by reviewers.
+  - The review orchestrator must not introduce findings of its own beyond those submitted by reviewers.
 
 ### 2.2 — Review Response (review-respond)
 
 The orchestrator (you) directly takes on the "review response leader" role of review-respond. Procedure and templates follow `.claude/skills/review-respond/SKILL.md`.
 
-**Input document:** {this round's file path}
+Input document: this round's file path
 
-**Responsibility breakdown (mapped to review-respond steps):**
+Responsibility breakdown (mapped to review-respond steps):
 
-- **Step 1 (Parse) · Step 5 (Format & Build Verification) · Step 6 (Document Update) · Step 7 (Summary)** — Performed directly by the orchestrator.
-- **Step 2 (Triage) · Step 3 (Estimate) · Step 4 (Fix)** — Delegated to subagents following review-respond § (parallelization rules also follow that skill).
+- Step 7 (Summary) — the orchestrator displays the `summary_line` received from the aggregator sub-agent to the user. Detailed tables are based on the markdown already produced by the aggregator sub-agent (Read on demand).
+- Steps 1–6 — delegate to sub-agents following review-respond §. Parallelization and the retry loop (Step 5 build-failure fix loop, etc.) are orchestrated by the leader as defined in that skill.
 
-**Round-specific overrides:**
+Round-specific overrides:
 
-- **Progress display console output:**
+- Progress display console output:
   - At triage start: `## Round {N} — Step 2: Triage`
   - At estimate start: `## Round {N} — Step 2.5: Estimate`
   - At fix / verify / update / commit start: `## Round {N} — Step 3: Review Respond (Fix & Verify)`
-- **Additional constraints for triage / estimate subagents:**
+- Additional constraints for triage / estimate sub-agents:
   - Do not reference the previous round's review document.
   - The triage report must explicitly state the Will Fix count (including when zero).
-  - When the estimate evaluates Spread signal e (Will Fix originating from a FIXME), check whether the finding has its origin in a `FIXME:` / `TODO:` in the review text or in the target files.
-- **Round-loop control after triage:**
-  - **0 Will Fix findings:** Skip Steps 2.3–2.4 and proceed to Step 2.5 (Round End).
-  - **1 or more Will Fix findings:** Proceed to the estimate phase.
-- **Round-loop control after estimate:**
-  - **Both Maintain and Alternative are 0 (all Downgrade):** Skip the fix and build-verification phases; perform only the document update (review-respond § Step 6) and end the round.
-  - **1 or more Maintain or Alternative findings:** Proceed to the fix phase (regular fixes for Maintain, FIXME insertion for Alternative). If `--confirm` is enabled, display the estimate result and wait for user confirmation.
+  - When the estimate evaluates spread signal e (Will Fix originating from a FIXME), check whether the finding has its origin in a `FIXME:` / `TODO:` in the review text or in the target files.
+- Round-loop control after triage:
+  - 0 Will Fix findings: skip Steps 2.3–2.4 and proceed to Step 2.5 (Round End).
+  - 1 or more Will Fix findings: proceed to the estimate phase.
+- Round-loop control after estimate:
+  - Both Maintain and Alternative are 0 (all Downgrade): skip the fix and build-verification phases; perform only the document update (review-respond § Step 6) and end the round.
+  - 1 or more Maintain or Alternative findings: proceed to the fix phase (regular fix for Maintain, FIXME insertion for Alternative). If `--confirm` is enabled, display the estimate result and wait for user confirmation.
 
 ### 2.3 — Review Verification (review-resolve)
 
-**Agent launch procedure:**
+The orchestrator (you) directly takes on the "review verification leader" role of review-resolve. Procedure and templates follow `.claude/skills/review-resolve/SKILL.md`.
+
+Input document: this round's file path
+
+Responsibility breakdown:
+
+- Step 4 (Completion Report) — the orchestrator displays the `summary_line` received from the aggregator sub-agent to the user.
+- Step 1 (Parse) · Step 2 (Verify each finding) · Step 3 (Verification report and reflection / events.jsonl write / render execution) — delegate to sub-agents following review-resolve § (parallelization rules also follow that skill).
+
+Procedure:
 
 1. Print to console: `## Round {N} — Step 4: Review Resolve`
-2. Launch a **new sub-agent** via the Agent tool. Specify the skill file and arguments explicitly in the prompt:
-
-```
-Verify the resolution status of the review document by following the instructions in the skill file below.
-
-Skill file: .claude/skills/review-resolve/SKILL.md
-Argument: {this round's file path}
-```
+2. Following review-resolve § procedure, launch the parsing Sub → verification Sub group (parallel) → aggregator Sub in order.
+3. The orchestrator holds only the return value (`{events_path, summary_path, summary_line, resolved_count, feedback_count, unresolved_count}`) in context. Do not read verification bodies.
 
 ### 2.4 — Feedback Check and Re-fix Loop
 
-Read the verification result from Step 2.3 and check whether any findings require feedback.
+Decide based on the return value from Step 2.3 (`feedback_count` from the aggregator sub-agent) whether feedback findings exist. There is no need to Read the review document body directly.
 
-- **No feedback:** End the round (proceed to 2.5).
-- **Feedback exists:** Enter the re-fix loop (up to 3 iterations).
+- `feedback_count == 0`: end the round (proceed to 2.5).
+- `feedback_count > 0`: enter the re-fix loop (up to 3 iterations).
 
-**Feedback re-fix loop (up to 3 iterations):**
+Re-fix loop (up to 3 iterations):
 
-1. Print to console: `## Round {N} — Step 4.1: Feedback Triage (attempt {M}/3)`
-   Use the same triage subagent launch method as Step 2.2 (review-respond § Step 2). Append the following to the "additional constraints" portion of the prompt:
-   ```
-   Prioritize findings whose Verification field between the metadata markers shows "💬 Feedback — ..." as triage signals. Focus the triage on findings that have a Feedback annotation.
-   ```
+Each attempt runs review-respond's parse-to-aggregate flow once, then re-runs review-resolve's verify-to-aggregate at the end. Append a "Feedback finding priority" additional constraint to each sub-agent prompt.
 
-2. Print to console: `## Round {N} — Step 4.2: Feedback Estimate (attempt {M}/3)`
-   Run estimates for each Will Fix using the same method as Step 2.2 (review-respond § Step 3). Append the following to the prompt for each estimate agent:
-   ```
-   For findings whose Verification field between the metadata markers shows "💬 Feedback — ...", perform the cost estimate taking that content into account. If the feedback inflates the fix cost, consider Downgrade.
-   ```
-   If every finding is Downgraded, skip step 3 and proceed to step 4.
+1. Print `## Round {N} — Step 4.1: Feedback Triage (attempt {M}/3)`. Re-run review-respond § Steps 1–2. Append to the triage prompt: `Prioritize triaging findings whose stage is "feedback" (current_meta.verification has Feedback details).`
 
-3. Print to console: `## Round {N} — Step 4.3: Feedback Fix (attempt {M}/3)`
-   Use the same fix / verification / update method as Step 2.2 (review-respond § Step 4 through Step 6). Append the following to the prompt for each specialist:
-   ```
-   Re-fix the findings whose Verification field between the metadata markers shows "💬 Feedback — ...", taking that content into account.
-   ```
+2. Print `## Round {N} — Step 4.2: Feedback Estimate (attempt {M}/3)`. Re-run review-respond § Step 3. Append to the estimate prompt: `Estimate taking the Feedback content in current_meta.verification into account. Consider Downgrade if the cost inflates.` If every finding is Downgraded, skip step 3 and proceed to step 4.
 
-4. Print to console: `## Round {N} — Step 4.4: Feedback Verify (attempt {M}/3)`
-   Re-run review-resolve using the same method as Step 2.3.
+3. Print `## Round {N} — Step 4.3: Feedback Fix (attempt {M}/3)`. Re-run review-respond § Steps 4–6. Append to the fix prompt: `Re-fix taking the Feedback content in current_meta.verification into account.`
 
-5. If feedback remains, return to step 1. If 3 iterations do not resolve it, end the round (any remaining 💬 Feedback annotations are preserved as-is and counted as "unresolved" in Step 2.5).
+4. Print `## Round {N} — Step 4.4: Feedback Verify (attempt {M}/3)`. Re-run review-resolve in the same manner as Step 2.3.
+
+5. If feedback remains, return to step 1. If 3 iterations do not resolve it, end the round (any remaining 💬 Feedback annotations are counted as "unresolved" in 2.5).
 
 6. If `--confirm-round` is enabled and unresolved items remain, wait for user confirmation before proceeding to the next round.
 
 ### 2.5 — Round End
 
-Record the round's results:
-- **Actionable findings count** — Number of findings triaged as Will Fix in Step 2.2.
-- **Maintain count** — Number of findings judged Maintain at estimate (subject to regular fixing).
-- **Alternative count** — Number of findings judged Alternative at estimate (subject to FIXME insertion).
-- **Downgrade count** — Number of findings judged Downgrade at estimate (no fix performed; if separate-PR recommendation is included, record that subset count as a breakdown).
-- **Fixed count** — Number of findings that were fixed in Step 2.2 (including regular fixes for Maintain and FIXME insertions for Alternative) and judged **Resolved** by the verification in Step 2.3 / 2.4 (`✅ Verified` is recorded in the Verification field).
-- **Unresolved count** — Number of findings whose Verification field still shows `💬 Feedback` after 3 iterations of the re-fix loop in Step 2.4 (those triaged as Will Fix but not resolved within this round).
+Record the round's results. Each counter is obtained from the sub-agent return values (do not Read the review document body to count):
 
-**Conditions to proceed to the next round:** Increment the round counter and return to Step 2.1 only if **all** of the following are satisfied:
+- Actionable findings count: triage Sub's `will_fix_count`.
+- Maintain / Alternative / Downgrade counts: estimate aggregator Sub's `maintain_count` / `alternative_count` / `downgrade_count`.
+- Fixed count: review-respond aggregator Sub's `fixed_count` (sum of Maintain regular fixes and Alternative FIXME insertions).
+- Unresolved count: after the last attempt of Step 2.4, review-resolve aggregator Sub's `feedback_count` (Will Fix items not resolved within this round).
+- Resolved count: review-resolve aggregator Sub's `resolved_count`.
+
+Conditions to proceed to the next round: increment the round counter and return to Step 2.1 only if **all** of the following are satisfied:
 
 1. The round counter is less than or equal to `--max-rounds`.
 2. At least one line of source code was changed in this round.
 
-If any of the above is not satisfied, proceed to Step 3 (Final Report) below.
+If any of the above is not satisfied, proceed to final-report generation.
 
-## Step 3 — Final Report
+## Step 3 — Final Report (Delegated to Final-Report Aggregator Sub-Agent)
 
-After all rounds end, produce the final report. File path: `{base-path}/{branch-dir}/final-report.md`
+After all rounds end, delegate to the final-report aggregator sub-agent to generate `{base-path}/{branch-dir}/final-report.md`.
 
-**You yourself** create the final report by reading the review documents from all rounds (do not delegate to an agent). Retrieve information from the Triage / Estimate / Status / Verification fields between the metadata markers of each finding.
+Launch procedure:
+
+1. Launch a sub-agent via the Agent tool. Example prompt:
+
+```
+Generate the final report from all rounds' review documents.
+
+Input:
+- Per-round review documents: Round 1 → {round1_doc_path}, Round 2 → {round2_doc_path}, ...
+- Per-round statistics (reference info): Round 1: findings=N, will_fix=N, maintain=N, alternative=N, downgrade=N, fixed=N, wontfix=N, feedback_attempts=N, unresolved=N, code_changed=<bool>, ...
+- Report template: {template_path}
+- Output: {report_path}
+- Language: the user's chat language
+
+What to do:
+1. Read the template markdown to grasp its structure (`<...>` placeholders, table structure).
+2. Read each round's md and extract Triage / Estimate / Status / Verification values from `<!-- METADATA(id) --> 〜 <!-- /METADATA(id) -->` to obtain per-finding details (severity / location / summary / resolution / separate-PR recommendation status, etc.).
+3. Fill in the template's statistics summary, full finding list, future recommendations, and review-document index, then Write to {report_path}.
+
+Return value: {report_path}
+```
+
+2. The orchestrator holds only the return value (`{report_path}`) in context.
 
 ### Final Report Format
 
-```markdown
-# Code Review Final Report
-
-**Branch:** {branch-name}
-**Date:** YYYY-MM-DD
-**Rounds executed:** {N}
-**Termination reason:** {No actionable findings / Maximum rounds reached / User stopped}
-
-## Statistics Summary
-
-| Round | Findings | 🔧 Will Fix | ▶️ Maintain | 🚧 Alternative | 🔻 Downgrade | 🟢 Fixed | Unresolved | Feedback re-fixes |
-|-------|----------|------------|-------------|----------------|--------------|----------|------------|-------------------|
-| Round 1 | ... | ... | ... | ... | ... | ... | ... | ... |
-| **Total** | ... | ... | ... | ... | ... | ... | ... | ... |
-
-Column definitions:
-- **Unresolved**: Number of findings that still have Feedback after 3 iterations of the re-fix loop in Step 2.4 (synonymous with [Step 2.5 § Unresolved count](#25--round-end)).
-- **Feedback re-fixes**: Number of feedback re-fix loop iterations executed in this round (max 3).
-
-## All Findings and Resolution Status
-
-### Resolved
-
-Aggregate all findings with `Status: 🟢 Fixed` (covers both regular Maintain fixes and Alternative FIXME insertions).
-
-| # | Round | Severity | Location | Finding Summary | Resolution |
-|---|-------|----------|----------|-----------------|------------|
-| 1 | Round 1 | Critical | file:line | Summary | 🟢 Fixed (Maintain) — fix description |
-| 2 | Round 1 | Major | file:line | Summary | 🟢 Fixed (Alternative) — FIXME comment added at {file:line} |
-
-### Unresolved
-
-| # | Round | Severity | Location | Finding Summary | Status |
-|---|-------|----------|----------|-----------------|--------|
-| 1 | Round 2 | Major | file:line | Summary | Not resolved even after feedback re-fix |
-
-### Decided as No Action Needed
-
-List here all `Triage: 🚫 Won't Fix` and `Estimate: 🔻 Downgrade` findings that **do not carry a separate-PR recommendation** (false positives, preference issues, fully-rejected out-of-scope items, Downgrades with neither alternative response nor separate-PR recommendation, etc.).
-
-| # | Round | Severity | Location | Finding Summary | Reason |
-|---|-------|----------|----------|-----------------|--------|
-| 1 | Round 1 | Minor | file:line | Summary | Triage: 🚫 Won't Fix — reason |
-| 2 | Round 1 | Minor | file:line | Summary | Estimate: 🔻 Downgrade — Cost L, Signals a,b. Neither alternative response nor separate-PR recommendation. |
-
-## Recommended for Future Action
-
-Aggregate findings whose follow-up in a separate PR is anticipated:
-
-- `Triage: 🚫 Won't Fix` findings whose rationale explicitly recommends a separate PR
-- `Estimate: 🔻 Downgrade` findings whose rationale explicitly recommends a separate PR
-- `Estimate: 🚧 Alternative` (FIXME already inserted) findings whose rationale explicitly recommends a separate PR
-
-This is mutually exclusive with "Decided as No Action Needed". Alternative FIXME insertions are also listed in the "Resolved" section, but if they carry a separate-PR recommendation, list them additionally here (for roadmap purposes).
-
-| # | Severity | Location | Summary | Reason for Recommendation |
-|---|----------|----------|---------|---------------------------|
-| 1 | Minor | file:line | Summary | Triage: 🚫 Won't Fix — existing-code bug. Recommend addressing in a separate PR. |
-| 2 | Major | file:line | Summary | Estimate: 🔻 Downgrade — Cost L, Signals a,b,c. Recommend addressing in a separate PR. |
-| 3 | Major | file:line | Summary | Estimate: 🚧 Alternative — FIXME already added (output.cpp:200). Recommend full fix in a separate PR. |
-
-## Review Document Index
-
-| Round | Review | Verification |
-|-------|--------|--------------|
-| Round 1 | `{path}` | `{path}` |
-| Round 2 | `{path}` | `{path}` |
-```
+Template: `.claude/skills/review-rounds/templates/final-report.md` (the final-report aggregator Sub Reads it to grasp the skeleton; the leader fills `{template_path}` in the Sub prompt with this path).
 
 ## Step 4 — Completion Report
 

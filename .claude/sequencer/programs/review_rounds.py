@@ -92,12 +92,24 @@ _FINAL_REPORT_FORMAT_PATH = (
     Path(__file__).resolve().parent / "review_rounds" / "final-report-format.md"
 ).as_posix()
 
+_SEVERITY_COUNTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "critical": {"type": "integer", "minimum": 0},
+        "major": {"type": "integer", "minimum": 0},
+        "minor": {"type": "integer", "minimum": 0},
+        "info": {"type": "integer", "minimum": 0},
+    },
+    "additionalProperties": True,
+}
+
 _REVIEW_INIT_SCHEMA = {
     "type": "object",
     "properties": {
         "doc_path": {"type": "string", "minLength": 1},
         "branch_dir": {"type": "string", "minLength": 1},
         "findings_total": {"type": "integer", "minimum": 0},
+        "severity_counts": _SEVERITY_COUNTS_SCHEMA,
     },
     "required": ["doc_path", "branch_dir", "findings_total"],
     "additionalProperties": True,
@@ -108,6 +120,7 @@ _REVIEW_SCHEMA = {
     "properties": {
         "doc_path": {"type": "string", "minLength": 1},
         "findings_total": {"type": "integer", "minimum": 0},
+        "severity_counts": _SEVERITY_COUNTS_SCHEMA,
     },
     "required": ["doc_path", "findings_total"],
     "additionalProperties": True,
@@ -119,7 +132,11 @@ _RESPOND_SCHEMA = {
         "will_fix_count": {"type": "integer", "minimum": 0},
         "fixed_count": {"type": "integer", "minimum": 0},
         "wontfix_count": {"type": "integer", "minimum": 0},
+        "maintain_count": {"type": "integer", "minimum": 0},
+        "alternative_count": {"type": "integer", "minimum": 0},
+        "downgrade_count": {"type": "integer", "minimum": 0},
         "code_changed": {"type": "boolean"},
+        "summary_line": {"type": "string", "maxLength": 500},
     },
     "required": ["will_fix_count", "fixed_count", "wontfix_count", "code_changed"],
     "additionalProperties": True,
@@ -129,6 +146,9 @@ _RESOLVE_SCHEMA = {
     "type": "object",
     "properties": {
         "unresolved_count": {"type": "integer", "minimum": 0},
+        "resolved_count": {"type": "integer", "minimum": 0},
+        "feedback_count": {"type": "integer", "minimum": 0},
+        "summary_line": {"type": "string", "maxLength": 500},
     },
     "required": ["unresolved_count"],
     "additionalProperties": True,
@@ -138,7 +158,10 @@ _FEEDBACK_SCHEMA = {
     "type": "object",
     "properties": {
         "unresolved_count": {"type": "integer", "minimum": 0},
+        "resolved_count": {"type": "integer", "minimum": 0},
+        "feedback_count": {"type": "integer", "minimum": 0},
         "code_changed": {"type": "boolean"},
+        "summary_line": {"type": "string", "maxLength": 500},
     },
     "required": ["unresolved_count", "code_changed"],
     "additionalProperties": True,
@@ -170,7 +193,10 @@ _FINAL_REPORT_SCHEMA = {
 _TPL_REVIEW_INIT = textwrap.dedent("""\
     [Round 1/{max_rounds} Step 1: parallel-review (with initialization)]
     Skill: {skill}
-    Run parallel-review against the branch diff for {base_clause}.
+    Run parallel-review against the branch diff for {base_clause}. Following the
+    skill body, reviewers Write to individual files and an aggregator sub-agent
+    consolidates them. The orchestrator (you) does not load review-finding bodies
+    into context.
 
     Initialization:
     - Obtain the current branch name: git branch --show-current
@@ -185,26 +211,33 @@ _TPL_REVIEW_INIT = textwrap.dedent("""\
     File naming:
     - This round's (Round 1) output path: {output_base}/<branch_dir>/review-round1.md
 
-    Review-document language: the user's chat language (Japanese for a Japanese
-    conversation, English for English, etc.).
+    Review-document language: the user's chat language.
 
     Reporting format (JSON):
-    {{"doc_path": "<full path>", "branch_dir": "<branch_dir>", "findings_total": <int>}}
+    {{
+      "doc_path": "<full path>",
+      "branch_dir": "<branch_dir>",
+      "findings_total": <int>,
+      "severity_counts": {{"critical": <int>, "major": <int>, "minor": <int>, "info": <int>}}
+    }}
     - branch_dir: must be reported because it is reused consistently across
-      subsequent rounds and the final report.\
+      subsequent rounds and the final report.
+    - severity_counts: copy directly from the aggregator sub-agent's return value.\
 """)
 
 _TPL_REVIEW = textwrap.dedent("""\
     [Round {round_num}/{max_rounds} Step 1: parallel-review]
     Skill: {skill}
-    Run parallel-review against the branch diff for {base_clause}.
+    Run parallel-review against the branch diff for {base_clause}. Following the
+    skill body, reviewers Write to individual files and an aggregator sub-agent
+    consolidates them. The orchestrator (you) does not load review-finding bodies
+    into context.
 
     File-naming rules:
     - Output path: {output_base}/{branch_dir}/review-round{round_num}.md
     - Use the {branch_dir} that was fixed in Round 1 (do not re-suffix).
 
-    Review-document language: the user's chat language (Japanese for a Japanese
-    conversation, English for English, etc.).
+    Review-document language: the user's chat language.
 
     Convergence-induction prevention:
     - Do not pass the previous round's review document to reviewers (bias avoidance).
@@ -217,75 +250,122 @@ _TPL_REVIEW = textwrap.dedent("""\
     - The review orchestrator itself must not introduce findings outside the
       reviewers.
 
-    Reporting format (JSON): {{"doc_path": "<full path>", "findings_total": <int>}}\
+    Reporting format (JSON):
+    {{
+      "doc_path": "<full path>",
+      "findings_total": <int>,
+      "severity_counts": {{"critical": <int>, "major": <int>, "minor": <int>, "info": <int>}}
+    }}\
 """)
 
 _TPL_RESPOND = textwrap.dedent("""\
     [Round {round_num}/{max_rounds} Step 2: review-respond]
     Skill: {skill}
-    Respond to the findings in review document {doc_path}.
+    Respond to the findings in review document {doc_path}. Following the skill
+    body, delegate parsing / triage / estimate / fix / format verification /
+    build verification / aggregation to sub-agents. The orchestrator (you) only
+    orchestrates the retry loop and does not load verdict bodies or finding
+    bodies into context.
     {confirm_clause}
     {commit_clause}
 
     Additional constraints:
-    - Do not reference the previous round's review document.
-    - The triage report must explicitly state the Will Fix count (also when 0).
-    - When evaluating Spread signal e (Will Fix originating from a FIXME),
+    - Do not pass the previous round's review document to anything other than the
+      parsing sub-agent input.
+    - Confirm the Will Fix count in the triage sub-agent's return value (also
+      explicit when 0).
+    - When evaluating spread signal e (Will Fix originating from a FIXME),
       verify whether the finding has its origin in a FIXME: / TODO: in the
       review text or the target files.
 
     Reporting format (JSON):
-    {{"will_fix_count": <int>, "fixed_count": <int>, "wontfix_count": <int>, "code_changed": <bool>}}
-    - will_fix_count: number of findings triaged as Will Fix.
-    - fixed_count: number of Will Fix findings whose fix actually completed
-      (sum of regular Maintain fixes and Alternative FIXME insertions; 0 if
-      every finding was Downgraded).
-    - wontfix_count: number of findings triaged as Won't Fix or estimated as
-      Downgrade.
-    - code_changed: whether even a single line of source code was modified in
-      this step.\
+    {{
+      "will_fix_count": <int>,
+      "fixed_count": <int>,
+      "wontfix_count": <int>,
+      "maintain_count": <int>,
+      "alternative_count": <int>,
+      "downgrade_count": <int>,
+      "code_changed": <bool>,
+      "summary_line": "(<=200 chars 1-line summary; copy from the aggregator sub-agent's return value)"
+    }}
+    - will_fix_count: triage sub-agent's return value will_fix_count.
+    - fixed_count: aggregator sub-agent's return value fixed_count
+      (Maintain regular fixes + Alternative FIXME insertions; 0 if all Downgrade).
+    - wontfix_count: triage sub-agent's return value wontfix_count.
+    - maintain_count / alternative_count / downgrade_count: estimate aggregator
+      sub-agent's return values.
+    - code_changed: aggregator sub-agent's return value code_changed.
+    - summary_line: 1-line summary for user notification (the leader holds only
+      this 1 line in context).\
 """)
 
 _TPL_RESOLVE = textwrap.dedent("""\
     [Round {round_num}/{max_rounds} Step 3: review-resolve]
     Skill: {skill}
-    Verify the resolution status of review document {doc_path}.
-    Reporting format (JSON): {{"unresolved_count": <int>}}
-    - unresolved_count: number of findings whose Verification field still
-      reads "Feedback".\
+    Verify the resolution status of review document {doc_path}. Following the
+    skill body, delegate parsing / per-finding verification / aggregation to
+    sub-agents. The orchestrator (you) does not load verification bodies into
+    context.
+
+    Reporting format (JSON):
+    {{
+      "unresolved_count": <int>,
+      "resolved_count": <int>,
+      "feedback_count": <int>,
+      "summary_line": "(<=200 chars 1-line summary; copy from the aggregator sub-agent's return value)"
+    }}
+    - unresolved_count: aggregator sub-agent's return value feedback_count
+      (number of findings whose Verification still reads 💬 Feedback).
+    - resolved_count: aggregator sub-agent's return value resolved_count.
+    - feedback_count: synonymous with unresolved_count (both included for
+      backward compatibility).
+    - summary_line: 1-line summary for user notification.\
 """)
 
 _TPL_FEEDBACK = textwrap.dedent("""\
     [Round {round_num}/{max_rounds} Step 4: feedback re-fix (attempt {attempt}/{max_attempts})]
-    For findings that still have a "Feedback" Verification in review document
-    {doc_path}, perform the following four sub-steps in order.
+    For findings that still have a 💬 Feedback Verification in review document
+    {doc_path}, run one cycle of {respond_skill}'s and {resolve_skill}'s
+    sub-agent delegation flow.
 
     Step 4.{attempt}.1 Feedback triage
-        Run Step 2 (Triage) of {respond_skill}.
-        Additional constraint: prioritize findings whose Verification field
-        reads "Feedback - ...".
+        Run {respond_skill} Step 1 (parse) → Step 2 (triage).
+        Append to the triage prompt: prioritize triaging findings whose stage
+        is "feedback" (current_meta.verification has Feedback details).
 
     Step 4.{attempt}.2 Feedback estimate
-        Run Step 3 (Estimate) of {respond_skill}.
-        Additional constraint: for findings whose Verification reads
-        "Feedback", perform the cost estimate taking the feedback content into
-        account. If the feedback inflates the fix cost, consider Downgrade.
+        Run {respond_skill} Step 3 (parallel estimate).
+        Append to the estimate prompt: estimate taking the Feedback content in
+        current_meta.verification into account. Consider Downgrade if cost
+        inflates.
         If every finding is Downgraded, skip Step 4.{attempt}.3 and proceed to
         Step 4.{attempt}.4.
 
     Step 4.{attempt}.3 Feedback fix
-        Run Steps 4-6 (Fix / Verification / Document update) of {respond_skill}.
-        Additional constraint: for findings whose Verification reads
-        "Feedback", re-fix taking the feedback content into account.
+        Run {respond_skill} Step 4 (fix) → Step 5 (format & build verification)
+        → Step 6 (aggregation).
+        Append to the fix prompt: re-fix taking the Feedback content in
+        current_meta.verification into account.
 
     Step 4.{attempt}.4 Feedback verify
-        Run {resolve_skill} to re-evaluate any remaining feedback.
+        Re-run {resolve_skill} (parsing Sub → verification Sub group → aggregator Sub).
 
-    Reporting format (JSON): {{"unresolved_count": <int>, "code_changed": <bool>}}
-    - unresolved_count: number of findings whose Verification still reads
-      "Feedback" after this attempt.
+    Reporting format (JSON):
+    {{
+      "unresolved_count": <int>,
+      "resolved_count": <int>,
+      "feedback_count": <int>,
+      "code_changed": <bool>,
+      "summary_line": "(<=200 chars 1-line summary)"
+    }}
+    - unresolved_count: review-resolve aggregator sub-agent's return value
+      feedback_count after this attempt.
+    - resolved_count: same return value's resolved_count.
+    - feedback_count: synonymous with unresolved_count.
     - code_changed: whether even a single line of source code was modified
-      during this attempt.\
+      during this attempt.
+    - summary_line: 1-line summary for user notification.\
 """)
 
 _TPL_CONFIRM_ROUND = textwrap.dedent("""\
@@ -298,32 +378,44 @@ _TPL_CONFIRM_ROUND = textwrap.dedent("""\
 """)
 
 _TPL_FINAL_REPORT = textwrap.dedent("""\
-    [Step 6: final-report generation]
-    All {rounds_executed} round(s) are complete. Do not delegate to a sub-agent;
-    this agent must generate the final report itself.
+    [Step 6: final-report generation (delegated to the final-report aggregator sub-agent)]
+    All {rounds_executed} round(s) are complete. Delegate to the final-report
+    aggregator sub-agent to generate the final report.
 
-    Output path: {output_base}/{branch_dir}/final-report.md
+    Output: {output_base}/{branch_dir}/final-report.md
     Termination reason: {termination_reason}
-    Report language: the user's chat language (Japanese for a Japanese
-    conversation, English for English, etc.).
 
-    Per-round review documents:
+    Per-round review documents (input passed to the aggregator sub-agent):
     {round_docs_block}
 
-    Per-round statistics (aggregated by the program):
+    Per-round statistics (reference info passed to the aggregator sub-agent):
     {per_round_stats_block}
 
-    Procedure:
-    1. Read template {format_path} and use its markdown structure as the
-       skeleton. Replace `<...>` placeholders and the "..." cells in tables
-       with real data.
-    2. Read each review document and pull per-finding details (severity,
-       location, summary, resolution, separate-PR recommendation, etc.) from
-       the Triage / Estimate / Status / Verification fields between the
-       metadata markers.
-    3. Following the template structure, fill in the statistics summary,
-       full finding list, future recommendations, and review-document index,
-       then Write the result to the output path.
+    Launch a sub-agent via the Agent tool with the following prompt:
+
+    ```
+    Generate the final report from all rounds' review documents.
+
+    Input:
+    - Per-round review documents (round_docs_block above)
+    - Per-round statistics (per_round_stats_block above; reference info)
+    - Termination reason: {termination_reason}
+    - Report template: {format_path}
+    - Output: {output_base}/{branch_dir}/final-report.md
+    - Language: the user's chat language
+
+    What to do:
+    1. Read the template markdown to grasp its structure (<...> placeholders,
+       table structure).
+    2. Read each round's md and extract Triage / Estimate / Status / Verification
+       values from <!-- METADATA(id) --> 〜 <!-- /METADATA(id) --> to obtain
+       per-finding details (severity / location / summary / resolution /
+       separate-PR recommendation status, etc.).
+    3. Fill in the template's statistics summary, full finding list, future
+       recommendations, and review-document index, then Write to the output.
+
+    Return value: {{"report_path": "<full path>"}}
+    ```
 
     Reporting format (JSON): {{"report_path": "<full path>"}}\
 """)
@@ -343,19 +435,28 @@ def _format_per_round_stats_block(round_records: list[dict]) -> str:
     """Emit per-round statistics one line each (basis data for the final report)."""
     if not round_records:
         return "    (none)"
-    return "\n".join(
-        (
+    lines: list[str] = []
+    for r in round_records:
+        sev = r.get("severity_counts") or {}
+        sev_str = (
+            f"crit={sev.get('critical', 0)},maj={sev.get('major', 0)},"
+            f"min={sev.get('minor', 0)},info={sev.get('info', 0)}"
+        )
+        lines.append(
             f"    - Round {r['round_num']}: "
-            f"findings={r['findings_total']}, "
+            f"findings={r['findings_total']} ({sev_str}), "
             f"will_fix={r['will_fix_count']}, "
+            f"maintain={r.get('maintain_count', 0)}, "
+            f"alternative={r.get('alternative_count', 0)}, "
+            f"downgrade={r.get('downgrade_count', 0)}, "
             f"fixed={r['fixed_count']}, "
             f"wontfix={r['wontfix_count']}, "
+            f"resolved={r.get('resolved_count', 0)}, "
             f"feedback_attempts={r['feedback_attempts']}, "
             f"unresolved={r['unresolved']}, "
             f"code_changed={r['code_changed']}"
         )
-        for r in round_records
-    )
+    return "\n".join(lines)
 
 
 def run(ctx):
@@ -432,12 +533,19 @@ def run(ctx):
             "round_num": round_num,
             "doc_path": doc_path,
             "findings_total": findings_total,
+            "severity_counts": review_result.get("severity_counts") or {},
             "will_fix_count": 0,
             "fixed_count": 0,
             "wontfix_count": 0,
+            "maintain_count": 0,
+            "alternative_count": 0,
+            "downgrade_count": 0,
+            "resolved_count": 0,
             "feedback_attempts": 0,
             "unresolved": 0,
             "code_changed": False,
+            "respond_summary_line": "",
+            "resolve_summary_line": "",
         }
 
         # ----- Convergence check 1: zero findings -----
@@ -464,7 +572,15 @@ def run(ctx):
         round_record["will_fix_count"] = respond_result["will_fix_count"]
         round_record["fixed_count"] = respond_result["fixed_count"]
         round_record["wontfix_count"] = respond_result["wontfix_count"]
+        round_record["maintain_count"] = respond_result.get("maintain_count", 0)
+        round_record["alternative_count"] = respond_result.get(
+            "alternative_count", 0
+        )
+        round_record["downgrade_count"] = respond_result.get("downgrade_count", 0)
         round_record["code_changed"] = respond_result["code_changed"]
+        round_record["respond_summary_line"] = respond_result.get(
+            "summary_line", ""
+        )
 
         # If fixed_count == 0 there is nothing to verify, so skip Steps 3-4.
         if respond_result["fixed_count"] > 0:
@@ -480,6 +596,12 @@ def run(ctx):
                 timeout_minutes=30,
             )
             round_record["unresolved"] = resolve_result["unresolved_count"]
+            round_record["resolved_count"] = resolve_result.get(
+                "resolved_count", 0
+            )
+            round_record["resolve_summary_line"] = resolve_result.get(
+                "summary_line", ""
+            )
 
             # ----- Step 4: inner loop - feedback re-fix (up to 3 attempts) -----
             for attempt in range(1, _DEFAULT_FEEDBACK_ATTEMPTS + 1):
@@ -510,6 +632,14 @@ def run(ctx):
                 )
                 round_record["feedback_attempts"] += 1
                 round_record["unresolved"] = feedback_result["unresolved_count"]
+                if "resolved_count" in feedback_result:
+                    round_record["resolved_count"] = feedback_result[
+                        "resolved_count"
+                    ]
+                if feedback_result.get("summary_line"):
+                    round_record["resolve_summary_line"] = feedback_result[
+                        "summary_line"
+                    ]
                 if feedback_result["code_changed"]:
                     round_record["code_changed"] = True
 
@@ -562,6 +692,10 @@ def run(ctx):
     total_will_fix = sum(r["will_fix_count"] for r in round_records)
     total_fixed = sum(r["fixed_count"] for r in round_records)
     total_wontfix = sum(r["wontfix_count"] for r in round_records)
+    total_maintain = sum(r.get("maintain_count", 0) for r in round_records)
+    total_alternative = sum(r.get("alternative_count", 0) for r in round_records)
+    total_downgrade = sum(r.get("downgrade_count", 0) for r in round_records)
+    total_resolved = sum(r.get("resolved_count", 0) for r in round_records)
     total_feedback_attempts = sum(r["feedback_attempts"] for r in round_records)
     last_unresolved = round_records[-1]["unresolved"] if round_records else 0
 
@@ -574,6 +708,10 @@ def run(ctx):
         "total_will_fix": total_will_fix,
         "total_fixed": total_fixed,
         "total_wontfix": total_wontfix,
+        "total_maintain": total_maintain,
+        "total_alternative": total_alternative,
+        "total_downgrade": total_downgrade,
+        "total_resolved": total_resolved,
         "total_feedback_attempts": total_feedback_attempts,
         "last_unresolved": last_unresolved,
         "round_records": round_records,

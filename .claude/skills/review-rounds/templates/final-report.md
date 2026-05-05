@@ -1,7 +1,7 @@
 <!--
 Final-report template for review-rounds. The agent replaces `<...>` placeholders
 and the "..." cells in tables with real data to produce the report.
-This file is kept in sync with .claude/skills/review-rounds/templates/final-report.md.
+This file is kept in sync with .claude/sequencer/programs/review_rounds/final-report-format.md.
 -->
 
 # Code Review Final Report

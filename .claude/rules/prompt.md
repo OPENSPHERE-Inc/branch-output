@@ -10,6 +10,36 @@ These rules do not apply to human-facing documentation (README, API references, 
 - Do not write meta-commentary like "This prompt was created to ..." or "The following describes ...". Write the instruction itself.
 - Limit explanations of background and motivation to what the AI needs for judgment. Do not include history that does not affect the AI's work.
 
+### Meta-explanation patterns to avoid
+
+The patterns below have no effect on AI runtime behavior, so remove them.
+
+- Restating the effect of an action: "Do X. This causes Y to happen." / "By doing X, Y is achieved." / "Do X to propagate it to Z."
+- Emphasizing the intent of an action: "Be sure to Y." / "Do X without omission." / "Always do Z." (the imperative verb already conveys intent)
+- Explanatory preambles: "In what follows ..." / "This section ..." / "Next, we describe ..." / "To do X, ..."
+- Maintenance guidelines aimed at editors: "Avoid duplicate descriptions." / "Future maintainers should X." / "When editing the code, ..." (these address the editing of the SKILL or Rule itself, not actions the AI executes)
+
+Decision criterion: if removing a sentence does not change the action the AI should take, remove it.
+
+### Judgment WHY vs effect-restatement WHY
+
+WHY explanations come in two kinds. Keep the first; remove the second.
+
+- **Judgment WHY** (keep): constraints, hidden premises, or anti-misunderstanding notes the AI needs when judging edge cases.
+  - Example: "cat heredoc breaks quoting on apostrophes inside values, so it cannot be used" (prevents the misunderstanding "is it OK if there are no apostrophes?").
+  - Example: "Do not throw C++ exceptions across the C API boundary (prevents ABI mismatch)" (provides the basis of the constraint).
+- **Effect-restatement WHY** (remove): restates the effect of the immediately preceding action.
+  - NG: "Append it. This propagates it to the Sub." ← appending itself is the propagation.
+  - NG: "Read it. This obtains the data." ← reading itself is obtaining.
+  - Decision: is the effect inherent in the action itself? If yes, remove.
+
+### Separation of maintenance guidelines from runtime instructions
+
+- AI runtime instructions: concrete actions for the AI to read and execute. Write these in the prompt.
+- Maintenance guidelines: editing policies for the prompt / skill / rule itself. They do not affect AI runtime.
+  - NG: "Do not duplicate common rules." / "Do not include meta-explanations in Sub prompts." (these are policies for editing the prompt)
+  - Treatment: consolidate them into a meta rule file like this one (prompt.md), or remove them. Do not write them in the body of an individual prompt.
+
 ## Structure and decoration
 
 - Excessive decoration is unnecessary. Keep heading hierarchy minimal.
