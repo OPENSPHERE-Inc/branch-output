@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# rm-tmp.sh — Delete files under .claude/tmp/ only.
+# rm-tmp.sh — Delete files or directories under .claude/tmp/ only.
 # Usage: bash <path>/rm-tmp.sh <path> [<path> ...]
 #
-# Restricts deletion to files under the project's .claude/tmp/ directory
+# Restricts deletion to paths under the project's .claude/tmp/ directory
 # so that Bash(rm:*) need not be added to the permission allowlist.
-# Rejects: paths outside .claude/tmp/, paths containing '..', and directories.
+# Rejects: paths outside .claude/tmp/, paths containing '..',
+# and the .claude/tmp/ root itself (only sub-paths may be deleted).
+# Directories are removed recursively.
 
 set -euo pipefail
 
 if [ $# -eq 0 ]; then
-    echo "Error: at least one file path is required" >&2
+    echo "Error: at least one path is required" >&2
     exit 2
 fi
 
@@ -28,10 +30,13 @@ for target in "$@"; do
         exit 1
     fi
 
-    if [ -d "${normalized}" ]; then
-        echo "Error: directory deletion is not allowed: ${target}" >&2
+    # Reject the bare .claude/tmp/ root (must have at least one path
+    # component beneath it). Trailing slash is normalized away first.
+    stripped="${normalized%/}"
+    if [[ "${stripped}" == "${ALLOWED_PREFIX%/}" ]]; then
+        echo "Error: deleting the .claude/tmp/ root itself is not allowed: ${target}" >&2
         exit 1
     fi
 
-    rm -f -- "${normalized}"
+    rm -rf -- "${normalized}"
 done
