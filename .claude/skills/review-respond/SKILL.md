@@ -128,7 +128,7 @@ Launch procedure:
 ```
 You are responsible for parsing the review document. Read {document_path} and Write the metadata for each finding to {tmp_dir}/findings.json.
 
-Extraction targets: Critical / Major / Minor sections (skip Info). For each finding extract id (C-1, M-1, m-1, etc.) / severity / location / description (body up to the markers) / current_meta (current values of triage / estimate / status / verification; when the same field appears multiple times, take the last value).
+Extraction targets: Critical / Major / Minor sections (skip Info). For each finding extract id (C-1, M-1, mi-1, etc.) / severity / location / description (body up to the markers) / current_meta (current values of triage / estimate / status / verification; when the same field appears multiple times, take the last value).
 
 stage classification (based on current_meta):
 - markers empty → pending_triage

@@ -136,7 +136,7 @@ Aggregation procedure:
 1. Read each reviewer file.
 2. Deduplicate — when multiple reviewers point out the same location with the same intent, merge them into one entry and record the originating reviewers.
 3. Group by severity (Critical → Major → Minor → Info).
-4. Within each group, assign finding-ids (C-1, C-2, ..., M-1, ..., m-1, ..., i-1).
+4. Within each group, assign finding-ids (Critical: C-1, C-2, ...; Major: M-1, M-2, ...; Minor: mi-1, mi-2, ...; Info: I-1, I-2, ...).
 5. Read `.claude/skills/parallel-review/templates/review-doc.md` to grasp the template skeleton, then Write to {final_doc_path} following the format rules in this SKILL § Format Rules.
 
 Return value: {doc_path, findings_total, severity_counts: {critical, major, minor, info}, duplicates_merged}

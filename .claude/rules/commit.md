@@ -14,7 +14,7 @@ Rules that apply to every commit made in this repository.
 ## Content to avoid
 
 - Do NOT include workflow-specific labels such as "Review response", "レビュー対応", or similar. The commit message should describe **what the code does now**, not the process that produced it.
-- Do NOT include finding IDs from review documents (e.g. `C-1`, `M-1`, `m-1`, `I-1`). These are internal to the review workflow and have no meaning outside of it.
+- Do NOT include finding IDs from review documents (e.g. `C-1`, `M-1`, `mi-1`, `I-1`). These are internal to the review workflow and have no meaning outside of it.
 
 ## Trailers
 
