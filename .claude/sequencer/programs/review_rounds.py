@@ -193,10 +193,8 @@ _FINAL_REPORT_SCHEMA = {
 _TPL_REVIEW_INIT = textwrap.dedent("""\
     [Round 1/{max_rounds} Step 1: parallel-review (with initialization)]
     Skill: {skill}
-    Run parallel-review against the branch diff for {base_clause}. Following the
-    skill body, reviewers Write to individual files and an aggregator sub-agent
-    consolidates them. The orchestrator (you) does not load review-finding bodies
-    into context.
+    Run parallel-review against the branch diff for {base_clause}. The
+    orchestrator (you) does not load review-finding bodies into context.
 
     Initialization:
     - Obtain the current branch name: git branch --show-current
@@ -228,10 +226,8 @@ _TPL_REVIEW_INIT = textwrap.dedent("""\
 _TPL_REVIEW = textwrap.dedent("""\
     [Round {round_num}/{max_rounds} Step 1: parallel-review]
     Skill: {skill}
-    Run parallel-review against the branch diff for {base_clause}. Following the
-    skill body, reviewers Write to individual files and an aggregator sub-agent
-    consolidates them. The orchestrator (you) does not load review-finding bodies
-    into context.
+    Run parallel-review against the branch diff for {base_clause}. The
+    orchestrator (you) does not load review-finding bodies into context.
 
     File-naming rules:
     - Output path: {output_base}/{branch_dir}/review-round{round_num}.md
@@ -261,11 +257,9 @@ _TPL_REVIEW = textwrap.dedent("""\
 _TPL_RESPOND = textwrap.dedent("""\
     [Round {round_num}/{max_rounds} Step 2: review-respond]
     Skill: {skill}
-    Respond to the findings in review document {doc_path}. Following the skill
-    body, delegate parsing / triage / estimate / fix / format verification /
-    build verification / aggregation to sub-agents. The orchestrator (you) only
-    orchestrates the retry loop and does not load verdict bodies or finding
-    bodies into context.
+    Respond to the findings in review document {doc_path}. The orchestrator
+    (you) only orchestrates the retry loop and does not load verdict bodies or
+    finding bodies into context.
     {confirm_clause}
     {commit_clause}
 
@@ -303,10 +297,8 @@ _TPL_RESPOND = textwrap.dedent("""\
 _TPL_RESOLVE = textwrap.dedent("""\
     [Round {round_num}/{max_rounds} Step 3: review-resolve]
     Skill: {skill}
-    Verify the resolution status of review document {doc_path}. Following the
-    skill body, delegate parsing / per-finding verification / aggregation to
-    sub-agents. The orchestrator (you) does not load verification bodies into
-    context.
+    Verify the resolution status of review document {doc_path}. The
+    orchestrator (you) does not load verification bodies into context.
 
     Reporting format (JSON):
     {{
@@ -318,8 +310,7 @@ _TPL_RESOLVE = textwrap.dedent("""\
     - unresolved_count: aggregator sub-agent's return value feedback_count
       (number of findings whose Verification still reads 💬 Feedback).
     - resolved_count: aggregator sub-agent's return value resolved_count.
-    - feedback_count: synonymous with unresolved_count (both included for
-      backward compatibility).
+    - feedback_count: synonymous with unresolved_count.
     - summary_line: 1-line summary for user notification.\
 """)
 
@@ -349,7 +340,7 @@ _TPL_FEEDBACK = textwrap.dedent("""\
         current_meta.verification into account.
 
     Step 4.{attempt}.4 Feedback verify
-        Re-run {resolve_skill} (parsing Sub → verification Sub group → aggregator Sub).
+        Re-run {resolve_skill}.
 
     Reporting format (JSON):
     {{

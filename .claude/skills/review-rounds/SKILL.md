@@ -40,14 +40,15 @@ Write the review document in the user's chat language.
 - **Most work, including aggregation and consolidation, is delegated to sub-agents** (one level of nesting is allowed):
   - Individual reviewers (Step 2.1) — launch cpp-sensei / qt-sensei / obs-sensei / network-sensei, etc. in parallel for individual reviews. Each reviewer Writes findings to a file; the return value is only the path and counts.
   - Aggregator sub-agent (Step 2.1) — Read the individual reviewer output files and consolidate them into the review document (parallel-review § Step 3).
-  - Parsing sub-agent (Steps 2.2 / 2.3 / 2.4) — Read the review document and Write `findings.json`. Subsequent sub-agents take this JSON as input (review-respond § Step 1 / review-resolve § Step 1).
+  - Parsing sub-agent (review-respond, Steps 2.2 / 2.4) — Read the review document and Write `findings.json`. Subsequent sub-agents take this JSON as input (review-respond § Step 1).
+  - Parsing sub-agent (review-resolve, Steps 2.3 / 2.4) — Read the review document and return verification assignments (by_assignee) (review-resolve § Step 1; no file output).
   - Triage sub-agent (Steps 2.2 / 2.4) — render verdicts in a separate context to avoid bias (review-respond § Step 2).
   - Individual estimates (Steps 2.2 / 2.4) — delegate each Will Fix in parallel to its assigned specialist sub-agent (read-only).
   - Estimate aggregator sub-agent (Steps 2.2 / 2.4) — generate a summary of individual estimate results (review-respond § Step 3).
   - Individual fixes (Steps 2.2 / 2.4) — delegate each finding to the appropriate specialist sub-agent.
   - Format & build verification sub-agent (Steps 2.2 / 2.4) — run clang-format / cmake-format + build once; on failure, analyze code and determine the responsible specialist (no fix; recommendation only).
   - Build-fix specialist sub-agent (Steps 2.2 / 2.4) — fix build errors as the specialist determined by the format & build verification sub-agent. The leader re-launches the format & build verification sub-agent afterwards (review-respond § Step 5).
-  - Verification sub-agent (Steps 2.3 / 2.4) — verify each finding in parallel (review-resolve § Step 2; read-only).
+  - Verification sub-agent (Steps 2.3 / 2.4) — launched in parallel per specialist; each batch-verifies its assigned findings (review-resolve § Step 2; read-only).
   - Aggregator sub-agent (Steps 2.2 / 2.3 / 2.4) — generate events.jsonl from intermediate files and run render-review.py (review-respond § Step 6 / review-resolve § Step 3).
   - Final-report aggregator sub-agent (Step 3) — generate the final report from all rounds' review documents.
 - **The orchestrator (you) directly handles only the following**:
@@ -75,8 +76,8 @@ Round 1 starts
   │     [format & build verification Sub] ⇄ [build-fix specialist Sub] loop (max 5, leader-controlled)
   │     [aggregator Sub] triage.json + estimates/*.json + statuses/*.json → events.jsonl → render-review.py
   ├─ 2.3 review-resolve
-  │     [parsing Sub] Reads round1.md → emits findings.json
-  │     [verification Sub group] verifies each finding in parallel → emits verifications/{id}.json
+  │     [parsing Sub] Reads round1.md → returns by_assignee (no file output)
+  │     [verification Sub group] launched per specialist; each batch-verifies its assigned findings → emits verifications/{id}.json
   │     [aggregator Sub] verifications/*.json → events.jsonl → render-review.py
   ├─ 2.4 Feedback re-fix loop (up to 3 iterations)
   │     [parsing Sub] → [triage Sub] → [estimate Sub group] → [fix Sub group]
