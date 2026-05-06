@@ -42,7 +42,7 @@ For common prohibitions, see `.claude/rules/sub-agent.md`. The leader appends th
 
 ## Step 1 — Identify Review Scope and Fetch Diff
 
-The leader (you) does not Read the diff content. Diff parsing, line counting, and reviewer-candidate selection are delegated to a scope-analysis sub-agent. The leader receives only the return value (line count + candidate list + summary). The reviewer perspective string (`{perspective}`) is also returned by the scope-analysis sub-agent.
+The leader (you) does not Read the diff content. Diff parsing, line counting, and reviewer-candidate selection are delegated to a scope-analysis sub-agent. The leader receives only the return value (line count + candidate list + summary).
 
 1. Based on the user's input, identify the review target (base branch, target paths, etc.) and any user-explicitly-requested reviewers (if any).
 2. Create the working directory:
@@ -137,7 +137,7 @@ Aggregation procedure:
 2. Deduplicate — when multiple reviewers point out the same location with the same intent, merge them into one entry and record the originating reviewers.
 3. Group by severity (Critical → Major → Minor → Info).
 4. Within each group, assign finding-ids (Critical: C-1, C-2, ...; Major: M-1, M-2, ...; Minor: mi-1, mi-2, ...; Info: I-1, I-2, ...).
-5. Read `.claude/skills/parallel-review/templates/review-doc.md` to grasp the template skeleton, then Write to {final_doc_path} following the format rules in this SKILL § Format Rules.
+5. Read `.claude/skills/parallel-review/templates/review-doc.md` and `.claude/skills/parallel-review/SKILL.md`, then Write to {final_doc_path} following the template skeleton and the "§ Format Rules" section.
 
 Return value: {doc_path, findings_total, severity_counts: {critical, major, minor, info}, duplicates_merged}
 ```
