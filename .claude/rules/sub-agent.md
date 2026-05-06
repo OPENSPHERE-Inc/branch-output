@@ -1,6 +1,6 @@
 # Sub-Agent Common Rules
 
-Common prohibitions that sub-agents of the review skills (parallel-review / review-respond / review-resolve / review-rounds) must observe. Each SKILL's leader appends this file's content to the end of the sub-agent prompt before passing it to the Agent tool.
+Common prohibitions that sub-agents of the review skills (parallel-review / review-respond / review-resolve / review-rounds) must observe.
 
 ## Prohibitions
 
