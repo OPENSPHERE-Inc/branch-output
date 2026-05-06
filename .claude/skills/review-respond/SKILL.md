@@ -21,7 +21,7 @@ The user specifies a path to a review document (markdown). If the argument is `$
 
 ### `--commit` Option
 
-When enabled, in Step 4 (Fix), once each finding fix is complete, the change is committed to git.
+When enabled, in Step 4, once each finding fix is complete, the change is committed to git.
 
 #### Commit Rules
 
@@ -39,7 +39,7 @@ fix: Add null check before accessing output pointer
 
 ### `--confirm` Option
 
-When enabled, wait for user confirmation immediately after the estimate result table is printed to the console in Step 3 (Estimate). Do not confirm immediately after triage.
+When enabled, wait for user confirmation immediately after the estimate result table is printed to the console in Step 3. Do not confirm immediately after triage.
 
 ## Review Document Format
 
@@ -103,7 +103,7 @@ Each verdict is written to an intermediate file, and the aggregator sub-agent co
 
 ### events.jsonl
 
-Final markdown reflection still uses **`{basename}.events.jsonl` in the same directory as the markdown** (e.g., `review-round1.md` → `review-round1.events.jsonl`; referred to as `{events_path}` below). The **aggregator sub-agent** generates events.jsonl in one shot from the files under `{tmp_dir}/` (Step 6). Format:
+Final markdown reflection still uses **`{basename}.events.jsonl` in the same directory as the markdown** (e.g., `review-round1.md` → `review-round1.events.jsonl`; referred to as `{events_path}` below). The **aggregator sub-agent** generates events.jsonl in one shot from the files under `{tmp_dir}/`. Format:
 
 ```jsonl
 {"id":"C-1","field":"triage","value":"🔧 Will Fix (assignee: cpp-sensei) — triage rationale"}
@@ -182,8 +182,6 @@ memo_value format:
 - Will Fix: "🔧 Will Fix (assignee: {assignee}) — {reason}"
 - Won't Fix: "🚫 Won't Fix — {reason}"
 
-memo_value becomes the value in events.jsonl in Step 6.
-
 Return value: {path, will_fix_count, wontfix_count, assignments: [{id, assignee}]} (Will Fix only; exclude Won't Fix; do not include reason / memo_value bodies in the return value)
 ```
 
@@ -191,8 +189,6 @@ Return value: {path, will_fix_count, wontfix_count, assignments: [{id, assignee}
 3. Present the triage result summary (counts) to the user. Read `{tmp_dir}/triage.json` only when details are needed (usually unnecessary).
 
 ## Step 3 — Estimate (Delegated in Parallel to Specialist Sub-Agents)
-
-For each Will Fix finding, launch sub-agents of **the same specialist that will perform the fix** in parallel to estimate cost and reconsider the verdict. Verdict values: ▶️ Maintain (proceed) / 🔻 Downgrade (no fix) / 🚧 Alternative (light treatment via FIXME).
 
 Launch procedure:
 
@@ -267,8 +263,6 @@ When both Maintain and Alternative are 0 (all Downgrade): skip Steps 4 and 5 and
 
 ## Step 4 — Fix
 
-Delegate `Estimate: ▶️ Maintain` (regular fix) and `Estimate: 🚧 Alternative` (FIXME insertion) findings to the specialist agent assigned at triage.
-
 Launch procedure:
 
 Cross-reference the `assignments` array received in Step 2 with the `{id → verdict}` map collected in Step 3, and loop over only the `{id, assignee}` pairs whose `verdict` is `Maintain` or `Alternative`. For each pair, launch a fix sub-agent via `Agent(subagent_type=assignee, prompt=...)` (the agent definition's persona and specialty perspective load automatically). The sub-agent itself looks up `description` / `file_paths_and_lines` / `triage_reason` / estimate details from `{tmp_dir}/findings.json` / `{tmp_dir}/triage.json` / `{tmp_dir}/estimates/{id}.json` by `id`.
@@ -309,7 +303,7 @@ Return value: {path}
 
 ### Status Saved to Intermediate Files
 
-After all fixes complete, each agent has written `{tmp_dir}/statuses/{id}.json`. The leader collects only the return values (`{path}` only); status bodies are not loaded into context.
+The leader collects only the return values (`{path}` only); status bodies are not loaded into context.
 
 ## Step 5 — Format Verification & Build Verification
 
@@ -383,7 +377,7 @@ Return value: {description}
 
 ## Step 6 — Reflect into the Review Document (Delegated to Aggregator Sub-Agent)
 
-The aggregator sub-agent consolidates the intermediate files under `{tmp_dir}/` (triage.json / estimates/*.json / statuses/*.json) and performs events.jsonl write and `render-review.py` execution in one shot. The leader (you) does not load verdict bodies into context.
+The leader (you) does not load verdict bodies into context.
 
 Launch procedure:
 
