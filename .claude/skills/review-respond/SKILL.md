@@ -199,12 +199,12 @@ Launch procedure:
 1. Loop over the `assignments` array received in Step 2. For each `{id, assignee}` pair, launch a specialist sub-agent in parallel via `Agent(subagent_type=assignee, prompt=...)` (the agent definition's persona and specialty perspective load automatically). The sub-agent itself looks up `description` / `file_paths_and_lines` / `triage_reason` from `{tmp_dir}/findings.json` and `{tmp_dir}/triage.json` by `id`, so the leader does not need to embed them in the prompt. Example prompt (do not include persona):
 
 ```
-Estimate the fix cost for finding {finding-id} (investigation and verdict only; the fix is the next step).
+Estimate the fix cost for finding {finding-id} (investigation and verdict only; do not perform the fix).
 
 Look up description / location from the id == "{finding-id}" item in {tmp_dir}/findings.json, and verdict / reason from the same id in {tmp_dir}/triage.json.
 
 What to do:
-1. Read related sources and assemble the required changes mentally.
+1. Read related sources and assemble the required changes mentally. If comment additions (including FIXME / TODO) are part of the plan, also draft the concrete wording and insertion location.
 2. Decide whether each spread signal applies (multiple OK, none OK):
    a. Introduction of new concepts (library / API / language features not previously used)
    b. Expansion of fix scope (files / modules not yet modified on the current branch)
@@ -213,16 +213,31 @@ What to do:
    e. Will Fix originating from a FIXME (originally left as FIXME/TODO, or a FIXME-conversion proposal that fell to Will Fix at triage)
    f. Target change (build / runtime target version changes, etc.)
 3. Compute cost (S/M/L) and future (S/M/L). Provide 1–2 sentences of rationale.
-4. Verdict (regardless of severity, Downgrade / Alternative may be chosen):
+4. Initial verdict (regardless of severity, Downgrade / Alternative may be chosen):
    - Maintain — cost is reasonable; proceed with the fix.
    - Downgrade — overturn the triage verdict; do not fix. No alternative. Include "recommend separate PR" in the rationale if relevant.
    - Alternative — overturn the triage verdict, but address it lightly with an alternative such as adding a FIXME comment. Briefly indicate the direction for the FIXME wording. Include "recommend separate PR" in the rationale if relevant.
 
-The higher the severity of the finding, the more strictly the grounds for choosing Downgrade are scrutinized. Critical / Major are typically better as Alternative or "Downgrade + separate PR recommendation". Minor / Info more easily tolerate Downgrade.
+   The higher the severity of the finding, the more strictly the grounds for choosing Downgrade are scrutinized. Critical / Major are typically better as Alternative or "Downgrade + separate PR recommendation". Minor / Info more easily tolerate Downgrade.
+
+5. Comment-necessity check (perform only when the fix plan includes a comment addition). Comment additions do not solve the underlying code problem, so judge necessity strictly and independently of cost — even when cost is low (a few added lines). Low cost is not a reason to keep the comment. Comments matching the criteria below are excluded by default. Confirm the initial verdict based on what remains after exclusion:
+   - Code changes still remain after exclusion → Maintain (update the fix plan to drop the comment)
+   - Nothing remains after exclusion → Downgrade (whether to include "recommend separate PR" depends on severity)
+
+   Reject criteria (exclude the matching comment):
+   a. Violation of `.claude/rules/comment.md` (multi-paragraph justifications, change-history- or chat-context-dependent wording, restating obvious "what", etc.).
+   b. Comments aimed at a specific reader (chat user, reviewer, a specific colleague, etc.). Comments are an information source for future third-party readers, not a communication channel.
+
+   Downgrade criteria (low information value; exclude the matching comment):
+   c. Comments whose content can be read directly from sources in the same file (paraphrasing what / how that is obvious from naming, structure, or the surrounding expression).
+   d. Comments inside a function that explain the caller's behavior or usage assumptions. Documentation about the caller belongs at the caller.
+
+   FIXME / TODO individual judgment (when considering Alternative):
+   e. If recording the issue as a "separate-PR recommendation" in the final report is sufficient, do not leave a FIXME in the source — switch from Alternative to Downgrade (include "recommend separate PR" in the rationale). Leave a FIXME only when a future editor must notice the issue at the time of editing (easy-to-trip pitfalls during edits, provisional logic implementation, unhandled specific conditions, etc.).
 
 {tmp_dir}/estimates/{finding-id}.json: {id, specialist, verdict (Maintain | Downgrade | Alternative), cost (S|M|L), future (S|M|L), signals (["a","b",...] or []), rationale, memo_value}
 
-memo_value format (used as the value in events.jsonl in Step 6):
+memo_value format:
 - Maintain: "▶️ Maintain — Cost: {cost}, Future: {future}, Signals: {a,b,... or none}"
 - Downgrade: "🔻 Downgrade — Cost: ..., Future: ..., Signals: ... — {downgrade rationale}"
 - Alternative: "🚧 Alternative — Cost: ..., Future: ..., Signals: ... — FIXME insertion: {direction}"
