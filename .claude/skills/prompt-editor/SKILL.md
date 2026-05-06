@@ -58,7 +58,6 @@ When the prompt being edited contains a "markdown output template" (a skeleton o
 
 - Location: `templates/{name}.md` under the relevant skill.
 - In the body, leave only a path reference of the form: `Template: .claude/skills/{skill-name}/templates/{name}.md ({consumer} reads it to learn the skeleton).`
-- Existing example: this skill itself externalizes per-kind templates under `.claude/skills/prompt-editor/templates/` and references them from Step 1.
 
 Exceptions (embedding in a code block is allowed):
 
