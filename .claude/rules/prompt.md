@@ -12,15 +12,15 @@ These rules do not apply to human-facing documentation (README, API references, 
 
 ### Meta-explanation patterns to avoid
 
-The patterns below have no effect on AI runtime behavior, so remove them.
+The patterns below have no effect on AI runtime behavior, so remove them. The list items are example clusters; the final decision follows the Decision criterion at the end of this subsection. When multiple patterns coexist in a single sentence, remove only the matching portion and keep the actual instruction for the current step.
 
-- Restating the effect of an action: "Do X. This causes Y to happen." / "By doing X, Y is achieved." / "Do X to propagate it to Z."
+- Restating the effect of an action: "Do X. This causes Y to happen." / "By doing X, Y is achieved." / "Do X to propagate it to Z." (the effect of the immediately preceding action is inherent in the action itself)
 - Emphasizing the intent of an action: "Be sure to Y." / "Do X without omission." / "Always do Z." (the imperative verb already conveys intent)
-- Explanatory preambles: "In what follows ..." / "This section ..." / "Next, we describe ..." / "To do X, ..."
+- Explanatory preambles: "In what follows ..." / "This section ..." / "Next, we describe ..." / "To do X, ..." (in-prompt or in-section structural narration that is self-evident from the body)
 - Maintenance guidelines aimed at editors: "Avoid duplicate descriptions." / "Future maintainers should X." / "When editing the code, ..." (these address the editing of the SKILL or Rule itself, not actions the AI executes)
-- Forward references to other steps: "This is not done in this step; it is done in Step N." / "Aggregation is performed in the next step." (information about other steps that the reader does not need to execute the current step)
+- Forward references to other steps: "This is not done in this step; it is done in Step N." / "Aggregation is performed in the next step." (information about other steps that the reader does not need to execute the current step; distinct from explanatory preambles, which describe in-prompt structure rather than other steps)
 
-Decision criterion: if removing a sentence does not change the action the AI should take, remove it.
+Decision criterion: if removing a sentence does not change the action the AI should take, remove it. This criterion applies to all items in the list above.
 
 ### Judgment WHY vs effect-restatement WHY
 
