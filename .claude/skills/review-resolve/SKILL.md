@@ -88,8 +88,6 @@ Use the **Write tool** for the file. Bash cat heredoc is unusable because apostr
 
 ## Step 1 — Parse (Delegated to Parsing Sub-Agent)
 
-Launch the parsing sub-agent to extract findings and assign verification specialists.
-
 Example prompt:
 
 ```
@@ -115,7 +113,7 @@ Return value: {total, by_stage: {<stage>: <int>}, by_assignee: [{assignee, ids: 
 
 ## Step 2 — Verify Each Finding (Delegated in Parallel per Specialist)
 
-Loop over Step 1's `by_assignee` and launch a verification sub-agent in parallel for each `{assignee, ids}` via `Agent(subagent_type=assignee, prompt=...)` (the agent definition's persona and specialty perspective load automatically). Each specialist processes all assigned ids in a single launch, writing one `{tmp_dir}/verifications/{id}.json` per id.
+Loop over Step 1's `by_assignee` and launch a verification sub-agent in parallel for each `{assignee, ids}` via `Agent(subagent_type=assignee, prompt=...)` (the agent definition's persona and specialty perspective load automatically).
 
 Example prompt (do not include persona):
 
