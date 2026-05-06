@@ -18,6 +18,7 @@ The patterns below have no effect on AI runtime behavior, so remove them.
 - Emphasizing the intent of an action: "Be sure to Y." / "Do X without omission." / "Always do Z." (the imperative verb already conveys intent)
 - Explanatory preambles: "In what follows ..." / "This section ..." / "Next, we describe ..." / "To do X, ..."
 - Maintenance guidelines aimed at editors: "Avoid duplicate descriptions." / "Future maintainers should X." / "When editing the code, ..." (these address the editing of the SKILL or Rule itself, not actions the AI executes)
+- Forward references to other steps: "This is not done in this step; it is done in Step N." / "Aggregation is performed in the next step." (information about other steps that the reader does not need to execute the current step)
 
 Decision criterion: if removing a sentence does not change the action the AI should take, remove it.
 
