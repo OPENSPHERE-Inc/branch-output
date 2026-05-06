@@ -131,10 +131,8 @@ The orchestrator (you) directly takes on the "review response leader" role of re
 
 Input document: this round's file path
 
-Responsibility breakdown (mapped to review-respond steps):
-
 - Step 7 (Summary) — the orchestrator displays the `summary_line` received from the aggregator sub-agent to the user. Detailed tables are based on the markdown already produced by the aggregator sub-agent (Read on demand).
-- Steps 1–6 — delegate to sub-agents following review-respond §. Parallelization and the retry loop (Step 5 build-failure fix loop, etc.) are orchestrated by the leader as defined in that skill.
+- Steps 1–6 — delegate to sub-agents following review-respond §. Parallelization and the retry loop are orchestrated by the leader as defined in that skill.
 
 Round-specific overrides:
 
@@ -158,8 +156,6 @@ Round-specific overrides:
 The orchestrator (you) directly takes on the "review verification leader" role of review-resolve. Procedure and templates follow `.claude/skills/review-resolve/SKILL.md`.
 
 Input document: this round's file path
-
-Responsibility breakdown:
 
 - Step 4 (Completion Report) — the orchestrator displays the `summary_line` received from the aggregator sub-agent to the user.
 - Step 1 (Parse) · Step 2 (Verify each finding) · Step 3 (Verification report and reflection / events.jsonl write / render execution) — delegate to sub-agents following review-resolve § (parallelization rules also follow that skill).
@@ -212,7 +208,7 @@ If any of the above is not satisfied, proceed to final-report generation.
 
 ## Step 3 — Final Report (Delegated to Final-Report Aggregator Sub-Agent)
 
-After all rounds end, delegate to the final-report aggregator sub-agent to generate `{base-path}/{branch-dir}/final-report.md`.
+Final report path: `{base-path}/{branch-dir}/final-report.md`
 
 Launch procedure:
 
