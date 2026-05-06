@@ -79,7 +79,7 @@ If Step 2 detects violations, fix them with Edit. After fixing, re-run Step 2 to
 
 ## Step 4 — Compress
 
-Reduce verbosity in the file produced in Step 1. Apply Edit to remove the following:
+Reduce verbosity in the file produced in Step 1, including any sub-agent prompts embedded in code blocks within it. The format rules from Step 1 (e.g., plain text inside sub-agent prompt code blocks) still apply during compression. Apply Edit to remove the following:
 
 - Polite forms such as "please ..." → use the imperative.
 - The same rule repeated in multiple places → consolidate or replace with a reference.
