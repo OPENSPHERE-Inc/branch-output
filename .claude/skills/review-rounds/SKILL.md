@@ -40,16 +40,15 @@ Write the review document in the user's chat language.
 - **Most work, including aggregation and consolidation, is delegated to sub-agents** (one level of nesting is allowed):
   - Individual reviewers (Step 2.1) — launch cpp-sensei / qt-sensei / obs-sensei / network-sensei, etc. in parallel for individual reviews. Each reviewer Writes findings to a file; the return value is only the path and counts.
   - Aggregator sub-agent (Step 2.1) — Read the individual reviewer output files and consolidate them into the review document (parallel-review § Step 3).
-  - Parsing sub-agent (review-respond, Steps 2.2 / 2.4) — Read the review document and Write `findings.json`. Subsequent sub-agents take this JSON as input (review-respond § Step 1).
   - Parsing sub-agent (review-resolve, Steps 2.3 / 2.4) — Read the review document and return verification assignments (by_assignee) (review-resolve § Step 1; no file output).
-  - Triage sub-agent (Steps 2.2 / 2.4) — render verdicts in a separate context to avoid bias (review-respond § Step 2).
-  - Individual estimates (Steps 2.2 / 2.4) — delegate each Will Fix in parallel to its assigned specialist sub-agent (read-only).
-  - Estimate aggregator sub-agent (Steps 2.2 / 2.4) — generate a summary of individual estimate results (review-respond § Step 3).
-  - Individual fixes (Steps 2.2 / 2.4) — delegate each finding to the appropriate specialist sub-agent.
+  - Triage sub-agent (Steps 2.2 / 2.4) — render verdicts in a separate context to avoid bias; Reads the review document directly and performs finding extraction and verdict in one pass (review-respond § Step 1).
+  - Individual estimates (Steps 2.2 / 2.4) — delegate in parallel to specialist sub-agents per assignee; each Sub batch-estimates its assigned ids (review-respond § Step 2; read-only).
+  - Estimate aggregator sub-agent (Steps 2.2 / 2.4) — generate a summary of individual estimate results (review-respond § Step 2).
+  - Individual fixes (Steps 2.2 / 2.4) — delegate to specialist sub-agents per assignee; each Sub sequentially fixes its assigned ids (review-respond § Step 3).
   - Format & build verification sub-agent (Steps 2.2 / 2.4) — run clang-format / cmake-format + build once; on failure, analyze code and determine the responsible specialist (no fix; recommendation only).
-  - Build-fix specialist sub-agent (Steps 2.2 / 2.4) — fix build errors as the specialist determined by the format & build verification sub-agent. The leader re-launches the format & build verification sub-agent afterwards (review-respond § Step 5).
+  - Build-fix specialist sub-agent (Steps 2.2 / 2.4) — fix build errors as the specialist determined by the format & build verification sub-agent. The leader re-launches the format & build verification sub-agent afterwards (review-respond § Step 4).
   - Verification sub-agent (Steps 2.3 / 2.4) — launched in parallel per specialist; each batch-verifies its assigned findings (review-resolve § Step 2; read-only).
-  - Aggregator sub-agent (Steps 2.2 / 2.3 / 2.4) — generate events.jsonl from intermediate files and run render-review.py (review-respond § Step 6 / review-resolve § Step 3).
+  - Aggregator sub-agent (Steps 2.2 / 2.3 / 2.4) — generate events.jsonl from intermediate files and run render-review.py (review-respond § Step 5 / review-resolve § Step 3).
   - Final-report aggregator sub-agent (Step 3) — generate the final report from all rounds' review documents.
 - **The orchestrator (you) directly handles only the following**:
   - Control between steps and the round-loop decision (including the format & build verification sub-agent ⇄ build-fix specialist sub-agent retry loop). Operational data files from sub-agents may be Read; do not Read source code itself.
@@ -66,13 +65,12 @@ Round 1 starts
   │     [specialist reviewers] launched in parallel → each Writes reviews/{name}.md
   │     [aggregator Sub] Reads each reviews/{name}.md → emits round1.md (untriaged)
   ├─ 2.2 review-respond (orchestrator)
-  │     [parsing Sub] Reads round1.md → emits findings.json
-  │     [triage Sub] Reads findings.json → emits triage.json
+  │     [triage Sub] Reads round1.md → emits triage.json (with by_assignee)
   │     ↳ if 0 Will Fix, end the round
-  │     [estimate Sub group] cost-estimates each Will Fix in parallel → emits estimates/{id}.json
+  │     [estimate Sub group] (per-assignee, parallel) batch-estimates assigned ids → emits estimates/{id}.json
   │     [estimate aggregator Sub] estimates/*.json → emits estimate-summary.md
   │     ↳ if both Maintain and Alternative are 0, skip fix and build verification
-  │     [fix Sub group] Maintain fixes, Alternative FIXME insertions → emits statuses/{id}.json
+  │     [fix Sub group] (per-assignee, parallel) Maintain fixes, Alternative FIXME insertions → emits statuses/{id}.json
   │     [format & build verification Sub] ⇄ [build-fix specialist Sub] loop (max 5, leader-controlled)
   │     [aggregator Sub] triage.json + estimates/*.json + statuses/*.json → events.jsonl → render-review.py
   ├─ 2.3 review-resolve
@@ -80,7 +78,7 @@ Round 1 starts
   │     [verification Sub group] launched per specialist; each batch-verifies its assigned findings → emits verifications/{id}.json
   │     [aggregator Sub] verifications/*.json → events.jsonl → render-review.py
   ├─ 2.4 Feedback re-fix loop (up to 3 iterations)
-  │     [parsing Sub] → [triage Sub] → [estimate Sub group] → [fix Sub group]
+  │     [triage Sub] → [estimate Sub group (per-assignee)] → [fix Sub group (per-assignee)]
   │       → [format & build verification Sub] ⇄ [build-fix specialist Sub] loop
   │       → [aggregator Sub] → [verification Sub group] → [aggregator Sub]
   └─ 2.5 Round end → evaluate condition for proceeding to the next round
@@ -131,8 +129,8 @@ The orchestrator (you) directly takes on the "review response leader" role of re
 
 Input document: this round's file path
 
-- Step 7 (Summary) — the orchestrator displays the `summary_line` received from the aggregator sub-agent to the user. Detailed tables are based on the markdown already produced by the aggregator sub-agent (Read on demand).
-- Steps 1–6 — delegate to sub-agents following review-respond §. Parallelization and the retry loop are orchestrated by the leader as defined in that skill.
+- Step 6 (Summary) — the orchestrator displays the `summary_line` received from the aggregator sub-agent to the user. Detailed tables are based on the markdown already produced by the aggregator sub-agent (Read on demand).
+- Steps 1–5 — delegate to sub-agents following review-respond §. Parallelization and the retry loop are orchestrated by the leader as defined in that skill.
 
 Round-specific overrides:
 
@@ -148,7 +146,7 @@ Round-specific overrides:
   - 0 Will Fix findings: skip Steps 2.3–2.4 and proceed to Step 2.5 (Round End).
   - 1 or more Will Fix findings: proceed to the estimate phase.
 - Round-loop control after estimate:
-  - Both Maintain and Alternative are 0 (all Downgrade): skip the fix and build-verification phases; perform only the document update (review-respond § Step 6) and end the round.
+  - Both Maintain and Alternative are 0 (all Downgrade): skip the fix and build-verification phases; perform only the document update (review-respond § Step 5) and end the round.
   - 1 or more Maintain or Alternative findings: proceed to the fix phase (regular fix for Maintain, FIXME insertion for Alternative). If `--confirm` is enabled, display the estimate result and wait for user confirmation.
 
 ### 2.3 — Review Verification (review-resolve)
@@ -175,13 +173,13 @@ Decide based on the return value from Step 2.3 (`feedback_count` from the aggreg
 
 Re-fix loop (up to 3 iterations):
 
-Each attempt runs review-respond's parse-to-aggregate flow once, then re-runs review-resolve's verify-to-aggregate at the end. Append a "Feedback finding priority" additional constraint to each sub-agent prompt.
+Each attempt runs review-respond's triage-to-aggregate flow once, then re-runs review-resolve's verify-to-aggregate at the end. Append a "Feedback finding priority" additional constraint to each sub-agent prompt.
 
-1. Print `## Round {N} — Step 4.1: Feedback Triage (attempt {M}/3)`. Re-run review-respond § Steps 1–2. Append to the triage prompt: `Prioritize triaging findings whose stage is "feedback" (current_meta.verification has Feedback details).`
+1. Print `## Round {N} — Step 4.1: Feedback Triage (attempt {M}/3)`. Re-run review-respond § Step 1. Append to the triage prompt: `Prioritize triaging findings whose stage is "feedback" (current_meta.verification has Feedback details).`
 
-2. Print `## Round {N} — Step 4.2: Feedback Estimate (attempt {M}/3)`. Re-run review-respond § Step 3. Append to the estimate prompt: `Estimate taking the Feedback content in current_meta.verification into account. Consider Downgrade if the cost inflates.` If every finding is Downgraded, skip step 3 and proceed to step 4.
+2. Print `## Round {N} — Step 4.2: Feedback Estimate (attempt {M}/3)`. Re-run review-respond § Step 2. Append to the estimate prompt: `Estimate taking the Feedback content in current_meta.verification into account. Consider Downgrade if the cost inflates.` If every finding is Downgraded, skip step 3 and proceed to step 4.
 
-3. Print `## Round {N} — Step 4.3: Feedback Fix (attempt {M}/3)`. Re-run review-respond § Steps 4–6. Append to the fix prompt: `Re-fix taking the Feedback content in current_meta.verification into account.`
+3. Print `## Round {N} — Step 4.3: Feedback Fix (attempt {M}/3)`. Re-run review-respond § Steps 3–5. Append to the fix prompt: `Re-fix taking the Feedback content in current_meta.verification into account.`
 
 4. Print `## Round {N} — Step 4.4: Feedback Verify (attempt {M}/3)`. Re-run review-resolve in the same manner as Step 2.3.
 

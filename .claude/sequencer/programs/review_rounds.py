@@ -5,7 +5,7 @@ Specification: ``.claude/skills/review-rounds/SKILL.md``
 Drives parallel-review -> review-respond -> review-resolve per round, and while
 unresolved findings remain runs an inner feedback re-fix loop (up to 3 attempts).
 The Step 1 initialization (branch-name retrieval, branch_dir collision avoidance)
-and the Step 3 final-report generation are also issued as Instructions.
+and the Step 6 final-report generation are also issued as Instructions.
 
 Convergence checks:
   - findings_total == 0          -> Done
@@ -264,8 +264,7 @@ _TPL_RESPOND = textwrap.dedent("""\
     {commit_clause}
 
     Additional constraints:
-    - Do not pass the previous round's review document to anything other than the
-      parsing sub-agent input.
+    - Do not reference the previous round's review document (bias avoidance).
     - Confirm the Will Fix count in the triage sub-agent's return value (also
       explicit when 0).
     - When evaluating spread signal e (Will Fix originating from a FIXME),
@@ -321,12 +320,12 @@ _TPL_FEEDBACK = textwrap.dedent("""\
     sub-agent delegation flow.
 
     Step 4.{attempt}.1 Feedback triage
-        Run {respond_skill} Step 1 (parse) → Step 2 (triage).
+        Run {respond_skill} Step 1 (triage).
         Append to the triage prompt: prioritize triaging findings whose stage
         is "feedback" (current_meta.verification has Feedback details).
 
     Step 4.{attempt}.2 Feedback estimate
-        Run {respond_skill} Step 3 (parallel estimate).
+        Run {respond_skill} Step 2 (parallel estimate).
         Append to the estimate prompt: estimate taking the Feedback content in
         current_meta.verification into account. Consider Downgrade if cost
         inflates.
@@ -334,8 +333,8 @@ _TPL_FEEDBACK = textwrap.dedent("""\
         Step 4.{attempt}.4.
 
     Step 4.{attempt}.3 Feedback fix
-        Run {respond_skill} Step 4 (fix) → Step 5 (format & build verification)
-        → Step 6 (aggregation).
+        Run {respond_skill} Step 3 (fix) → Step 4 (format & build verification)
+        → Step 5 (aggregation).
         Append to the fix prompt: re-fix taking the Feedback content in
         current_meta.verification into account.
 
