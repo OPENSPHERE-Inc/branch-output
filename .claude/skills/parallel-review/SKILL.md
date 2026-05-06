@@ -85,7 +85,7 @@ Return value: {line_count, recommended_reviewers: [{name, reason}], extension_su
 ```
 
 5. The leader uses the returned `recommended_reviewers` directly as the final reviewer list, and passes each element's `name` to `subagent_type` in Step 2.
-6. If `line_count == 0`, generate an empty review document at `{output_path}` and proceed to Step 4 (skip Steps 2 and 3).
+6. If `line_count == 0`, generate an empty review document at `{output_path}` and proceed directly to Step 4.
 
 ## Step 2 — Launch Parallel Reviewers
 
@@ -161,5 +161,3 @@ After the aggregator sub-agent finishes writing the final report, delete the ent
 ```bash
 .claude/scripts/rm-tmp.sh {tmp_dir}
 ```
-
-The final report is written outside `{tmp_dir}` so it is not deleted.
