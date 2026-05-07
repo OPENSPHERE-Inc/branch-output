@@ -1,17 +1,18 @@
 """review-rounds sequencer program.
 
-Specification: ``.claude/skills/review-rounds/SKILL.md``
+Spec: ``.claude/skills/review-rounds/SKILL.md``
 
 Drives parallel-review -> review-respond -> review-resolve per round, and while
-unresolved findings remain runs an inner feedback re-fix loop (up to 3 attempts).
-The Step 1 initialization (branch-name retrieval, branch_dir collision avoidance)
-and the Step 6 final-report generation are also issued as Instructions.
+unresolved findings remain, attempts feedback re-fix via the inner loop
+(up to 3 attempts). Step 1 initialization (branch name retrieval / branch_dir
+collision avoidance) and Step 3 final report generation are also issued as
+Instructions.
 
-Convergence checks:
+Convergence criteria:
   - findings_total == 0          -> Done
-  - no code changes in the round -> Done
-  - --confirm-round stop         -> Done
-  - max_rounds reached           -> Abort
+  - no source code changes in this round -> Done
+  - --confirm-round enabled and stopped  -> Done
+  - max_rounds reached                   -> Abort
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from agent_sequencer.api import Abort, Done, Instruction
 
 NAME = "review-rounds"
 DESCRIPTION = (
-    "Full-featured review-rounds (with final-report generation) that uses the "
+    "Full review-rounds implementation (with final report generation) using the "
     "project's parallel-review / review-respond / review-resolve skills, "
     "implementing both the outer loop (up to N rounds) and the inner loop "
     "(feedback re-fix, up to 3 attempts)."
@@ -39,44 +40,44 @@ PARAMS_SCHEMA = {
         "default": _DEFAULT_MAX_ROUNDS,
         "minimum": 1,
         "maximum": 10,
-        "description": "Maximum number of outer-loop rounds (1-10).",
+        "description": "Maximum number of rounds for the outer loop (1-10)",
     },
     "base": {
         "type": "string",
         "description": (
             "Base branch passed to parallel-review. "
-            "If omitted, the agent resolves it from main / master."
+            "If omitted, the agent resolves it to main / master."
         ),
     },
     "output_base": {
         "type": "string",
         "default": _DEFAULT_OUTPUT_BASE,
-        "description": "Base output directory for review documents.",
+        "description": "Base output directory for review documents",
     },
     "confirm": {
         "type": "boolean",
         "default": False,
         "description": (
-            "When true, wait for user confirmation immediately after the "
-            "review-respond estimate result (equivalent to the original "
-            "SKILL's --confirm option)."
+            "If True, wait for user confirmation immediately after the "
+            "review-respond estimate result "
+            "(equivalent to the original SKILL's --confirm)."
         ),
     },
     "confirm_round": {
         "type": "boolean",
         "default": False,
         "description": (
-            "When true, if unresolved findings remain at the end of a round, "
+            "If True, when unresolved findings remain at the end of a round, "
             "wait for user confirmation before proceeding to the next round "
-            "(equivalent to the original SKILL's --confirm-round option)."
+            "(equivalent to the original SKILL's --confirm-round)."
         ),
     },
     "commit": {
         "type": "boolean",
         "default": False,
         "description": (
-            "When true, perform an aggregated git commit after each finding "
-            "fix (equivalent to the original SKILL's --commit option)."
+            "If True, perform an aggregate git commit after fixing each finding "
+            "(equivalent to the original SKILL's --commit)."
         ),
     },
 }
@@ -86,8 +87,8 @@ _REVIEW_RESPOND_SKILL = ".claude/skills/review-respond/SKILL.md"
 _REVIEW_RESOLVE_SKILL = ".claude/skills/review-resolve/SKILL.md"
 
 # Adjacent bundle: markdown template for the final report.
-# Resolved from __file__ so the path stays absolute regardless of plugin install
-# location.
+# Resolved from __file__, so it becomes an absolute path independent of
+# the plugin install location.
 _FINAL_REPORT_FORMAT_PATH = (
     Path(__file__).resolve().parent / "review_rounds" / "final-report-format.md"
 ).as_posix()
@@ -188,65 +189,62 @@ _FINAL_REPORT_SCHEMA = {
 # ----------------------------------------------------------------------
 # Instruction templates
 # ----------------------------------------------------------------------
-# Expanded via str.format(), so JSON sample braces { } are escaped as {{ }}.
+# Since these are expanded via format(), { } in JSON samples are escaped as {{ }}.
 
 _TPL_REVIEW_INIT = textwrap.dedent("""\
-    [Round 1/{max_rounds} Step 1: parallel-review (with initialization)]
+    [Round 1/{max_rounds} Step 2.1: parallel-review (with initialization)]
     Skill: {skill}
-    Run parallel-review against the branch diff for {base_clause}. The
-    orchestrator (you) does not load review-finding bodies into context.
+    Run parallel-review against the branch diff of {base_clause}.
+    The orchestrator (you) must not put finding bodies into context.
 
     Initialization:
-    - Obtain the current branch name: git branch --show-current
+    - Get the current branch name: git branch --show-current
     - Determine branch_dir:
-      - Treat the branch name as a directory path (it may contain `/`).
-      - If {output_base}/<branch> already exists, append a numeric suffix
-        ({output_base}/<branch>_1, {output_base}/<branch>_2, ...) and use the
-        smallest suffix that does not yet exist.
-      - The resolved "<branch> or <branch>_N" is branch_dir.
+      - Treat the branch name as a directory path (it may contain `/`)
+      - If {output_base}/<branch> already exists, append a numeric suffix as
+        {output_base}/<branch>_1, {output_base}/<branch>_2, ... and adopt the
+        smallest number that does not yet exist
+      - The resolved "<branch> or <branch>_N" is branch_dir
     - Create the output directory with mkdir -p: {output_base}/<branch_dir>/
 
     File naming:
-    - This round's (Round 1) output path: {output_base}/<branch_dir>/review-round1.md
+    - Output for this round (Round 1): {output_base}/<branch_dir>/review-round1.md
 
-    Review-document language: the user's chat language.
+    Review document language: the user's chat language.
 
-    Reporting format (JSON):
+    Report format (JSON):
     {{
       "doc_path": "<full path>",
       "branch_dir": "<branch_dir>",
       "findings_total": <int>,
       "severity_counts": {{"critical": <int>, "major": <int>, "minor": <int>, "info": <int>}}
     }}
-    - branch_dir: must be reported because it is reused consistently across
-      subsequent rounds and the final report.
-    - severity_counts: copy directly from the aggregator sub-agent's return value.\
+    - branch_dir: must be reported because subsequent rounds + final report use it consistently
+    - severity_counts: copy verbatim from the aggregator sub-agent's return value\
 """)
 
 _TPL_REVIEW = textwrap.dedent("""\
-    [Round {round_num}/{max_rounds} Step 1: parallel-review]
+    [Round {round_num}/{max_rounds} Step 2.1: parallel-review]
     Skill: {skill}
-    Run parallel-review against the branch diff for {base_clause}. The
-    orchestrator (you) does not load review-finding bodies into context.
+    Run parallel-review against the branch diff of {base_clause}.
+    The orchestrator (you) must not put finding bodies into context.
 
-    File-naming rules:
-    - Output path: {output_base}/{branch_dir}/review-round{round_num}.md
-    - Use the {branch_dir} that was fixed in Round 1 (do not re-suffix).
+    File naming convention:
+    - Output: {output_base}/{branch_dir}/review-round{round_num}.md
+    - Use the branch_dir {branch_dir} resolved in Round 1 (re-numbering is forbidden)
 
-    Review-document language: the user's chat language.
+    Review document language: the user's chat language.
 
     Convergence-induction prevention:
-    - Do not pass the previous round's review document to reviewers (bias avoidance).
-    - Do not include past-round finding counts, count trends, or claims like
-      "things are converging" in the reviewer prompt.
-    - Do not include past-round finding IDs (C-1 / M-1 etc.) or past-round
-      Fixed / Won't Fix statistics either.
-    - Omitting parts of the template, or appending instructions to control the
-      finding count, is prohibited.
-    - The review orchestrator itself must not introduce findings outside the
-      reviewers.
+    - Do not pass the previous round's review document to reviewers (bias avoidance)
+    - Do not include past rounds' finding counts / count trends / "converging" or
+      similar trend information in reviewer prompts
+    - Do not include past rounds' finding IDs (C-1 / M-1 etc.) or Fixed / Won't Fix
+      statistics either
+    - Modifying parts of the template to adjust finding counts is forbidden
+    - The review orchestrator itself adding findings (other than reviewers) is forbidden
 
-    Reporting format (JSON):
+    Report format (JSON):
     {{
       "doc_path": "<full path>",
       "findings_total": <int>,
@@ -255,23 +253,22 @@ _TPL_REVIEW = textwrap.dedent("""\
 """)
 
 _TPL_RESPOND = textwrap.dedent("""\
-    [Round {round_num}/{max_rounds} Step 2: review-respond]
+    [Round {round_num}/{max_rounds} Step 2.2: review-respond]
     Skill: {skill}
-    Respond to the findings in review document {doc_path}. The orchestrator
-    (you) only orchestrates the retry loop and does not load verdict bodies or
-    finding bodies into context.
+    Respond to findings in review document {doc_path}. The orchestrator (you)
+    handles only re-execution loop orchestration and must not put judgment
+    bodies or finding bodies into context.
     {confirm_clause}
     {commit_clause}
 
     Additional constraints:
-    - Do not reference the previous round's review document (bias avoidance).
-    - Confirm the Will Fix count in the triage sub-agent's return value (also
-      explicit when 0).
-    - When evaluating spread signal e (Will Fix originating from a FIXME),
-      verify whether the finding has its origin in a FIXME: / TODO: in the
-      review text or the target files.
+    - Do not reference the previous round's review document (bias avoidance)
+    - Confirm Will Fix count via the triage sub-agent's return value (state explicitly even if 0)
+    - When judging diffusion signal e (Will Fix originating from FIXME), confirm
+      whether the target finding originates from FIXME: / TODO: in the review body
+      or in the target file
 
-    Reporting format (JSON):
+    Report format (JSON):
     {{
       "will_fix_count": <int>,
       "fixed_count": <int>,
@@ -280,140 +277,129 @@ _TPL_RESPOND = textwrap.dedent("""\
       "alternative_count": <int>,
       "downgrade_count": <int>,
       "code_changed": <bool>,
-      "summary_line": "(<=200 chars 1-line summary; copy from the aggregator sub-agent's return value)"
+      "summary_line": "(<=200 chars one-line summary; copy verbatim from the aggregator sub-agent's return value)"
     }}
-    - will_fix_count: triage sub-agent's return value will_fix_count.
+    - will_fix_count: triage sub-agent's return value will_fix_count
     - fixed_count: aggregator sub-agent's return value fixed_count
-      (Maintain regular fixes + Alternative FIXME insertions; 0 if all Downgrade).
-    - wontfix_count: triage sub-agent's return value wontfix_count.
-    - maintain_count / alternative_count / downgrade_count: estimate aggregator
-      sub-agent's return values.
-    - code_changed: aggregator sub-agent's return value code_changed.
-    - summary_line: 1-line summary for user notification (the leader holds only
-      this 1 line in context).\
+      (Maintain regular fixes + Alternative FIXME additions combined / 0 if all Downgrade)
+    - wontfix_count: triage sub-agent's return value wontfix_count
+    - maintain_count / alternative_count / downgrade_count: estimate aggregator sub-agent's return values
+    - code_changed: aggregator sub-agent's return value code_changed
+    - summary_line: one-line summary for user notification (only this single line goes into the leader's context)\
 """)
 
 _TPL_RESOLVE = textwrap.dedent("""\
-    [Round {round_num}/{max_rounds} Step 3: review-resolve]
+    [Round {round_num}/{max_rounds} Step 2.3: review-resolve]
     Skill: {skill}
-    Verify the resolution status of review document {doc_path}. The
-    orchestrator (you) does not load verification bodies into context.
+    Verify the fix status for review document {doc_path}. The orchestrator (you)
+    must not put verification bodies into context.
 
-    Reporting format (JSON):
+    Report format (JSON):
     {{
       "unresolved_count": <int>,
       "resolved_count": <int>,
       "feedback_count": <int>,
-      "summary_line": "(<=200 chars 1-line summary; copy from the aggregator sub-agent's return value)"
+      "summary_line": "(<=200 chars one-line summary; copy verbatim from the aggregator sub-agent's return value)"
     }}
-    - unresolved_count: aggregator sub-agent's return value feedback_count
-      (number of findings whose Verification still reads 💬 Feedback).
-    - resolved_count: aggregator sub-agent's return value resolved_count.
-    - feedback_count: synonymous with unresolved_count.
-    - summary_line: 1-line summary for user notification.\
+    - unresolved_count: aggregator sub-agent's return value feedback_count (findings whose Verification remains as 💬 Feedback)
+    - resolved_count: aggregator sub-agent's return value resolved_count
+    - feedback_count: synonym for unresolved_count
+    - summary_line: one-line summary for user notification\
 """)
 
 _TPL_FEEDBACK = textwrap.dedent("""\
-    [Round {round_num}/{max_rounds} Step 4: feedback re-fix (attempt {attempt}/{max_attempts})]
-    For findings that still have a 💬 Feedback Verification in review document
-    {doc_path}, run one cycle of {respond_skill}'s and {resolve_skill}'s
-    sub-agent delegation flow.
+    [Round {round_num}/{max_rounds} Step 2.4: feedback re-fix (attempt {attempt}/{max_attempts})]
+    For findings that remain as 💬 Feedback in review document {doc_path},
+    perform one pass of the sub-agent delegation flow of {respond_skill}
+    and {resolve_skill}.
 
-    Step 4.{attempt}.1 Feedback triage
+    Step 2.4.{attempt}.1 Feedback triage
         Run {respond_skill} Step 1 (triage).
-        Append to the triage prompt: prioritize triaging findings whose stage
-        is "feedback" (current_meta.verification has Feedback details).
+        Append to triage prompt: prioritize triage of findings whose stage is "feedback"
+        (Feedback details are in current_meta.verification).
 
-    Step 4.{attempt}.2 Feedback estimate
+    Step 2.4.{attempt}.2 Feedback estimate
         Run {respond_skill} Step 2 (parallel estimate).
-        Append to the estimate prompt: estimate taking the Feedback content in
-        current_meta.verification into account. Consider Downgrade if cost
-        inflates.
-        If every finding is Downgraded, skip Step 4.{attempt}.3 and proceed to
-        Step 4.{attempt}.4.
+        Append to estimate prompt: estimate based on Feedback content in current_meta.verification.
+        Consider Downgrade if cost balloons.
+        If all Downgrade, skip Step 2.4.{attempt}.3 and proceed to Step 2.4.{attempt}.4.
 
-    Step 4.{attempt}.3 Feedback fix
-        Run {respond_skill} Step 3 (fix) → Step 4 (format & build verification)
-        → Step 5 (aggregation).
-        Append to the fix prompt: re-fix taking the Feedback content in
-        current_meta.verification into account.
+    Step 2.4.{attempt}.3 Feedback fix
+        Run {respond_skill} Step 3 (fix) -> Step 4 (format & build verification) ->
+        Step 5 (aggregator).
+        Append to fix prompt: re-fix based on Feedback content in current_meta.verification.
 
-    Step 4.{attempt}.4 Feedback verify
+    Step 2.4.{attempt}.4 Feedback verification
         Re-run {resolve_skill}.
 
-    Reporting format (JSON):
+    Report format (JSON):
     {{
       "unresolved_count": <int>,
       "resolved_count": <int>,
       "feedback_count": <int>,
       "code_changed": <bool>,
-      "summary_line": "(<=200 chars 1-line summary)"
+      "summary_line": "(<=200 chars one-line summary)"
     }}
-    - unresolved_count: review-resolve aggregator sub-agent's return value
-      feedback_count after this attempt.
-    - resolved_count: same return value's resolved_count.
-    - feedback_count: synonymous with unresolved_count.
-    - code_changed: whether even a single line of source code was modified
-      during this attempt.
-    - summary_line: 1-line summary for user notification.\
+    - unresolved_count: review-resolve aggregator sub-agent's return value feedback_count after this attempt
+    - resolved_count: same return value resolved_count
+    - feedback_count: synonym for unresolved_count
+    - code_changed: whether at least one line of source code was modified in this attempt
+    - summary_line: one-line summary for user notification\
 """)
 
 _TPL_CONFIRM_ROUND = textwrap.dedent("""\
-    [Round {round_num}/{max_rounds} Step 5: next-round confirmation (--confirm-round)]
-    The round is ending with {unresolved} unresolved finding(s) remaining.
-    Ask the user whether to proceed to the next round (Round {next_round}/{max_rounds}).
+    [Round {round_num}/{max_rounds} Step 2.5: next round confirmation (--confirm-round)]
+    Ending the round with {unresolved} unresolved findings remaining.
+    Confirm with the user whether to proceed to the next round (Round {next_round}/{max_rounds}).
 
-    Reporting format (JSON): {{"proceed": <bool>}}
-    - proceed: true to advance to the next round; false to stop here.\
+    Report format (JSON): {{"proceed": <bool>}}
+    - proceed: true to proceed to the next round / false to terminate here\
 """)
 
 _TPL_FINAL_REPORT = textwrap.dedent("""\
-    [Step 6: final-report generation (delegated to the final-report aggregator sub-agent)]
-    All {rounds_executed} round(s) are complete. Delegate to the final-report
-    aggregator sub-agent to generate the final report.
+    [Step 3: final report generation (delegated to the final report aggregator sub-agent)]
+    All {rounds_executed} rounds completed. Delegate to the final report aggregator
+    sub-agent to generate the final report.
 
     Output: {output_base}/{branch_dir}/final-report.md
     Termination reason: {termination_reason}
 
-    Per-round review documents (input passed to the aggregator sub-agent):
-    {round_docs_block}
+    Per-round review documents:
+{round_docs_block}
 
-    Per-round statistics (reference info passed to the aggregator sub-agent):
-    {per_round_stats_block}
+    Per-round statistics (reference data):
+{per_round_stats_block}
 
-    Launch a sub-agent via the Agent tool with the following prompt.
-    When launching, specify `model="sonnet"`.
+    Launch the sub-agent via the Agent tool. When launching the Agent tool,
+    specify `model="sonnet"`. The launch prompt is as follows:
 
     ```
-    Generate the final report from all rounds' review documents.
+    As your first action, you MUST Read `.claude/skills/review-rounds/templates/final-report-compile.md`. Do not perform any other judgment, action, or tool call before the Read completes. After reading, follow its instructions.
 
-    Input:
-    - Per-round review documents (round_docs_block above)
-    - Per-round statistics (per_round_stats_block above; reference info)
+    Variables (substitute into the template's {{{{...}}}} placeholders):
+    - round_doc_paths: |
+{round_docs_block}
+    - round_stats: |
+{per_round_stats_block}
+    - template_path: {format_path}
+    - report_path: {output_base}/{branch_dir}/final-report.md
+    - language: the user's chat language
+
+    Additional information:
     - Termination reason: {termination_reason}
-    - Report template: {format_path}
-    - Output: {output_base}/{branch_dir}/final-report.md
-    - Language: the user's chat language
 
-    What to do:
-    1. Read the template markdown to grasp its structure (<...> placeholders,
-       table structure).
-    2. Read each round's md and extract Triage / Estimate / Status / Verification
-       values from <!-- METADATA(id) --> 〜 <!-- /METADATA(id) --> to obtain
-       per-finding details (severity / location / summary / resolution /
-       separate-PR recommendation status, etc.).
-    3. Fill in the template's statistics summary, full finding list, future
-       recommendations, and review-document index, then Write to the output.
+    Round-specific overrides (apply after following the template's instructions):
+    - (none)
 
-    Return value: {{"report_path": "<full path>"}}
+    Include `template_id` (Read from the template's frontmatter) in the return value. The leader must verify that the returned template_id matches `4f8a2d1c-9b35-4e67-a2c1-8b5d3f9e7a16`.
     ```
 
-    Reporting format (JSON): {{"report_path": "<full path>"}}\
+    Report format (JSON): {{"report_path": "<full path>"}}\
 """)
 
 
 def _format_round_docs_block(round_records: list[dict]) -> str:
-    """Emit each round's doc_path as a list."""
+    """Write out each round's doc_path in list form."""
     if not round_records:
         return "    (none)"
     return "\n".join(
@@ -423,7 +409,7 @@ def _format_round_docs_block(round_records: list[dict]) -> str:
 
 
 def _format_per_round_stats_block(round_records: list[dict]) -> str:
-    """Emit per-round statistics one line each (basis data for the final report)."""
+    """Write out each round's statistics one line at a time (basis data for final report generation)."""
     if not round_records:
         return "    (none)"
     lines: list[str] = []
@@ -465,15 +451,14 @@ def run(ctx):
         else "the default base branch (main or master)"
     )
     confirm_clause = (
-        "Option: --confirm enabled (wait for user confirmation immediately "
-        "after the estimate result)."
+        "Option: --confirm enabled (wait for user confirmation immediately after the estimate result)."
         if confirm
         else "Option: --confirm disabled (continue without pausing after the estimate)."
     )
     commit_clause = (
-        "Option: --commit enabled (perform an aggregated git commit after fixes)."
+        "Option: --commit enabled (perform an aggregate git commit after fixing)."
         if commit
-        else "Option: --commit disabled (no commits)."
+        else "Option: --commit disabled (do not commit)."
     )
 
     branch_dir: str | None = None
@@ -488,9 +473,9 @@ def run(ctx):
             label=f"Round {round_num}/{max_rounds}",
         )
 
-        # ----- Step 1: parallel-review -----
-        # Round 1: use the initialization-included template to fix branch_dir.
-        # Round 2+: pass the fixed branch_dir to reuse.
+        # ----- Step 2.1: parallel-review -----
+        # Round 1: use the with-initialization template to resolve branch_dir
+        # Round 2+: pass the resolved branch_dir for reuse
         if round_num == 1:
             review_result = yield Instruction(
                 text=_TPL_REVIEW_INIT.format(
@@ -543,10 +528,10 @@ def run(ctx):
         if findings_total == 0:
             round_records.append(round_record)
             converged = True
-            termination_reason = "Converged: zero findings"
+            termination_reason = "Converged with zero findings"
             break
 
-        # ----- Step 2: review-respond -----
+        # ----- Step 2.2: review-respond -----
         respond_result = yield Instruction(
             text=_TPL_RESPOND.format(
                 round_num=round_num,
@@ -573,9 +558,9 @@ def run(ctx):
             "summary_line", ""
         )
 
-        # If fixed_count == 0 there is nothing to verify, so skip Steps 3-4.
+        # If fixed_count == 0, there is nothing to verify, so skip Step 2.3-2.4
         if respond_result["fixed_count"] > 0:
-            # ----- Step 3: review-resolve -----
+            # ----- Step 2.3: review-resolve -----
             resolve_result = yield Instruction(
                 text=_TPL_RESOLVE.format(
                     round_num=round_num,
@@ -594,7 +579,7 @@ def run(ctx):
                 "summary_line", ""
             )
 
-            # ----- Step 4: inner loop - feedback re-fix (up to 3 attempts) -----
+            # ----- Step 2.4: inner loop - feedback re-fix (up to 3 attempts) -----
             for attempt in range(1, _DEFAULT_FEEDBACK_ATTEMPTS + 1):
                 if round_record["unresolved"] == 0:
                     break
@@ -636,13 +621,13 @@ def run(ctx):
 
         round_records.append(round_record)
 
-        # ----- Convergence check 2: no source-code changes -----
+        # ----- Convergence check 2: no source code changes -----
         if not round_record["code_changed"]:
             converged = True
-            termination_reason = "Converged: no source code changes"
+            termination_reason = "Converged with no source code changes"
             break
 
-        # ----- Next-round confirmation (--confirm-round + unresolved + rounds remain) -----
+        # ----- Next round confirmation (--confirm-round + unresolved present + next round remains) -----
         if confirm_round and round_record["unresolved"] > 0 and round_num < max_rounds:
             confirm_result = yield Instruction(
                 text=_TPL_CONFIRM_ROUND.format(
@@ -655,13 +640,13 @@ def run(ctx):
                 timeout_minutes=60,
             )
             if not confirm_result["proceed"]:
-                termination_reason = "Round loop stopped by user request"
+                termination_reason = "Round loop stopped by user instruction"
                 break
     else:
-        # for/else: no break taken == max_rounds reached.
-        termination_reason = f"Maximum round count {max_rounds} reached"
+        # for/else: did not break = max_rounds reached
+        termination_reason = f"Reached maximum number of rounds {max_rounds}"
 
-    # ----- Step 6: final-report generation -----
+    # ----- Step 3: final report generation -----
     report_path: str | None = None
     if branch_dir is not None and round_records:
         report_result = yield Instruction(
@@ -708,16 +693,16 @@ def run(ctx):
         "round_records": round_records,
     }
 
-    if converged or termination_reason == "Round loop stopped by user request":
+    if converged or termination_reason == "Round loop stopped by user instruction":
         yield Done(summary=summary)
     else:
         yield Abort(
             reason=(
                 f"{termination_reason} (did not converge). "
                 f"Cumulative will_fix={total_will_fix}, fixed={total_fixed}, "
-                f"wontfix={total_wontfix}, feedback_attempts={total_feedback_attempts}; "
-                f"unresolved at the last round={last_unresolved}. "
+                f"wontfix={total_wontfix}, feedback_attempts={total_feedback_attempts}, "
+                f"unresolved in final round={last_unresolved}. "
                 f"Final report: {report_path or '(not generated)'}. "
-                "Increase max_rounds or review the unresolved findings."
+                "Increase max_rounds, or review the unresolved findings."
             )
         )

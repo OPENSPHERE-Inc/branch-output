@@ -13,7 +13,7 @@
 
 **Finding:**
 
-{description of the finding}
+{description of the issue}
 
 <!-- METADATA(C-1) -->
 <!-- /METADATA(C-1) -->
@@ -28,7 +28,7 @@
 
 **Finding:**
 
-{description of the finding}
+{description of the issue}
 
 <!-- METADATA(M-1) -->
 <!-- /METADATA(M-1) -->

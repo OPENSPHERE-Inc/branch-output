@@ -19,3 +19,14 @@ Use the Write tool for file output. Bash cat heredoc is unusable because apostro
 ## Coding Conventions
 
 When editing source code, follow `.claude/rules/comment.md`. When editing human-facing documentation, follow `.claude/rules/document.md`.
+
+## Launch prompt completeness
+
+Each SKILL leader MUST include the following 4 items in the launch prompt when launching a sub-agent:
+
+- The path to the external template (with a `Read` directive, stating that this is the first action to perform)
+- Variable values that substitute the `{{...}}` placeholders in the template
+- Round-specific overrides (state "(none)" explicitly when there are none)
+- The requirement to include `template_id` (the value Read from the template frontmatter) in the return value
+
+Omitting or modifying variable values, and quoting / summarizing / restating the template body, are prohibited. If the `template_id` in the return value received by the leader does not match the template's frontmatter, relaunch a fresh instance of the same `subagent_type` and retry. If two consecutive runs of the same sub-agent fail to match, report the failure to the user and abort.

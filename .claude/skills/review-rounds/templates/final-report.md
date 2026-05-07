@@ -1,6 +1,6 @@
 <!--
-Final-report template for review-rounds. The agent replaces `<...>` placeholders
-and the "..." cells in tables with real data to produce the report.
+Final report template for review-rounds. The agent replaces `<...>` placeholders and
+table "..." cells with actual data to generate the report.
 This file is kept in sync with .claude/sequencer/programs/review_rounds/final-report-format.md.
 -->
 
@@ -9,77 +9,68 @@ This file is kept in sync with .claude/sequencer/programs/review_rounds/final-re
 **Branch:** `<branch-name>`
 **Date:** `YYYY-MM-DD`
 **Rounds executed:** `<N>`
-**Termination reason:** `<Converged: zero findings / Converged: no source code changes / Round loop stopped by user request / Maximum round count N reached>`
+**End reason:** `<converged with zero findings / converged with no source code changes / round loop stopped by user / reached max rounds N>`
 
-## Statistics Summary
+## Statistics summary
 
-| Round | Findings | 🔧 Will Fix | ▶️ Maintain | 🚧 Alternative | 🔻 Downgrade | 🟢 Fixed | Unresolved | Feedback re-fixes |
-|---------|-------:|------------:|------------:|---------------:|-------------:|---------:|-----------:|------------------:|
-| Round 1 |    ... |         ... |         ... |            ... |          ... |      ... |        ... |               ... |
-| Round 2 |    ... |         ... |         ... |            ... |          ... |      ... |        ... |               ... |
-| **Total** | **...** |    **...** |    **...** |       **...** |     **...** |  **...** |   **...** |          **...** |
+| Round | Findings | 🔧 Will Fix | ▶️ Maintain | 🚧 Alternative | 🔻 Downgrade | 🟢 Fixed | Unresolved | Feedback re-fix attempts |
+|-------|---------:|------------:|------------:|---------------:|-------------:|---------:|-----------:|-------------------------:|
+| Round 1 |   ... |         ... |         ... |            ... |          ... |      ... |        ... |                      ... |
+| Round 2 |   ... |         ... |         ... |            ... |          ... |      ... |        ... |                      ... |
+| **Total** | **...** | **...** |    **...** |       **...** |     **...** |  **...** |    **...** |                **...** |
 
 Column definitions:
 
-- **Unresolved**: number of findings whose `Verification: 💬 Feedback` still remains
-  after 3 attempts of the feedback re-fix loop.
-- **Feedback re-fixes**: number of feedback re-fix loop iterations executed in this
-  round (max 3).
+- **Unresolved**: number of findings that still have `Verification: 💬 Feedback` even after running the feedback re-fix loop 3 times.
+- **Feedback re-fix attempts**: number of attempts of the feedback re-fix loop executed in this round (max 3).
 
-## All Findings and Resolution Status
+## Full findings list and response status
 
 ### Resolved
 
-Aggregate findings with `Status: 🟢 Fixed` (covers both regular Maintain fixes and
-Alternative FIXME insertions).
+Aggregate findings with `Status: 🟢 Fixed` (includes both normal fixes via Maintain and FIXME attachments via Alternative).
 
-| # | Round | Severity | Location | Finding Summary | Resolution |
-|---|---------|----------|-------------|-----------------|------------|
-| 1 | Round 1 | Critical | `file:line` | Summary | 🟢 Fixed (Maintain) — fix description |
-| 2 | Round 1 | Major    | `file:line` | Summary | 🟢 Fixed (Alternative) — FIXME comment added at `<file:line>` |
+| # | Round | Severity | Location | Finding summary | Response |
+|---|-------|----------|----------|-----------------|----------|
+| 1 | Round 1 | Critical | `file:line` | Summary | 🟢 Fixed (Maintain) — fix content |
+| 2 | Round 1 | Major | `file:line` | Summary | 🟢 Fixed (Alternative) — FIXME comment attached at `<file:line>` |
 
 ### Unresolved
 
-Aggregate findings whose `Verification: 💬 Feedback` remained.
+Aggregate findings that remain at `Verification: 💬 Feedback`.
 
-| # | Round | Severity | Location | Finding Summary | Status |
-|---|---------|----------|-------------|-----------------|--------|
+| # | Round | Severity | Location | Finding summary | Status |
+|---|-------|----------|----------|-----------------|--------|
 | 1 | Round 2 | Major | `file:line` | Summary | Not resolved even after feedback re-fix |
 
-### Decided as No Action Needed
+### Judged not to require action
 
-List here all `Triage: 🚫 Won't Fix` and `Estimate: 🔻 Downgrade` findings that
-**do not carry a separate-PR recommendation** (false positives, preference issues,
-fully-rejected out-of-scope items, Downgrades with neither alternative response
-nor separate-PR recommendation, etc.).
+List findings with `Triage: 🚫 Won't Fix` and `Estimate: 🔻 Downgrade` that **do not have a separate-PR recommendation attached** (false positives, matters of preference, fully rejected as out of scope, Downgrades that come with neither an alternative response nor a separate-PR recommendation, etc.).
 
-| # | Round | Severity | Location | Finding Summary | Reason |
-|---|---------|----------|-------------|-----------------|--------|
+| # | Round | Severity | Location | Finding summary | Reason |
+|---|-------|----------|----------|-----------------|--------|
 | 1 | Round 1 | Minor | `file:line` | Summary | Triage: 🚫 Won't Fix — reason |
-| 2 | Round 1 | Minor | `file:line` | Summary | Estimate: 🔻 Downgrade — Cost L, Signals a,b. Neither alternative response nor separate-PR recommendation. |
+| 2 | Round 1 | Minor | `file:line` | Summary | Estimate: 🔻 Downgrade — Cost L, Signals a,b. No alternative response or separate-PR recommendation. |
 
-## Recommended for Future Action
+## Recommended future actions
 
-Aggregate findings whose follow-up in a separate PR is anticipated:
+Aggregate the following (findings expected to be addressed later in a separate PR):
 
-- `Triage: 🚫 Won't Fix` findings whose rationale explicitly recommends a separate PR.
-- `Estimate: 🔻 Downgrade` findings whose rationale explicitly recommends a separate PR.
-- `Estimate: 🚧 Alternative` (FIXME already inserted) findings whose rationale
-  explicitly recommends a separate PR.
+- `Triage: 🚫 Won't Fix` items where a separate-PR recommendation is explicitly stated in the reason field
+- `Estimate: 🔻 Downgrade` items where a separate-PR recommendation is explicitly stated in the reason field
+- `Estimate: 🚧 Alternative` (FIXME already attached) items where a separate-PR recommendation is explicitly stated in the reason field
 
-This is mutually exclusive with "Decided as No Action Needed". Alternative FIXME
-insertions are also listed in the "Resolved" section, but if they carry a
-separate-PR recommendation, list them additionally here (for roadmap purposes).
+This is mutually exclusive with the "Judged not to require action" section. Alternative FIXME attachments are also listed in the "Resolved" section, but when accompanied by a separate-PR recommendation, they are additionally listed in this section (for roadmap purposes).
 
-| # | Severity | Location | Summary | Reason for Recommendation |
-|---|----------|-------------|---------|---------------------------|
-| 1 | Minor | `file:line` | Summary | Triage: 🚫 Won't Fix — existing-code bug. Recommend addressing in a separate PR. |
-| 2 | Major | `file:line` | Summary | Estimate: 🔻 Downgrade — Cost L, Signals a,b,c. Recommend addressing in a separate PR. |
-| 3 | Major | `file:line` | Summary | Estimate: 🚧 Alternative — FIXME already added (`output.cpp:200`). Recommend full fix in a separate PR. |
+| # | Severity | Location | Summary | Recommendation reason |
+|---|----------|----------|---------|------------------------|
+| 1 | Minor | `file:line` | Summary | Triage: 🚫 Won't Fix — bug in existing code. Recommended to fix in a separate PR. |
+| 2 | Major | `file:line` | Summary | Estimate: 🔻 Downgrade — Cost L, Signals a,b,c. This response is recommended to be performed in a separate PR. |
+| 3 | Major | `file:line` | Summary | Estimate: 🚧 Alternative — FIXME already attached (`output.cpp:200`). Full response recommended in a separate PR. |
 
-## Review Document Index
+## Review document list
 
-| Round | Review Document |
-|---------|-----------------|
+| Round | Review document |
+|-------|-----------------|
 | Round 1 | `<path>` |
 | Round 2 | `<path>` |
