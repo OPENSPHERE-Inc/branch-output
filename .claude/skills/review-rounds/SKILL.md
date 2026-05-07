@@ -1,7 +1,7 @@
 ---
 name: review-rounds
 description: Automatically iterate parallel review, respond, and resolve across multiple rounds until no actionable findings remain
-allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git status:*), Bash(git branch:*), Bash(mkdir:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*), Bash(clang-format:*), Bash(cmake-format:*), Bash(.claude/scripts/rm-tmp.sh:*)
+allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git status:*), Bash(git branch:*), Bash(mkdir:*), Bash(cmake:*), Bash(make:*), Bash(clang-format:*), Bash(cmake-format:*), Bash(.claude/scripts/rm-tmp.sh:*)
 ---
 
 # Automatic Review Round Execution

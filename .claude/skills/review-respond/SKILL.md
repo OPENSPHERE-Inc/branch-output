@@ -1,7 +1,7 @@
 ---
 name: review-respond
 description: Triage, estimate, fix, self-review, and update the review document for review findings
-allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(mkdir:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(pwsh:*), Bash(clang-format:*), Bash(cmake-format:*), Bash(.claude/scripts/rm-tmp.sh:*), Bash(python .claude/scripts/render-review.py:*)
+allowed-tools: Agent, Read, Write, Edit, Glob, Grep, Bash(grep:*), Bash(ls:*), Bash(find:*), Bash(mkdir:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(cmake:*), Bash(make:*), Bash(clang-format:*), Bash(cmake-format:*), Bash(.claude/scripts/rm-tmp.sh:*), Bash(python .claude/scripts/render-review.py:*)
 ---
 
 # Review Respond
