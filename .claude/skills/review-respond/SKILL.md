@@ -207,7 +207,9 @@ For each id:
    - Downgrade — overturn the triage verdict; do not fix. No alternative. Include "recommend separate PR" in the rationale if relevant.
    - Alternative — overturn the triage verdict, but address it lightly with an alternative such as adding a FIXME comment. Briefly indicate the direction for the FIXME wording. Include "recommend separate PR" in the rationale if relevant.
 
-   The higher the severity of the finding, the more strictly the grounds for choosing Downgrade are scrutinized. Critical / Major are typically better as Alternative or "Downgrade + separate PR recommendation". Minor / Info more easily tolerate Downgrade.
+   cost == L is Downgrade (include "recommend separate PR" in the rationale). L-scale changes are outside review-respond's auto-fix scope and require user judgment (this does not mean the finding can be left unfixed).
+
+   When cost is S/M: The higher the severity of the finding, the more strictly the grounds for choosing Downgrade are scrutinized. Critical / Major are typically better as Alternative or "Downgrade + separate PR recommendation". Minor / Info more easily tolerate Downgrade.
 
 5. Comment-necessity check (perform only when the fix plan includes a comment addition). Comment additions do not solve the underlying code problem, so judge necessity strictly and independently of cost — even when cost is low (a few added lines). Low cost is not a reason to keep the comment. Comments matching the criteria below are excluded by default. Confirm the initial verdict based on what remains after exclusion:
    - Code changes still remain after exclusion → Maintain (update the fix plan to drop the comment)
