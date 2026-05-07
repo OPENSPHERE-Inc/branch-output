@@ -57,7 +57,7 @@ Write the review document in the user's chat language.
   - Final summary presentation to the user.
 - **The orchestrator does not put review finding bodies or judgment bodies into context.** It holds only file paths and lightweight counters; details are handled by sub-agents.
 - Each round's results are passed to the next Step / next round **only through the review document**. Intermediate data between sub-agents is self-contained within a Step (within the same Instruction) and must not persist across Steps.
-- **For aggregator / compilation / analysis / format & build verification sub-agents, specify `model="sonnet"` when launching via the Agent tool.** Targets: parallel-review § Step 3 aggregator Sub / review-respond § Step 2 estimate aggregator Sub / review-respond § Step 4 format & build verification Sub / review-respond § Step 5 aggregator Sub / review-resolve § Step 1 analysis Sub / review-resolve § Step 3 aggregator Sub / review-rounds § Step 3 final report aggregator Sub. For all other sub-agents (individual reviewer / triage / individual estimate / individual fix / build-fix specialist / verification), do not specify a model (follow the agent definition default).
+- **Launch aggregator / compilation / analysis / format & build verification sub-agents via `subagent_type="review-helper"`** (`model: sonnet` is already specified in review-helper's agent definition). Targets: parallel-review § Step 3 aggregator Sub / review-respond § Step 2 estimate aggregator Sub / review-respond § Step 4 format & build verification Sub / review-respond § Step 5 aggregator Sub / review-resolve § Step 1 analysis Sub / review-resolve § Step 3 aggregator Sub / review-rounds § Step 3 final report aggregator Sub. For all other sub-agents, specify a specialist (e.g., cpp-sensei) via `subagent_type`, or use `subagent_type="general-purpose"` as for triage. Do not specify `model="..."` from the SKILL (the model follows each agent definition's frontmatter).
 
 For the launch prompt completeness convention, see `.claude/rules/sub-agent.md` § Launch prompt completeness.
 
@@ -214,7 +214,7 @@ Final report path: `{base-path}/{branch-dir}/final-report.md`
 
 Launch procedure:
 
-1. Launch the sub-agent via the Agent tool. Specify `model="sonnet"`. The task-specific instructions are stored in the external template `templates/final-report-compile.md`. Example launch prompt:
+1. Launch the sub-agent via `Agent(subagent_type="review-helper", prompt=...)`. The task-specific instructions are stored in the external template `templates/final-report-compile.md`. Example launch prompt:
 
 ```
 As your first action, you MUST Read `.claude/skills/review-rounds/templates/final-report-compile.md`. Do not perform any other judgment, action, or tool call before the Read completes. After reading, follow its instructions.

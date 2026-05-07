@@ -175,7 +175,7 @@ Include `template_id` (Read from the template's frontmatter) in the return value
 
 2. Receive the return value from every estimate agent (`{items: [{id, verdict}, ...], template_id}`). Verify that each agent's `template_id` matches `8b2d5f1c-7a93-4e64-b8d1-2c5e9a3f7b48`; on mismatch, relaunch that agent. Aggregate `items` to build a `{id → verdict}` map. Do not load the estimate body. Each agent has Written `{tmp_dir}/estimates/{id}.json`. The leader keeps the `{id → verdict}` map in context for selecting the fix targets in Step 3.
 
-3. Launch the aggregator sub-agent to display the estimate result table on the console. Reading each `{tmp_dir}/estimates/{id}.json` and producing the table is the aggregator sub-agent's responsibility. Specify `model="sonnet"` when launching via the Agent tool.
+3. Launch the aggregator sub-agent to display the estimate result table on the console. Reading each `{tmp_dir}/estimates/{id}.json` and producing the table is the aggregator sub-agent's responsibility. Launch via `Agent(subagent_type="review-helper", prompt=...)`.
 
    Example launch prompt for the aggregator sub-agent. Task-specific instructions are stored in the `templates/estimate-summary.md` external template:
 
@@ -238,7 +238,7 @@ Maximum attempts: 5
 
 The leader repeats the following up to the maximum attempts:
 
-1. Launch the format & build verification Sub (see "Format & build verification Sub launch prompt" section for the prompt). Specify `model="sonnet"` when launching via the Agent tool. The Sub runs format → build once and, on failure, identifies the specialist.
+1. Launch the format & build verification Sub via `Agent(subagent_type="review-helper", prompt=...)` (see "Format & build verification Sub launch prompt" section for the prompt). The Sub runs format → build once and, on failure, identifies the specialist.
 2. Receive the return value from the Sub (`{path, success, format_violations_fixed, summary_line, template_id}`). Verify that `template_id` matches `9d3c5f8a-2b71-4e94-a8c5-1f7d3b9e2c46`; on mismatch, relaunch the Sub.
 3. If `success == true`, exit the loop (success).
 4. If `success == false`:
@@ -287,7 +287,7 @@ The leader (you) does not load decision bodies into context.
 
 Launch procedure:
 
-1. Launch a new sub-agent via the Agent tool. Specify `model="sonnet"`. Task-specific instructions are stored in the `templates/compile.md` external template. Example launch prompt:
+1. Launch a new sub-agent via `Agent(subagent_type="review-helper", prompt=...)`. Task-specific instructions are stored in the `templates/compile.md` external template. Example launch prompt:
 
 ```
 As your first action, you MUST Read `.claude/skills/review-respond/templates/compile.md`. Do not perform any other judgment, action, or tool call before the Read completes. After reading, follow its instructions.

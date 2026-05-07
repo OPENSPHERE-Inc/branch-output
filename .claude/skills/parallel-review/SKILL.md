@@ -113,7 +113,7 @@ Receive the return value (`{path, critical, major, minor, info, template_id}`) f
 After all reviewers complete, launch the aggregator sub-agent and delegate report consolidation to it.
 The review leader does not perform aggregation work (Reading each reviewer file, deduplicating, sorting, Writing the deliverable) and does not load reviewer output bodies into context.
 
-When launching via the Agent tool, specify `model="sonnet"`.
+Launch via `Agent(subagent_type="review-helper", prompt=...)` (model follows review-helper's agent definition; do not specify model from the leader).
 
 ### Aggregator Sub-Agent Launch Prompt
 

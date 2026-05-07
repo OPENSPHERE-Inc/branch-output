@@ -370,8 +370,9 @@ _TPL_FINAL_REPORT = textwrap.dedent("""\
     Per-round statistics (reference data):
 {per_round_stats_block}
 
-    Launch the sub-agent via the Agent tool. When launching the Agent tool,
-    specify `model="sonnet"`. The launch prompt is as follows:
+    Launch the sub-agent via `Agent(subagent_type="review-helper", prompt=...)`
+    (model follows review-helper's agent definition; do not specify model from
+    the leader). The launch prompt is as follows:
 
     ```
     As your first action, you MUST Read `.claude/skills/review-rounds/templates/final-report-compile.md`. Do not perform any other judgment, action, or tool call before the Read completes. After reading, follow its instructions.

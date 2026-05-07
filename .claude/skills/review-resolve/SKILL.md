@@ -91,7 +91,7 @@ Use the **Write tool** for output. Bash cat heredoc is unusable because apostrop
 
 ## Step 1 — Analysis (delegate to the analysis sub-agent)
 
-When invoking the Agent tool, specify `model="sonnet"`. Task-specific instructions are stored in the `templates/analyze.md` external template. Example launch prompt:
+Launch via `Agent(subagent_type="review-helper", prompt=...)`. Task-specific instructions are stored in the `templates/analyze.md` external template. Example launch prompt:
 
 ```
 As your first action, you MUST Read `.claude/skills/review-resolve/templates/analyze.md`. Do not perform any other judgment, action, or tool call before the Read completes. After reading, follow its instructions.
@@ -175,7 +175,7 @@ The leader (you) does not place the verification body in context.
 
 Launch procedure:
 
-1. Launch a new sub-agent via the Agent tool. Specify `model="sonnet"`. Task-specific instructions are stored in the `templates/compile.md` external template. Example launch prompt:
+1. Launch a new sub-agent via `Agent(subagent_type="review-helper", prompt=...)`. Task-specific instructions are stored in the `templates/compile.md` external template. Example launch prompt:
 
 ```
 As your first action, you MUST Read `.claude/skills/review-resolve/templates/compile.md`. Do not perform any other judgment, action, or tool call before the Read completes. After reading, follow its instructions.
