@@ -93,6 +93,11 @@ _FINAL_REPORT_FORMAT_PATH = (
     Path(__file__).resolve().parent / "review_rounds" / "final-report-format.md"
 ).as_posix()
 
+# Adjacent bundle: prompt template for the final report aggregator sub-agent.
+_FINAL_REPORT_COMPILE_PATH = (
+    Path(__file__).resolve().parent / "review_rounds" / "final-report-compile.md"
+).as_posix()
+
 _SEVERITY_COUNTS_SCHEMA = {
     "type": "object",
     "properties": {
@@ -262,7 +267,12 @@ _TPL_RESPOND = textwrap.dedent("""\
     {commit_clause}
 
     Additional constraints:
-    - Do not reference the previous round's review document (bias avoidance)
+    - When launching the triage sub-agent, pass the following as the
+      previous_round_doc_paths variable (Round 1: (none); Round N: doc_paths
+      of Round 1..N-1). For decision behavior, see the Won't Fix guideline in
+      templates/triage.md:
+{previous_round_doc_paths_block}
+    - Do not pass the previous round's review document to the estimate sub-agent (bias avoidance)
     - Confirm Will Fix count via the triage sub-agent's return value (state explicitly even if 0)
     - When judging diffusion signal e (Will Fix originating from FIXME), confirm
       whether the target finding originates from FIXME: / TODO: in the review body
@@ -317,6 +327,9 @@ _TPL_FEEDBACK = textwrap.dedent("""\
         Run {respond_skill} Step 1 (triage).
         Append to triage prompt: prioritize triage of findings whose stage is "feedback"
         (Feedback details are in current_meta.verification).
+        When launching triage, pass the following as the previous_round_doc_paths variable
+        (for decision behavior, see the Won't Fix guideline in templates/triage.md):
+{previous_round_doc_paths_block}
 
     Step 2.4.{attempt}.2 Feedback estimate
         Run {respond_skill} Step 2 (parallel estimate).
@@ -375,7 +388,7 @@ _TPL_FINAL_REPORT = textwrap.dedent("""\
     the leader). The launch prompt is as follows:
 
     ```
-    As your first action, you MUST Read `.claude/skills/review-rounds/templates/final-report-compile.md`. Do not perform any other judgment, action, or tool call before the Read completes. After reading, follow its instructions.
+    As your first action, you MUST Read `{compile_path}`. Do not perform any other judgment, action, or tool call before the Read completes. After reading, follow its instructions.
 
     Variables (substitute into the template's {{{{...}}}} placeholders):
     - round_doc_paths: |
@@ -533,6 +546,8 @@ def run(ctx):
             break
 
         # ----- Step 2.2: review-respond -----
+        # round_records has not yet been appended for this round, so its current
+        # contents are the "list of past rounds' documents".
         respond_result = yield Instruction(
             text=_TPL_RESPOND.format(
                 round_num=round_num,
@@ -541,6 +556,9 @@ def run(ctx):
                 doc_path=doc_path,
                 confirm_clause=confirm_clause,
                 commit_clause=commit_clause,
+                previous_round_doc_paths_block=_format_round_docs_block(
+                    round_records
+                ),
             ),
             expect_schema=_RESPOND_SCHEMA,
             timeout_minutes=180,
@@ -603,6 +621,9 @@ def run(ctx):
                         doc_path=doc_path,
                         respond_skill=_REVIEW_RESPOND_SKILL,
                         resolve_skill=_REVIEW_RESOLVE_SKILL,
+                        previous_round_doc_paths_block=_format_round_docs_block(
+                            round_records
+                        ),
                     ),
                     expect_schema=_FEEDBACK_SCHEMA,
                     timeout_minutes=120,
@@ -657,6 +678,7 @@ def run(ctx):
                 branch_dir=branch_dir,
                 termination_reason=termination_reason,
                 format_path=_FINAL_REPORT_FORMAT_PATH,
+                compile_path=_FINAL_REPORT_COMPILE_PATH,
                 round_docs_block=_format_round_docs_block(round_records),
                 per_round_stats_block=_format_per_round_stats_block(round_records),
             ),

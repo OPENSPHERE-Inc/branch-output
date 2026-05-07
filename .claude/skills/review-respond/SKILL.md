@@ -138,6 +138,7 @@ As your first action, you MUST Read `.claude/skills/review-respond/templates/tri
 Variables (substitute into the template's {{...}} placeholders):
 - document_path: {document_path}
 - tmp_dir: {tmp_dir}
+- previous_round_doc_paths: {previous_round_doc_paths} (in the standard flow, "(none)"; non-empty only when an upstream flow such as review-rounds passes a list of past rounds' doc_paths)
 
 Round-specific overrides (apply after following the template's instructions):
 - (none)

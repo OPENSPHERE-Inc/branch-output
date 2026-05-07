@@ -142,10 +142,12 @@ Round-specific overrides (apply after following the template's instructions):
   - At triage start: `## Round {N} — Step 2: Triage`
   - At estimate start: `## Round {N} — Step 2.5: Estimate`
   - At fix / verify / update / commit start: `## Round {N} — Step 3: Review Respond (Fix & Verify)`
-- Additional constraints for the triage / estimate sub-agents:
-  - Do not reference the previous round's review document.
+- Additional constraints for the triage sub-agent:
+  - When launching, pass the list of doc_paths for all past rounds as the `previous_round_doc_paths` variable (Round 1: `(none)`; Round N: doc_paths of Round 1..N-1). For decision behavior, see the Won't Fix guideline in `.claude/skills/review-respond/templates/triage.md`.
   - State the Will Fix count explicitly in the triage report (also state explicitly when 0).
-  - When determining the diffusion signal e (Will Fix originating from FIXME) during estimate, verify whether the finding originates from a `FIXME:` / `TODO:` in the review body or target file.
+- Additional constraints for the estimate sub-agent:
+  - Do not reference the previous round's review document (bias avoidance).
+  - When determining the diffusion signal e (Will Fix originating from FIXME), verify whether the finding originates from a `FIXME:` / `TODO:` in the review body or target file.
 - Round loop control after triage:
   - Will Fix == 0: skip Steps 2.3–2.4 and proceed to Step 2.5 (round end).
   - Will Fix >= 1: proceed to the estimate phase.

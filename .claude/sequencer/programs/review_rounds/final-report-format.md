@@ -54,19 +54,59 @@ List findings with `Triage: 🚫 Won't Fix` and `Estimate: 🔻 Downgrade` that 
 
 ## Recommended future actions
 
-Aggregate the following (findings expected to be addressed later in a separate PR):
+List findings expected to be addressed later in a separate PR, in the same section format as the review document, with the full body included.
 
-- `Triage: 🚫 Won't Fix` items where a separate-PR recommendation is explicitly stated in the reason field
-- `Estimate: 🔻 Downgrade` items where a separate-PR recommendation is explicitly stated in the reason field
-- `Estimate: 🚧 Alternative` (FIXME already attached) items where a separate-PR recommendation is explicitly stated in the reason field
+Aggregation targets (any of the following, with a separate-PR recommendation explicitly stated in the reason field):
+
+- `Triage: 🚫 Won't Fix`
+- `Estimate: 🔻 Downgrade`
+- `Estimate: 🚧 Alternative` (FIXME already attached)
+
+Exclusion rule: Among the candidates above, exclude from this section any finding whose same-location, same-content counterpart was resolved as `Status: 🟢 Fixed` in a later round (already fixed, so no need to keep on the roadmap). Identity is judged by matching `file:line` and the finding summary.
 
 This is mutually exclusive with the "Judged not to require action" section. Alternative FIXME attachments are also listed in the "Resolved" section, but when accompanied by a separate-PR recommendation, they are additionally listed in this section (for roadmap purposes).
 
-| # | Severity | Location | Summary | Recommendation reason |
-|---|----------|----------|---------|------------------------|
-| 1 | Minor | `file:line` | Summary | Triage: 🚫 Won't Fix — bug in existing code. Recommended to fix in a separate PR. |
-| 2 | Major | `file:line` | Summary | Estimate: 🔻 Downgrade — Cost L, Signals a,b,c. This response is recommended to be performed in a separate PR. |
-| 3 | Major | `file:line` | Summary | Estimate: 🚧 Alternative — FIXME already attached (`output.cpp:200`). Full response recommended in a separate PR. |
+### R1-C-1 — `file.cpp:42`
+
+- **Severity:** Critical
+- **Source round:** Round 1
+- **Source ID:** C-1
+- **Source reviewer:** cpp-sensei, obs-sensei
+- **Decision:** Triage: 🚫 Won't Fix — bug in existing code. Recommended to fix in a separate PR.
+
+**Finding:**
+
+{Quote the full body of the corresponding finding from the source review document (do not include METADATA markers)}
+
+---
+
+### R2-M-3 — `output.cpp:200`
+
+- **Severity:** Major
+- **Source round:** Round 2
+- **Source ID:** M-3
+- **Source reviewer:** cpp-sensei
+- **Decision:** Estimate: 🔻 Downgrade — Cost: L, Future: M, Signals: a,b,c — This response is recommended to be performed in a separate PR
+
+**Finding:**
+
+{Quote the full body of the corresponding finding from the source review document}
+
+---
+
+### R1-M-2 — `output.cpp:300`
+
+- **Severity:** Major
+- **Source round:** Round 1
+- **Source ID:** M-2
+- **Source reviewer:** qt-sensei
+- **Decision:** Estimate: 🚧 Alternative — Cost: M, Future: S, Signals: b,d — FIXME already attached (`output.cpp:200`). Full response recommended in a separate PR.
+
+**Finding:**
+
+{Quote the full body of the corresponding finding from the source review document}
+
+---
 
 ## Review document list
 

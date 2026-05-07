@@ -4,6 +4,10 @@ description: Prompt for the final report aggregator sub-agent that generates the
 template_id: 4f8a2d1c-9b35-4e67-a2c1-8b5d3f9e7a16
 ---
 
+<!--
+This file is kept in sync with .claude/skills/review-rounds/templates/final-report-compile.md.
+-->
+
 Generate the final report from all rounds' review documents. Read `.claude/rules/sub-agent.md` and observe the common prohibitions.
 
 Input:

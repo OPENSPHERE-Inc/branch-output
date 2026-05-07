@@ -15,8 +15,13 @@ What to do:
    - Verification commands: `clang-format -style=file -fallback-style=none --dry-run -Werror <file>`; on violation, auto-fix with `clang-format -i -style=file -fallback-style=none <file>`. CMake is the same.
 
 2. Build verification:
-   - Choose the command for the current platform from build.ps1 / Makefile / build script, or from the CMake presets listed in CLAUDE.md.
-   - Run the build, save stdout/stderr to `{{tmp_dir}}/build.log`. Determine success/failure by exit code.
+   - Choose one of the following for the current platform:
+     - Windows: `pwsh ./build.ps1` / `powershell ./build.ps1` (positional script-argument form).
+     - Linux / macOS: a direct command such as `cmake --preset <preset>` or `make` (use the preset listed in CLAUDE.md).
+   - Capture output with the `>` redirection only: `<command> > {{tmp_dir}}/build.log 2>&1`.
+   - Do not use PowerShell's `-Command` flag (limit invocation to positional or `-File` form to avoid arbitrary-expression execution).
+   - Do not pipe through `tee` / `Tee-Object` (avoids shrinking the permission boundary and unintended external-command invocation).
+   - Determine success/failure by the exit code.
 
 3. Specialist identification on failure:
    - Read build.log and the error-source files to analyze the cause and concisely organize the fix direction (fix_guidance).
