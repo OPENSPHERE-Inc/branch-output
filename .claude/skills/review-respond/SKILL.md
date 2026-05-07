@@ -238,7 +238,7 @@ Return value: [{id, verdict}, ...] (one entry for every assigned id)
 
 2. Receive the return values (a list of `[{id, verdict}, ...]`) from all estimate agents and build an `{id → verdict}` map. Do not read the estimate body. Each agent has written `{tmp_dir}/estimates/{id}.json`. The leader holds the `{id → verdict}` map in context for selecting fix targets in Step 3.
 
-3. Launch an aggregator sub-agent to print the estimate result table to the console. Reading each `{tmp_dir}/estimates/{id}.json` and generating the table is the aggregator sub-agent's responsibility.
+3. Launch an aggregator sub-agent to print the estimate result table to the console. Reading each `{tmp_dir}/estimates/{id}.json` and generating the table is the aggregator sub-agent's responsibility. When launching via the Agent tool, specify `model="sonnet"`.
 
    Aggregator sub-agent prompt example:
 
@@ -312,7 +312,7 @@ Maximum attempts: 5
 
 The leader repeats up to the maximum:
 
-1. Launch the format & build verification sub-agent (see "Format & Build Verification Sub-Agent Prompt" section). The sub-agent runs format → build once and, on failure, determines the specialist.
+1. Launch the format & build verification sub-agent (see "Format & Build Verification Sub-Agent Prompt" section). When launching via the Agent tool, specify `model="sonnet"`. The sub-agent runs format → build once and, on failure, determines the specialist.
 2. Receive the return value (`{path, success, summary_line}`) from the sub-agent.
 3. If `success == true`, exit the loop (success).
 4. If `success == false`:
@@ -378,7 +378,7 @@ The leader (you) does not load verdict bodies into context.
 
 Launch procedure:
 
-1. Launch a new sub-agent via the Agent tool. Example prompt:
+1. Launch a new sub-agent via the Agent tool. Specify `model="sonnet"`. Example prompt:
 
 ```
 You are responsible for review-response aggregation. Consolidate the intermediate files and reflect them into the markdown via events.jsonl.

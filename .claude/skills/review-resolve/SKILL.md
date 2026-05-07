@@ -188,7 +188,7 @@ The leader (you) does not load verification bodies into context.
 
 Launch procedure:
 
-1. Launch a new sub-agent via the Agent tool. Example prompt:
+1. Launch a new sub-agent via the Agent tool. Specify `model="sonnet"`. Example prompt:
 
 ```
 You are responsible for review-verification aggregation. Generate the verification report and events.jsonl from the intermediate files, and reflect them into the markdown.

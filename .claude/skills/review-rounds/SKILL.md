@@ -56,6 +56,7 @@ Write the review document in the user's chat language.
   - Final summary presentation to the user.
 - **The orchestrator does not load review-finding or verdict bodies into context.** Hold only file paths and lightweight counters; details are handled by sub-agents.
 - Per-round results are propagated to subsequent steps and rounds **only via the review document**. Intermediate data between sub-agents must be self-contained within a step (a single Instruction) and must not persist across steps.
+- **Aggregator/consolidation sub-agents and the format & build verification sub-agent must be launched with `model="sonnet"` via the Agent tool.** Targets: parallel-review § Step 3 aggregator Sub / review-respond § Step 2 estimate aggregator Sub / review-respond § Step 4 format & build verification Sub / review-respond § Step 5 aggregator Sub / review-resolve § Step 3 aggregator Sub / review-rounds § Step 3 final-report aggregator Sub. Other sub-agents (individual reviewer / triage / parsing / individual estimate / individual fix / build-fix specialist / verification) do not specify a model (they follow the agent definition's default).
 
 ## Flow Overview
 
@@ -210,7 +211,7 @@ Final report path: `{base-path}/{branch-dir}/final-report.md`
 
 Launch procedure:
 
-1. Launch a sub-agent via the Agent tool. Example prompt:
+1. Launch a sub-agent via the Agent tool. Specify `model="sonnet"`. Example prompt:
 
 ```
 Generate the final report from all rounds' review documents.

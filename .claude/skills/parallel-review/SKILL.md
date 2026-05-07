@@ -121,6 +121,8 @@ Output:
 After all reviewers have completed, launch the aggregator sub-agent to consolidate the report.
 The review leader does not perform aggregation (Read each reviewer file, deduplicate, sort, Write the final artifact) and does not load reviewer output bodies into context.
 
+When launching via the Agent tool, specify `model="sonnet"`.
+
 ### Aggregator Sub-Agent Prompt Template
 
 ```

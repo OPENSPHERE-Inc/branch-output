@@ -381,7 +381,8 @@ _TPL_FINAL_REPORT = textwrap.dedent("""\
     Per-round statistics (reference info passed to the aggregator sub-agent):
     {per_round_stats_block}
 
-    Launch a sub-agent via the Agent tool with the following prompt:
+    Launch a sub-agent via the Agent tool with the following prompt.
+    When launching, specify `model="sonnet"`.
 
     ```
     Generate the final report from all rounds' review documents.
