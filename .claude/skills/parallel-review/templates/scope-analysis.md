@@ -18,6 +18,7 @@ Reviewer candidate mapping (kind / selection condition):
 - devops-sensei (optional): the diff contains changes to CMakeLists.txt / *.cmake / .github/workflows / build.ps1 / .clang-format / .cmake-format / Inno Setup / packaging settings
 - python-sensei (optional): the diff contains changes to .py files
 - lua-sensei (optional): the diff contains changes to .lua files
+- comment-sensei (optional): the diff contains additions or modifications that include comment markers (`//` / `#` / `/* */` / `<!-- -->` / `--`, etc.) or annotations such as FIXME / TODO
 
 For each reviewer's specialty area and perspective, see the agent definition (`.claude/agents/{name}.md`). This mapping only provides selection criteria.
 

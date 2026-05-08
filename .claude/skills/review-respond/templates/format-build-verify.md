@@ -15,13 +15,14 @@ What to do:
    - Verification commands: `clang-format -style=file -fallback-style=none --dry-run -Werror <file>`; on violation, auto-fix with `clang-format -i -style=file -fallback-style=none <file>`. CMake is the same.
 
 2. Build verification:
-   - Choose one of the following for the current platform:
-     - Windows: `pwsh ./build.ps1` / `powershell ./build.ps1` (positional script-argument form).
-     - Linux / macOS: a direct command such as `cmake --preset <preset>` or `make` (use the preset listed in CLAUDE.md).
-   - Capture output with the `>` redirection only: `<command> > {{tmp_dir}}/build.log 2>&1`.
-   - Do not use PowerShell's `-Command` flag (limit invocation to positional or `-File` form to avoid arbitrary-expression execution).
-   - Do not pipe through `tee` / `Tee-Object` (avoids shrinking the permission boundary and unintended external-command invocation).
-   - Determine success/failure by the exit code.
+   - The CWD for command execution is assumed to be the project root. Do not specify absolute paths (use relative paths only).
+   - Configure: `cmake --preset <platform-preset> --fresh > {{tmp_dir}}/build.log 2>&1` (`--fresh` removes the existing CMakeCache.txt and CMakeFiles to avoid cache mismatches caused by preset switches or toolchain differences).
+   - Build: `cmake --build --preset <platform-preset> >> {{tmp_dir}}/build.log 2>&1` (`>>` appends).
+   - Select `<platform-preset>` from CMakePresets.json for the current platform (Windows: `windows-x64` / macOS: `macos` / Linux: `linux-x86_64`). When the project's preset names differ, Read CLAUDE.md or CMakePresets.json to confirm.
+   - Do not go through PowerShell scripts (build.ps1, etc.). Do not use pwsh / powershell (cmake direct invocation suffices).
+   - Do not use `tee` / `Tee-Object` via the `|` pipe.
+   - Do not use compound commands (`;`, `&&`). The Bash tool returns the exit code automatically, so `echo $?` is unnecessary.
+   - Treat the run as failed at the moment configure or build exits with a non-zero code.
 
 3. Specialist identification on failure:
    - Read build.log and the error-source files to analyze the cause and concisely organize the fix direction (fix_guidance).

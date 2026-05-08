@@ -129,46 +129,6 @@ Include `template_id` (Read from the template's frontmatter) in the return value
 
 Receive the return value from each verification agent (`{items: [{id, outcome}, ...], template_id}`). Verify that `template_id` matches `8a1f5c9b-2e73-4d64-9c1e-8b3d7f2a5e94`. If it does not match, relaunch that agent. **Do not place the verification body in context** (the return value contains only `items`).
 
-### Verification Logic
-
-Decision branches that the verification sub-agent applies based on the trailing field of the finding.
-
-#### Common additional checks (always perform immediately before the code-verification branch decision)
-
-Apply in each of the `Status: 🟢 Fixed` / `Triage: 🚫 Won't Fix` / `Estimate: 🔻 Downgrade` branches:
-
-- If comments were added or modified, check for `.claude/rules/comment.md` (auto-loaded) violations. If any violation exists, mark as Feedback.
-- If human-facing documentation (README, API references, etc.; AI-facing prompts under `.claude/` are out of scope) was added or modified, check for `.claude/rules/document.md` (auto-loaded) violations. If any violation exists, mark as Feedback.
-
-#### `Status: 🟢 Fixed` present
-
-1. Read the referenced file and lines to confirm that the described fix actually exists:
-   - Estimate ▶️ Maintain: the normal fix for the finding (including logic changes) is fully reflected.
-   - Estimate 🚧 Alternative: a `FIXME:` / `TODO:` comment is present at the relevant location, roughly aligned with the FIXME direction in the Estimate, and sufficient for the future fix (logic changes are not expected).
-2. Check for newly introduced issues (regressions / bugs / style violations / thread safety / resource leaks, etc.).
-3. Perform the common additional checks.
-4. Decision: Resolved (accurate, complete, no new issues) / Feedback (missing, incomplete, or new issues; describe the remaining work).
-
-#### `Triage: 🚫 Won't Fix` present
-
-1. Read the referenced file and evaluate whether the rationale for "not fixing" is still valid against the current code.
-2. Perform the common additional checks.
-3. Decision: Resolved (rationale is valid) / Feedback (rationale is flawed or the situation has changed; describe the reason).
-
-#### `Estimate: 🔻 Downgrade` present
-
-1. Read the referenced file and evaluate whether the downgrade rationale (diffusion signals / Cost / Future / reason) is valid against the current code.
-2. Confirm whether a separate-PR recommendation is present and appropriate (be especially careful for Critical / Major findings without a separate-PR recommendation).
-3. Perform the common additional checks.
-4. Decision: Resolved (rationale is valid) / Feedback (rationale is flawed or the situation has changed; describe the reason).
-
-#### Cases reported as Unresolved
-
-- `Estimate: 🚧 Alternative` present, no `Status` — FIXME not yet added.
-- `Estimate: ▶️ Maintain` present, no `Status` — fix not yet completed.
-- Only `Triage: 🔧 Will Fix` — estimate not yet completed.
-- No metadata between the markers — not yet triaged.
-
 ## Step 3 — Verification report and reflection (delegate to the aggregator sub-agent)
 
 The leader (you) does not place the verification body in context.

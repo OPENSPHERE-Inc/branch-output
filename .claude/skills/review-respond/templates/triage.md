@@ -6,6 +6,11 @@ template_id: 1e9c4f7a-5b82-4d63-a1c8-3f7d2e9b4a15
 
 As the initial-triage owner of the review document, Read `{{document_path}}`, perform stage classification and the triage decision for each finding, and Write the result to `{{tmp_dir}}/triage.json`. Read `.claude/rules/sub-agent.md` and observe the common prohibitions.
 
+Preconditions:
+
+- `{{tmp_dir}}` is created in advance by the leader via `mkdir -p`. The Sub must not perform existence checks (`Test-Path` / `ls`, etc.) or mkdir. The only filesystem write is triage.json.
+- The paths passed (`{{document_path}}` / `{{tmp_dir}}`) are relative. Do not convert them to absolute paths.
+
 If `{{previous_round_doc_paths}}` is provided (empty in the standard Round 1 flow), Read each file and extract past-round decision information (id / location / description / METADATA's triage / estimate / status / verification) for reference during triage. No need to consult when empty or `(none)`.
 
 Extraction targets: Critical / Major / Minor sections (skip Info). For each finding, obtain id (C-1, M-1, mi-1, etc.) / severity / location / description (the body up to the marker) / current_meta (the current values of triage / estimate / status / verification; when the same field appears multiple times, use the last value).
@@ -43,7 +48,7 @@ Won't Fix guideline (when any of the following applies):
 
 High-severity exception: For Critical / Major Won't Fix, explicitly state "recommend separate PR" in the reason field (e.g. "Won't Fix — Existing-code bug. Recommend fixing in a separate PR.").
 
-Specialist assignment (Will Fix only): Choose the most suitable from cpp-sensei / qt-sensei / obs-sensei / network-sensei / av-sensei / devops-sensei / python-sensei / lua-sensei.
+Specialist assignment (Will Fix only): Choose the most suitable from cpp-sensei / qt-sensei / obs-sensei / network-sensei / av-sensei / devops-sensei / python-sensei / lua-sensei / comment-sensei. Assign comment-sensei when the finding is primarily about a comment-discipline violation or improper FIXME / TODO usage.
 
 `{{tmp_dir}}/triage.json` format: `{items: [{id, verdict, assignee (null for Won't Fix), reason, memo_value}], will_fix_count, wontfix_count, by_stage: {<stage>: <int>}}`
 
