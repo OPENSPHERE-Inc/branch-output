@@ -25,9 +25,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 
 #include <atomic>
+#include <memory>
+#include <mutex>
 
 #include <QRegularExpression>
-#include <QThread>
 
 #include "audio/audio-capture.hpp"
 #include "video/filter-video-capture.hpp"
@@ -43,9 +44,40 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-// Atomic so worker threads can load without a race, and obs_module_unload()
-// can publish nullptr before obs_frontend_remove_dock() destroys the widget.
+// Atomic so addCallback/updateCallback/removeCallback can safely read the
+// pointer when dispatching QMetaObject::invokeMethod from worker threads.
+//
+// FIXME: A worker that loads the pointer before obs_module_unload() runs
+// statusDock.exchange(nullptr) can still reach QMetaObject::invokeMethod
+// after the dock QObject is destroyed. This also covers workers already
+// inside onGetFilterList that continue calling obs_data_* after the module
+// is unloaded. Needs an in-flight counter or QPointer-based UI-thread
+// marshalling.
 static std::atomic<BranchOutputStatusDock *> statusDock{nullptr};
+
+// Set by obs_module_unload() before module-owned state is torn down. Procs
+// registered via obs_get_proc_handler() outlive the module (libobs has no
+// proc_handler_remove API), so they must early-return when this is true.
+static std::atomic<bool> moduleUnloading{false};
+
+// Filter list snapshot read by onGetFilterList without touching the dock QObject.
+// Mutex guards the shared_ptr swap; the published QList itself is immutable.
+static std::mutex filterListSnapshotMutex;
+static std::shared_ptr<const QList<BranchOutputFilterInfo>> filterListSnapshot;
+
+static std::shared_ptr<const QList<BranchOutputFilterInfo>> loadFilterListSnapshot()
+{
+    std::lock_guard<std::mutex> lock(filterListSnapshotMutex);
+    return filterListSnapshot;
+}
+
+void publishFilterListSnapshot(QList<BranchOutputFilterInfo> snapshot)
+{
+    auto shared = std::make_shared<const QList<BranchOutputFilterInfo>>(std::move(snapshot));
+    std::lock_guard<std::mutex> lock(filterListSnapshotMutex);
+    filterListSnapshot = std::move(shared);
+}
+
 pthread_mutex_t pluginMutex;
 
 //--- BranchOutputFilter class ---//
@@ -138,9 +170,12 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
                   obs_data_get_bool(settings, "replay_buffer");
 
     // Register proc handlers for external script access. These handlers
-    // live on filterSource and die with it. Scripts keep us alive while a
-    // call is in flight by holding a strong ref via obs_get_source_by_uuid()
-    // (weak-ref CAS refuses to bump a strong count of 0).
+    // live on filterSource and die with it. A well-behaved script acquires a
+    // strong ref via obs_get_source_by_uuid() before calling; the weak-ref CAS
+    // refuses to bump a count of 0, so the filter cannot be destroyed mid-call.
+    // A misbehaving script that caches a proc_handler_t * past source release
+    // and calls it without holding the strong ref triggers a UAF that the
+    // plugin cannot prevent — that is a script-side bug.
     //
     // FIXME: libobs has no proc_handler_remove(). If it gains one, pair
     // unregistration with ~BranchOutputFilter().
@@ -1862,35 +1897,19 @@ bool obs_module_load()
 
 static void onGetFilterList(void *, calldata_t *cd)
 {
+    if (moduleUnloading.load(std::memory_order_acquire)) {
+        calldata_set_string(cd, "json", "{\"filters\":[]}");
+        return;
+    }
+
     OBSDataAutoRelease wrapper = obs_data_create();
     OBSDataArrayAutoRelease array = obs_data_array_create();
 
-    // Dispatch the QWidget read to the UI thread so this proc is safe from
-    // any thread. BlockingQueuedConnection would deadlock if the caller is
-    // already on the target thread, so short-circuit in that case.
-    //
-    // See obs_module_unload() for the residual race against widget destruction.
-    auto *dock = statusDock.load();
-    if (dock) {
-        QList<BranchOutputFilterInfo> filterList;
-        if (QThread::currentThread() == dock->thread()) {
-            filterList = dock->getFilterList();
-        } else {
-            // Qt 6 returns false if the receiver was destroyed mid-call;
-            // log it so callers can tell this apart from an empty list.
-            const bool dispatched = QMetaObject::invokeMethod(
-                dock, "getFilterList", Qt::BlockingQueuedConnection,
-                Q_RETURN_ARG(QList<BranchOutputFilterInfo>, filterList)
-            );
-            if (!dispatched) {
-                obs_log(
-                    LOG_WARNING, "osi_branch_output_get_filter_list: UI thread dispatch failed "
-                                 "(dock may have been destroyed); returning empty list"
-                );
-            }
-        }
-
-        for (const auto &info : filterList) {
+    // Read the UI-thread-published snapshot. The shared_ptr pins the QList
+    // for the duration of this call, so the worker never touches the dock
+    // QObject and cannot race obs_module_unload().
+    if (auto snapshot = loadFilterListSnapshot()) {
+        for (const auto &info : *snapshot) {
             OBSDataAutoRelease entry = obs_data_create();
             obs_data_set_string(entry, "source_name", qUtf8Printable(info.sourceName));
             obs_data_set_string(entry, "source_uuid", qUtf8Printable(info.sourceUuid));
@@ -1902,48 +1921,50 @@ static void onGetFilterList(void *, calldata_t *cd)
 
     obs_data_set_array(wrapper, "filters", array);
 
-    // Defensive "{}" fallback: obs_data_get_json is expected to return a
-    // valid pointer here but guarantee a non-NULL result to callers.
+    // calldata_set_string copies the buffer (via bstrdup); json pointer
+    // lifetime need not extend beyond this call.
+    // obs_data_get_json() may return NULL on allocation failure; fall back
+    // to a schema-consistent empty payload so clients can rely on the
+    // "filters" array being present regardless of error mode.
     const char *json = obs_data_get_json(wrapper);
-    calldata_set_string(cd, "json", json ? json : "{}");
+    calldata_set_string(cd, "json", json ? json : "{\"filters\":[]}");
 }
 
 void obs_module_post_load()
 {
-    // Pre-register on the main thread before the proc below is published.
-    // QList<T> auto-registers lazily; doing it up front closes the race if
-    // the first cross-thread invocation beats the lazy registration.
     qRegisterMetaType<BranchOutputFilter *>();
-    qRegisterMetaType<BranchOutputFilterInfo>();
-    qRegisterMetaType<QList<BranchOutputFilterInfo>>();
+
+    // Publish an empty snapshot so onGetFilterList sees a defined empty state
+    // before the first addFilter republish, distinguishing pre-init from
+    // genuinely-no-filters.
+    publishFilterListSnapshot(QList<BranchOutputFilterInfo>{});
 
     statusDock.store(BranchOutputFilter::createOutputStatusDock());
 
     // Register global proc handler for script access (obs-websocket style).
-    // data=nullptr: onGetFilterList resolves the dock via the statusDock
-    // atomic so the unload sequence is the single source of truth.
+    // data=nullptr: onGetFilterList reads the filter-list snapshot directly.
     //
     // FIXME: libobs has no removal API for the global proc table, so the
-    // function pointer outlives obs_module_unload(). Callers must not dispatch
-    // after unload.
+    // function pointer outlives obs_module_unload(). The moduleUnloading
+    // atomic gates the proc body; callers should still avoid dispatching
+    // after unload as a defence-in-depth measure.
     proc_handler_t *ph = obs_get_proc_handler();
     proc_handler_add(ph, "void osi_branch_output_get_filter_list(out string json)", onGetFilterList, nullptr);
 }
 
 void obs_module_unload()
 {
-    // Publish nullptr before destroying the widget so subsequent loads in
-    // onGetFilterList() bail out. A worker that already holds a non-null
-    // pointer will either (a) take the cross-thread branch and be released
-    // by Qt 6's ~QObject() cleanup with invokeMethod() returning false
-    // (implementation detail, not a spec guarantee), or (b) take the
-    // same-thread branch, which is only reachable on the UI thread and
-    // therefore cannot race this unloader.
-    //
-    // FIXME: narrow worker race remains. Proper fixes are an in-flight
-    // counter (wait for zero before remove_dock) or QPointer + deleteLater
-    // + processEvents drain. Current code accepts the race because the
-    // worst observable effect is a silent empty result.
+    // Publish the unload flag before tearing down module state so onGetFilterList
+    // (which outlives the module via the global proc handler) early-returns.
+    moduleUnloading.store(true, std::memory_order_release);
+
+    // Release the snapshot before destroying the dock so no dangling
+    // references to FilterInfo objects remain once the dock rows are freed.
+    {
+        std::lock_guard<std::mutex> lock(filterListSnapshotMutex);
+        filterListSnapshot.reset();
+    }
+
     if (statusDock.exchange(nullptr) != nullptr) {
         obs_frontend_remove_dock("BranchOutputStatusDock");
     }

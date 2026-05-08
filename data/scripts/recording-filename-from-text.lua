@@ -44,6 +44,9 @@ local OVERRIDE_PROC = "override_recording_filename_format"
 local BRANCH_OUTPUT_FILTER_ID = "osi_branch_output"
 local LOG_LABEL = "Recording filename format"
 local MAX_READ_SIZE = 4096 -- 4 KB read limit to prevent performance issues on large files
+-- Truncate to 200 bytes to stay within NTFS filename component (255) /
+-- MAX_PATH (260) limits, leaving room for the base format and extension.
+local MAX_FILENAME_BYTES = 200
 
 -- Script settings
 local text_source_uuid = ""
@@ -277,11 +280,12 @@ local function sanitize_filename(text)
     cleaned = cleaned:gsub("%s+", " ")
     local trimmed = cleaned:match("^%s*(.-)%s*$") or ""
     local sanitized = trimmed:gsub('[<>:"|?*/\\]', "-")
-    sanitized = sanitized:gsub("[%.%s]+$", "")
-    -- Truncate to 200 bytes to stay within NTFS filename component (255) /
-    -- MAX_PATH (260) limits, leaving room for the base format and extension.
-    -- Respect UTF-8 codepoint boundaries.
-    local MAX_FILENAME_BYTES = 200
+    -- Precondition: upstream is_unicode_space() folds all Unicode whitespace
+    -- to ASCII space and gsub("%s+", " ") collapses runs, so a literal-space
+    -- pattern is sufficient here. Weakening either upstream step would leave
+    -- non-ASCII trailing whitespace untrimmed.
+    sanitized = sanitized:gsub("[%. ]+$", "")
+    -- Respect UTF-8 codepoint boundaries when truncating to MAX_FILENAME_BYTES.
     if #sanitized > MAX_FILENAME_BYTES then
         local parts = {}
         local total = 0
@@ -295,7 +299,7 @@ local function sanitize_filename(text)
         end
         sanitized = table.concat(parts)
         -- Re-strip trailing dots/spaces that may appear at the new end.
-        sanitized = sanitized:gsub("[%.%s]+$", "")
+        sanitized = sanitized:gsub("[%. ]+$", "")
     end
     -- Windows treats reserved device names as reserved even when followed by
     -- an extension (e.g. "CON.txt"). Since this prefix will have the base
@@ -310,61 +314,86 @@ end
 
 local function read_text_from_source(text_source)
     -- Returns (text, ok). ok = false means the caller should clear the override.
+    -- pcall guards the read path so obs_data_release() always runs even if the
+    -- inner logic raises a Lua runtime error (e.g. unexpected non-string value).
+    -- GDI+ stores read-from-file as (read_from_file, file); FreeType2 uses
+    -- (from_file, text_file). Branch on the unversioned source id so both
+    -- source families honor their "read from file" mode correctly.
+    local source_id = obs.obs_source_get_unversioned_id(text_source)
+    local from_file_key, file_path_key
+    if source_id == "text_ft2_source" or source_id == "text_ft2_source_v2" then
+        from_file_key = "from_file"
+        file_path_key = "text_file"
+    else
+        from_file_key = "read_from_file"
+        file_path_key = "file"
+    end
     local settings = obs.obs_source_get_settings(text_source)
-    local result_text = nil
-    local ok = true
-
-    local read_from_file = obs.obs_data_get_bool(settings, "read_from_file")
-    if read_from_file then
-        local file_path = obs.obs_data_get_string(settings, "file")
+    local function read_inner()
+        local read_from_file = obs.obs_data_get_bool(settings, from_file_key)
+        if not read_from_file then
+            return obs.obs_data_get_string(settings, "text"), true
+        end
+        local file_path = obs.obs_data_get_string(settings, file_path_key)
         if file_path == "" then
             obs.script_log(obs.LOG_WARNING,
                 "Text source is set to 'read from file' but no file path is configured; clearing override")
-            ok = false
-        else
-            -- Open in binary mode so BOM bytes are not translated.
-            local f, err = io.open(file_path, "rb")
-            if f then
-                -- Limit read size to prevent performance issues on accidental large-file selection.
-                local data = f:read(MAX_READ_SIZE) or ""
-                -- Detect silent truncation: if more bytes remain past MAX_READ_SIZE, warn.
-                local extra = f:read(1)
-                local truncated = extra ~= nil
-                f:close()
-                if truncated then
-                    obs.script_log(obs.LOG_WARNING,
-                        "Text file exceeds " .. MAX_READ_SIZE ..
-                            " bytes; only the first " .. MAX_READ_SIZE .. " bytes are used")
-                end
-                -- UTF-8 BOM: strip it.
-                if data:sub(1, 3) == "\239\187\191" then
-                    data = data:sub(4)
-                -- UTF-16 LE/BE BOM: not supported by this sample; warn and clear.
-                elseif data:sub(1, 2) == "\255\254" or data:sub(1, 2) == "\254\255" then
-                    obs.script_log(obs.LOG_WARNING,
-                        "UTF-16 text files are not supported; please save the text file as UTF-8")
-                    ok = false
-                end
-                -- Skip strict UTF-8 validation when truncated, since the cut may
-                -- have landed inside a multibyte sequence.
-                if ok and not truncated and not utf8_validate(data) then
-                    obs.script_log(obs.LOG_WARNING,
-                        "Text file is not valid UTF-8 (e.g. CP932); please save as UTF-8")
-                    ok = false
-                end
-                if ok then
-                    result_text = data
-                end
-            else
-                obs.script_log(obs.LOG_WARNING, "Failed to read text file: " .. tostring(err))
-                ok = false
-            end
+            return nil, false
         end
-    else
-        result_text = obs.obs_data_get_string(settings, "text")
+        -- Open in binary mode so BOM bytes are not translated.
+        local f, err = io.open(file_path, "rb")
+        if not f then
+            obs.script_log(obs.LOG_WARNING, "Failed to read text file: " .. tostring(err))
+            return nil, false
+        end
+        -- Limit read size to prevent performance issues on accidental large-file selection.
+        -- Read one extra byte so #data > MAX_READ_SIZE unambiguously
+        -- signals truncation even when the file is exactly MAX_READ_SIZE
+        -- bytes (where a separate f:read(1) would return nil at EOF).
+        local data = f:read(MAX_READ_SIZE + 1) or ""
+        local close_ok, close_err = f:close()
+        if not close_ok then
+            obs.script_log(obs.LOG_WARNING,
+                "Failed to close text file: " .. tostring(close_err))
+        end
+        local truncated = #data > MAX_READ_SIZE
+        if truncated then
+            obs.script_log(obs.LOG_WARNING,
+                "Text file exceeds " .. MAX_READ_SIZE ..
+                    " bytes; only the first " .. MAX_READ_SIZE .. " bytes are used")
+            data = data:sub(1, MAX_READ_SIZE)
+        end
+        -- UTF-8 BOM: strip it.
+        if data:sub(1, 3) == "\239\187\191" then
+            data = data:sub(4)
+        -- UTF-32 LE/BE BOM: must be checked before UTF-16 because UTF-32 LE
+        -- begins with 0xFF 0xFE which also matches the UTF-16 LE BOM prefix.
+        elseif data:sub(1, 4) == "\255\254\0\0" or data:sub(1, 4) == "\0\0\254\255" then
+            obs.script_log(obs.LOG_WARNING,
+                "UTF-32 text files are not supported; please save the text file as UTF-8")
+            return nil, false
+        -- UTF-16 LE/BE BOM: not supported by this sample; warn and clear.
+        elseif data:sub(1, 2) == "\255\254" or data:sub(1, 2) == "\254\255" then
+            obs.script_log(obs.LOG_WARNING,
+                "UTF-16 text files are not supported; please save the text file as UTF-8")
+            return nil, false
+        end
+        -- Skip strict UTF-8 validation when truncated, since the cut may
+        -- have landed inside a multibyte sequence.
+        if not truncated and not utf8_validate(data) then
+            obs.script_log(obs.LOG_WARNING,
+                "Text file is not valid UTF-8 (e.g. CP932); please save as UTF-8")
+            return nil, false
+        end
+        return data, true
     end
 
+    local pcall_ok, result_text, ok = pcall(read_inner)
     obs.obs_data_release(settings)
+    if not pcall_ok then
+        obs.script_log(obs.LOG_WARNING, "read_text_from_source error: " .. tostring(result_text))
+        return nil, false
+    end
     return result_text, ok
 end
 
@@ -382,7 +411,7 @@ local function call_override_proc(filter_uuid, format_value)
         return false
     end
 
-    local filter_id = obs.obs_source_get_id(bo_filter)
+    local filter_id = obs.obs_source_get_unversioned_id(bo_filter)
     if filter_id ~= BRANCH_OUTPUT_FILTER_ID then
         obs.script_log(obs.LOG_WARNING,
             "Source (uuid: " .. filter_uuid .. ") is not a Branch Output filter (id: " ..
@@ -438,19 +467,6 @@ local function update_recording_format()
         return
     end
 
-    -- Skip if text hasn't changed since last observation
-    if current_text == last_text then
-        return
-    end
-
-    -- Throttle: skip if the same text was already applied within THROTTLE_SECONDS.
-    -- last_text is updated only after a successful apply so a throttled tick
-    -- is not swallowed by the equality early-return on the next tick.
-    local now = os.time()
-    if current_text == last_applied_text and (now - last_applied_time) < THROTTLE_SECONDS then
-        return
-    end
-
     -- Build the new format string
     local sanitized = sanitize_filename(current_text)
     local new_format
@@ -469,21 +485,43 @@ local function update_recording_format()
         return
     end
 
+    -- Cache the resolved new_format (not the raw current_text) so two raw
+    -- inputs differing only in control chars / trailing whitespace — which
+    -- collapse to the same sanitized prefix — do not trigger a redundant
+    -- proc re-call (which would force a file split / recording restart).
+    if new_format == last_text then
+        return
+    end
+
+    -- Throttle: skip if the same format was already applied within THROTTLE_SECONDS.
+    -- last_text is updated only after a successful apply so a throttled tick
+    -- is not swallowed by the equality early-return on the next tick.
+    local now = os.time()
+    if new_format == last_applied_text and (now - last_applied_time) < THROTTLE_SECONDS then
+        return
+    end
+
     if call_override_proc(filter_uuid, new_format) then
-        last_text = current_text
-        last_applied_text = current_text
+        last_text = new_format
+        last_applied_text = new_format
         last_applied_time = now
         override_cleared = false
         obs.script_log(obs.LOG_INFO, LOG_LABEL .. " updated: " .. new_format)
+    else
+        -- Filter missing or proc call failed: cache new_format so the
+        -- "same format" early-return suppresses retries on subsequent ticks
+        -- until the text or selection actually changes. Without this the
+        -- timer would re-issue the warning every tick at 1 Hz.
+        last_text = new_format
+        override_cleared = true
     end
 end
 
 clear_override = function()
-    -- Clear the override (empty string) and reset cached state so that when
-    -- a text source reappears with identical content it re-applies instead
-    -- of being swallowed by the "same text" early-return. Resetting
-    -- last_applied_time to 0 intentionally bypasses THROTTLE_SECONDS so a
-    -- vanish-and-return cycle isn't forced to wait out the throttle.
+    -- Postcondition: override_cleared = true on every exit path so subsequent
+    -- ticks do not re-issue the clear.
+    -- last_applied_time = 0 intentionally bypasses THROTTLE_SECONDS so a
+    -- vanish-and-return cycle is not forced to wait out the throttle.
     last_text = nil
     last_applied_text = nil
     last_applied_time = 0
@@ -577,9 +615,11 @@ function script_defaults(settings)
 end
 
 function script_update(settings)
-    -- Remember the previously selected filter so we can clear its override
-    -- if the user changed the selection.
-    local _, old_filter_uuid = parse_selected_filter(selected_filter)
+    -- Capture previous identifiers before overwriting them so we can detect
+    -- selection changes (clear old filter override, reset throttle window).
+    local prev_text_source_uuid = text_source_uuid
+    local prev_selected_filter = selected_filter
+    local _, old_filter_uuid = parse_selected_filter(prev_selected_filter)
 
     text_source_uuid = obs.obs_data_get_string(settings, "text_source")
     selected_filter = obs.obs_data_get_string(settings, "selected_filter")
@@ -602,11 +642,18 @@ function script_update(settings)
         return
     end
 
-    -- Reset state to force update on next tick
+    -- Force re-apply on next tick (text or filter selection changed, or
+    -- base_format was edited).
     last_text = nil
-    last_applied_text = nil
-    last_applied_time = 0
-    override_cleared = false
+    override_cleared = false  -- reset to "needs re-apply"
+    -- Preserve last_applied_text / last_applied_time when only base_format
+    -- changed, so dragging a slider does not bypass THROTTLE_SECONDS.
+    local selection_changed = (prev_text_source_uuid ~= text_source_uuid
+        or prev_selected_filter ~= selected_filter)
+    if selection_changed then
+        last_applied_text = nil
+        last_applied_time = 0
+    end
 end
 
 function script_load(settings)
