@@ -105,7 +105,7 @@ Round-specific overrides (apply after following the template's instructions):
 Include `template_id` (Read from the template's frontmatter) in the return value.
 ```
 
-Receive the return value from the sub-agent (`{total, by_stage, by_assignee, template_id}`). Verify that `template_id` matches `5d9e2c8a-1f74-4b63-a9d8-3c5f7e1b9a42`. If it does not match, relaunch the sub-agent.
+Receive the return value from the sub-agent (`{total, by_assignee, template_id}`). Verify that `template_id` matches `5d9e2c8a-1f74-4b63-a9d8-3c5f7e1b9a42`. If it does not match, relaunch the sub-agent.
 
 ## Step 2 — Verify each finding (delegate in parallel per specialist)
 
