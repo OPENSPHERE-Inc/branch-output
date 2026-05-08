@@ -465,9 +465,12 @@ def run(ctx):
         else "the default base branch (main or master)"
     )
     confirm_clause = (
-        "Option: --confirm enabled (wait for user confirmation immediately after the estimate result)."
+        "Option: confirm mode enabled (after the estimate completes, Read summary_path, "
+        "present it to the user, and wait for confirmation before proceeding to fix)."
         if confirm
-        else "Option: --confirm disabled (continue without pausing after the estimate)."
+        else "Option: no-confirm mode (equivalent to review-respond's --no-confirm). "
+        "Continue without pausing after the estimate; do not Read summary_path. "
+        "This overrides review-respond SKILL's standalone default (confirm-on)."
     )
     commit_clause = (
         "Option: --commit enabled (perform an aggregate git commit after fixing)."

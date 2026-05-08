@@ -17,7 +17,7 @@ The user supplies a path to a review document (markdown). When the argument is `
 ## Options
 
 - `--commit` (default OFF) — Create a commit for each finding's fix.
-- `--confirm` (default OFF) — Wait for user confirmation immediately after the estimate results are produced.
+- `--no-confirm` (default OFF) — Skip the user confirmation immediately after the estimate. Default (when not specified) is confirm-on.
 
 ### `--commit` option
 
@@ -37,9 +37,13 @@ When enabled, in Step 3 each completed fix per finding is committed to git.
 fix: Add null check before accessing output pointer
 ```
 
-### `--confirm` option
+### `--no-confirm` option
 
-When enabled, wait for user confirmation immediately after the Step 2 result table is shown on the console. Do not confirm right after triage.
+When not specified (default), the integrated summary (a single table merging review + triage + estimate) is displayed on the console immediately after Step 2's estimate completes, and the leader waits for user confirmation before proceeding to the fix step. Confirmation is not performed right after triage.
+
+When `--no-confirm` is specified, confirmation is skipped and the flow proceeds to the fix step after the estimate completes. The leader does not Read `summary_path` written by the aggregator sub-agent (to avoid bloating the leader's context).
+
+When an upper orchestrator such as review-rounds takes on the review-respond leader role, that orchestrator's confirmation flag overrides this default (confirm OFF if review-rounds' `--confirm` is OFF, confirm ON if ON).
 
 ## Review document format
 
@@ -176,7 +180,7 @@ Include `template_id` (Read from the template's frontmatter) in the return value
 
 2. Receive the return value from every estimate agent (`{items: [{id, verdict}, ...], template_id}`). Verify that each agent's `template_id` matches `8b2d5f1c-7a93-4e64-b8d1-2c5e9a3f7b48`; on mismatch, relaunch that agent. Aggregate `items` to build a `{id → verdict}` map. Do not load the estimate body. Each agent has Written `{tmp_dir}/estimates/{id}.json`. The leader keeps the `{id → verdict}` map in context for selecting the fix targets in Step 3.
 
-3. Launch the aggregator sub-agent to display the estimate result table on the console. Reading each `{tmp_dir}/estimates/{id}.json` and producing the table is the aggregator sub-agent's responsibility. Launch via `Agent(subagent_type="review-helper", prompt=...)`.
+3. Launch the aggregator sub-agent via `Agent(subagent_type="review-helper", prompt=...)` to generate the estimate result summary. The aggregator sub-agent always produces an integrated summary (a single table merging review + triage + estimate, plus a link to the review document).
 
    Example launch prompt for the aggregator sub-agent. Task-specific instructions are stored in the `templates/estimate-summary.md` external template:
 
@@ -185,6 +189,7 @@ Include `template_id` (Read from the template's frontmatter) in the return value
 
    Variables (substitute into the template's {{...}} placeholders):
    - tmp_dir: {tmp_dir}
+   - document_path: {document_path}
 
    Round-specific overrides (apply after following the template's instructions):
    - (none)
@@ -192,9 +197,9 @@ Include `template_id` (Read from the template's frontmatter) in the return value
    Include `template_id` (Read from the template's frontmatter) in the return value.
    ```
 
-   Receive the return value from the aggregator sub-agent (`{summary_path, summary_line, maintain_count, downgrade_count, alternative_count, template_id}`). Verify that `template_id` matches `5c1e9b7a-3d48-4a96-b8e2-7f3c5a1d4b29`; on mismatch, relaunch the sub-agent. The leader keeps only `summary_line` in context and does not load the table body. Read `summary_path` to present it to the user only when `--confirm` is enabled.
+   Receive the return value from the aggregator sub-agent (`{summary_path, summary_line, maintain_count, downgrade_count, alternative_count, template_id}`). Verify that `template_id` matches `5c1e9b7a-3d48-4a96-b8e2-7f3c5a1d4b29`; on mismatch, relaunch the sub-agent. The leader keeps only `summary_line` in context and does not load the table body.
 
-4. When `--confirm` is enabled, wait for user confirmation before proceeding to the fix step.
+4. In confirm mode, Read `summary_path`, present it to the user, and wait for user confirmation before proceeding to the fix step. In no-confirm mode, do not Read `summary_path` (to avoid bloating the leader's context). Confirm-mode determination: review-respond standalone is confirm mode when `--no-confirm` is not specified, and no-confirm mode when specified. When an upper orchestrator (review-rounds, etc.) takes on the role, follow that orchestrator's confirmation flag.
 
 When both Maintain and Alternative are 0 (all Downgrade): skip Steps 3 and 4 and proceed to Step 5 (compile). Record them as Downgrade in the summary.
 

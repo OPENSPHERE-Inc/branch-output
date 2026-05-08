@@ -14,7 +14,7 @@ The user may optionally specify an output base path. When the argument is `$ARGU
 
 ## Options
 
-- `--confirm` (default OFF) — Wait for user confirmation immediately after estimate results are gathered (before proceeding to fix).
+- `--confirm` (default OFF) — Wait for user confirmation immediately after estimate results are gathered (before proceeding to fix). This flag also applies to the review-respond leader role taken on by review-rounds and overrides review-respond's standalone default (confirm-on).
 - `--confirm-round` (default OFF) — After review-resolve, if unresolved findings remain, wait for user confirmation before proceeding to the next round.
 - `--commit` (default OFF) — Perform a git commit after each finding is fixed (the orchestrator performs an aggregated commit).
 - `--max-rounds N` (default 5, range 1–10) — Change the maximum number of rounds for the outer loop.
@@ -153,7 +153,7 @@ Round-specific overrides (apply after following the template's instructions):
   - Will Fix >= 1: proceed to the estimate phase.
 - Round loop control after estimate:
   - Both Maintain and Alternative are 0 (all Downgrade): skip the fix and build verification phase, perform only the document update (review-respond § Step 5), and end the round.
-  - Maintain or Alternative >= 1: proceed to the fix phase (Maintain via normal fix, Alternative via FIXME attachment). When `--confirm` is enabled, display the estimate result and wait for user confirmation.
+  - Maintain or Alternative >= 1: proceed to the fix phase (Maintain via normal fix, Alternative via FIXME attachment). Only when `--confirm` is enabled, Read the aggregator sub-agent's `summary_path`, present it to the user, and wait for confirmation.
 
 ### 2.3 — Review verification (review-resolve)
 
