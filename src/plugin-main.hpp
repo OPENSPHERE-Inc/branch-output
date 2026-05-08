@@ -26,6 +26,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/threading.h>
 
 #include <atomic>
+#include <cstddef>
 
 #include <QObject>
 
@@ -47,6 +48,57 @@ inline constexpr char FILTER_ID[] = "osi_branch_output";
 // that a rename on one side does not silently break the other.
 inline constexpr char PROC_OVERRIDE_RECORDING_FILENAME_FORMAT[] = "override_recording_filename_format";
 inline constexpr char PROC_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT[] = "override_replay_buffer_filename_format";
+
+// proc_handler_add() decl strings. Storage duration must outlive every registered
+// handler because proc_handler_add() does not document whether it copies the buffer.
+inline constexpr char PROC_OVERRIDE_RECORDING_FILENAME_FORMAT_DECL[] =
+    "void override_recording_filename_format(in string format)";
+inline constexpr char PROC_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT_DECL[] =
+    "void override_replay_buffer_filename_format(in string format)";
+
+// Compile-time check: each decl string must contain its proc name as a substring,
+// so renaming the proc name constant cannot silently desynchronize the decl literal.
+namespace branch_output_detail {
+constexpr bool
+containsSubstring(const char *haystack, std::size_t haystackLen, const char *needle, std::size_t needleLen) noexcept
+{
+    if (needleLen > haystackLen) {
+        return false;
+    }
+    for (std::size_t i = 0; i + needleLen <= haystackLen; ++i) {
+        std::size_t j = 0;
+        while (j < needleLen && haystack[i + j] == needle[j]) {
+            ++j;
+        }
+        if (j == needleLen) {
+            return true;
+        }
+    }
+    return false;
+}
+
+template<std::size_t HaystackN, std::size_t NeedleN>
+constexpr bool declContainsProcName(const char (&haystack)[HaystackN], const char (&needle)[NeedleN]) noexcept
+{
+    // Subtract the trailing NUL from each length.
+    return containsSubstring(haystack, HaystackN - 1, needle, NeedleN - 1);
+}
+} // namespace branch_output_detail
+
+static_assert(
+    branch_output_detail::declContainsProcName(
+        PROC_OVERRIDE_RECORDING_FILENAME_FORMAT_DECL, PROC_OVERRIDE_RECORDING_FILENAME_FORMAT
+    ),
+    "PROC_OVERRIDE_RECORDING_FILENAME_FORMAT_DECL must contain "
+    "PROC_OVERRIDE_RECORDING_FILENAME_FORMAT as a substring."
+);
+static_assert(
+    branch_output_detail::declContainsProcName(
+        PROC_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT_DECL, PROC_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT
+    ),
+    "PROC_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT_DECL must contain "
+    "PROC_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT as a substring."
+);
 
 // Defined in plugin-main.cpp. Guards plugin-wide state shared across filter instances:
 // - Serializes OBS global API calls (obs_view, obs_encoder, obs_output creation/destruction)

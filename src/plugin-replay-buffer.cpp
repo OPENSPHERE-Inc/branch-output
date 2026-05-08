@@ -234,13 +234,19 @@ void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, callda
     {
         OBSMutexAutoUnlock locked(&filter->outputMutex);
 
-        if (!format || !format[0]) {
-            // Empty format -> clear override (revert to filter settings)
+        QString newOverride = (!format || !format[0]) ? QString() : QString(format);
+
+        // Same value -> no-op. Repeated requests with the same format would
+        // otherwise re-apply settings to the active replay buffer.
+        if (newOverride == filter->replayBufferFilenameFormatOverride) {
+            return;
+        }
+
+        if (newOverride.isEmpty()) {
             filter->replayBufferFilenameFormatOverride.clear();
             obs_log(LOG_INFO, "%s: Replay buffer filename format override cleared", qUtf8Printable(filter->name));
         } else {
-            // Store the override for next output start
-            filter->replayBufferFilenameFormatOverride = QString(format);
+            filter->replayBufferFilenameFormatOverride = newOverride;
             obs_log(
                 LOG_INFO, "%s: Replay buffer filename format override stored: %s", qUtf8Printable(filter->name), format
             );

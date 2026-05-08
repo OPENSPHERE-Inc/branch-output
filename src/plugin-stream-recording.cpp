@@ -388,12 +388,20 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
     {
         OBSMutexAutoUnlock locked(&filter->outputMutex);
 
-        if (!format || !format[0]) {
-            // Empty format -> clear override (revert to filter settings)
+        QString newOverride = (!format || !format[0]) ? QString() : QString(format);
+
+        // Same value -> no-op. Repeated requests with the same format would
+        // otherwise schedule splitRecording() or a recording restart,
+        // fragmenting takes and stressing HW encoder contexts.
+        if (newOverride == filter->recordingFilenameFormatOverride) {
+            return;
+        }
+
+        if (newOverride.isEmpty()) {
             filter->recordingFilenameFormatOverride.clear();
             obs_log(LOG_INFO, "%s: Recording filename format override cleared", qUtf8Printable(filter->name));
         } else {
-            filter->recordingFilenameFormatOverride = QString(format);
+            filter->recordingFilenameFormatOverride = newOverride;
             obs_log(LOG_INFO, "%s: Recording filename format override set to: %s", qUtf8Printable(filter->name), format);
         }
 

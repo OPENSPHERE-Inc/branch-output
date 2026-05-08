@@ -148,14 +148,8 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     // FIXME: libobs has no proc_handler_remove(). If it gains one, pair
     // unregistration with ~BranchOutputFilter().
     proc_handler_t *ph = obs_source_get_proc_handler(filterSource);
-    // static: proc_handler_add() does not document whether it copies the decl string,
-    // so the buffer must outlive every registered handler.
-    static const std::string replayBufferProcDecl =
-        std::string("void ") + PROC_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT + "(in string format)";
-    static const std::string recordingProcDecl =
-        std::string("void ") + PROC_OVERRIDE_RECORDING_FILENAME_FORMAT + "(in string format)";
-    proc_handler_add(ph, replayBufferProcDecl.c_str(), onOverrideReplayBufferFilenameFormat, this);
-    proc_handler_add(ph, recordingProcDecl.c_str(), onOverrideRecordingFilenameFormat, this);
+    proc_handler_add(ph, PROC_OVERRIDE_REPLAY_BUFFER_FILENAME_FORMAT_DECL, onOverrideReplayBufferFilenameFormat, this);
+    proc_handler_add(ph, PROC_OVERRIDE_RECORDING_FILENAME_FORMAT_DECL, onOverrideRecordingFilenameFormat, this);
 
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
 }
@@ -1874,7 +1868,9 @@ static void onGetFilterList(void *, calldata_t *cd)
     // any thread. BlockingQueuedConnection would deadlock if the caller is
     // already on the target thread, so short-circuit in that case.
     //
-    // See obs_module_unload() for the residual race against widget destruction.
+    // The dock->thread() probe and the queued invocation both dereference
+    // *dock, so they share the residual race against widget destruction
+    // tracked by obs_module_unload()'s FIXME.
     auto *dock = statusDock.load();
     if (dock) {
         QList<BranchOutputFilterInfo> filterList;
@@ -1936,6 +1932,8 @@ void obs_module_post_load()
 
 #ifdef ENABLE_OBS_WEBSOCKET
     registerWebSocketVendorRequests();
+#else
+    obs_log(LOG_INFO, "obs-websocket vendor requests disabled at build time (ENABLE_OBS_WEBSOCKET=OFF)");
 #endif
 }
 

@@ -5,9 +5,23 @@ jobs:
   clang-format:
     runs-on: ubuntu-24.04
     steps:
+      # `submodules: recursive` is intentionally omitted: faster checkout, and
+      # the formatter source list does not include lib/, so vendored submodule
+      # sources are not formatted regardless.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Verify Vendored Submodule Is Absent 🚫
+        # Hard-asserts the no-submodule precondition. If a future change starts checking out
+        # submodules, the formatter exclusion filters in build-aux/.run-format.zsh become the
+        # only line of defense and a regression there would silently format vendored sources
+        # in CI but not locally. Catch the drift early.
+        run: |
+          if [ -e lib/obs-websocket/lib/obs-websocket-api.h ]; then
+            echo "::error::lib/obs-websocket/ submodule is present in the format-check checkout but should not be." >&2
+            echo "::error::Either remove 'submodules' from the checkout step or update this guard." >&2
+            exit 1
+          fi
       - name: clang-format check 🐉
         id: clang-format
         uses: ./.github/actions/run-clang-format
@@ -17,9 +31,23 @@ jobs:
   cmake-format:
     runs-on: ubuntu-22.04
     steps:
+      # `submodules: recursive` is intentionally omitted: faster checkout, and
+      # the formatter source list does not include lib/, so vendored submodule
+      # sources are not formatted regardless.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Verify Vendored Submodule Is Absent 🚫
+        # Hard-asserts the no-submodule precondition. If a future change starts checking out
+        # submodules, the formatter exclusion filters in build-aux/.run-format.zsh become the
+        # only line of defense and a regression there would silently format vendored sources
+        # in CI but not locally. Catch the drift early.
+        run: |
+          if [ -e lib/obs-websocket/lib/obs-websocket-api.h ]; then
+            echo "::error::lib/obs-websocket/ submodule is present in the format-check checkout but should not be." >&2
+            echo "::error::Either remove 'submodules' from the checkout step or update this guard." >&2
+            exit 1
+          fi
       - name: cmake-format check 🎛️
         id: cmake-format
         uses: ./.github/actions/run-cmake-format

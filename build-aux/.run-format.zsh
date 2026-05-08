@@ -70,8 +70,15 @@ invoke_formatter() {
 
       local -a source_files=(**/(CMakeLists.txt|*.cmake)(.N))
       source_files=(${source_files:#(build_*)/*})
-      # Exclude vendored submodules: drop every file at any depth under lib/
-      source_files=(${source_files:#lib/**/*})
+      # Exclude vendored submodules. `${var:#pattern}` matches against the current shell's
+      # option set (not this function's local `setopt`), so a manual prefix loop avoids
+      # surprises if the matching logic is ever reused from a caller without EXTENDED_GLOB.
+      local -a filtered=()
+      local f
+      for f (${source_files}) {
+        if [[ ${f} != lib/* ]] filtered+=(${f})
+      }
+      source_files=(${filtered})
 
       local -a format_args=()
       if (( _loglevel > 2 )) format_args+=(--log-level debug)

@@ -256,6 +256,49 @@ jobs:
           name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-ubuntu-22.04-x86_64-${{ needs.check-event.outputs.commitHash }}-dbgsym
           path: ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-x86_64*-dbgsym.ddeb
 
+  ubuntu-build-no-websocket:
+    # Verifies the ENABLE_OBS_WEBSOCKET=OFF compile path. The checkout omits `submodules`
+    # because the obs-websocket vendor sources are not consumed when the option is OFF.
+    name: Verify ENABLE_OBS_WEBSOCKET=OFF Compile 🐧
+    runs-on: ubuntu-22.04
+    needs: check-event
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install obs-studio Build Dependencies 🛍️
+        run: |
+          : Install obs-studio Build Dependencies 🛍️
+          if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
+          sudo add-apt-repository --yes ppa:obsproject/obs-studio
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            ninja-build \
+            libgles2-mesa-dev \
+            obs-studio \
+            qt6-base-dev \
+            libqt6svg6-dev \
+            qt6-base-private-dev
+
+      - name: Configure with ENABLE_OBS_WEBSOCKET=OFF 🛠️
+        run: |
+          : Configure with ENABLE_OBS_WEBSOCKET=OFF 🛠️
+          if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
+          cmake --preset linux-ci-x86_64 \
+            -DENABLE_OBS_WEBSOCKET=OFF \
+            -DCMAKE_INSTALL_PREFIX=/usr
+
+      - name: Build 🧱
+        run: |
+          : Build 🧱
+          if [[ "${RUNNER_DEBUG}" ]]; then set -x; fi
+          cmake --build --preset linux-ci-x86_64 --parallel
+
   windows-build:
     name: Build for Windows 🪟
     runs-on: windows-2022

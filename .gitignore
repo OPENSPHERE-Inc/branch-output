@@ -29,6 +29,9 @@
 !screenshot1.jpg
 !screenshot2.jpg
 !build.ps1
+# Submodules under lib/ use an explicit allowlist: `/lib/*` re-excludes everything under
+# lib/, so each new submodule must be re-included with its own `!/lib/<name>` line below.
+# Forgetting that line silently drops the submodule from `git add .`.
 !/lib
 /lib/*
 !/lib/obs-websocket

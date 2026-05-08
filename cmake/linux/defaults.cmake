@@ -36,7 +36,26 @@ set(CPACK_SOURCE_IGNORE_FILES
     \\.gitignore
     build_.*
     cmake/\\.CMakeBuildNumber
-    lib/
+    # Vendored obs-websocket: ship only `lib/obs-websocket/lib/` (the consumed header) plus `LICENSE` (required for
+    # redistribution); exclude everything else.
+    lib/obs-websocket/\\.clang-format
+    lib/obs-websocket/\\.cmake-format\\.json
+    lib/obs-websocket/\\.editorconfig
+    lib/obs-websocket/\\.git
+    lib/obs-websocket/\\.github/
+    lib/obs-websocket/\\.gitignore
+    lib/obs-websocket/\\.gitmodules
+    lib/obs-websocket/\\.markdownlintignore
+    lib/obs-websocket/\\.markdownlintrc
+    lib/obs-websocket/CI/
+    lib/obs-websocket/cmake/
+    lib/obs-websocket/CMakeLists\\.txt
+    lib/obs-websocket/data/
+    lib/obs-websocket/deps/
+    lib/obs-websocket/docs/
+    lib/obs-websocket/lib/example/
+    lib/obs-websocket/README\\.md
+    lib/obs-websocket/src/
     release/)
 
 set(CPACK_VERBATIM_VARIABLES YES)

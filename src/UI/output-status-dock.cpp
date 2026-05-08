@@ -32,6 +32,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QMouseEvent>
 #include <QDesktopServices>
 #include <QSet>
+#include <QThread>
 
 #include "../plugin-main.hpp"
 #include "output-status-dock.hpp"
@@ -369,6 +370,8 @@ void BranchOutputStatusDock::addRow(
 
 void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 {
+    Q_ASSERT(thread() == QThread::currentThread());
+
     // Ensure filter removed
     removeFilter(filter);
 
@@ -412,6 +415,8 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 
 void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
 {
+    Q_ASSERT(thread() == QThread::currentThread());
+
     // DO NOT access filter resources at this time (It may be already deleted)
     foreach (auto row, outputTableRows) {
         if (row->filter == filter) {
@@ -1553,6 +1558,8 @@ void StatusCell::setTextValue(const QString &textValue)
 
 QList<BranchOutputFilterInfo> BranchOutputStatusDock::getFilterList() const
 {
+    Q_ASSERT(thread() == QThread::currentThread());
+
     QList<BranchOutputFilterInfo> list;
     QSet<obs_source_t *> seen;
 

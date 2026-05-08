@@ -13,11 +13,15 @@ include(helpers)
 
 option(ENABLE_OBS_WEBSOCKET "Enable obs-websocket vendor request integration" ON)
 
+# When the submodule is missing, only this configure run is downgraded to OFF (a non-cache local variable). Writing OFF
+# to the cache here would persist past `git submodule update --init` until the user remembers to pass `--fresh` or to
+# delete the build dir.
 if(ENABLE_OBS_WEBSOCKET AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lib/obs-websocket/lib/obs-websocket-api.h")
   message(
-    FATAL_ERROR
-      "ENABLE_OBS_WEBSOCKET is ON but lib/obs-websocket submodule is missing. Run: git submodule update --init --recursive (or pass -DENABLE_OBS_WEBSOCKET=OFF to disable obs-websocket vendor request integration)"
+    WARNING
+      "ENABLE_OBS_WEBSOCKET is ON but lib/obs-websocket submodule is missing; disabling integration for this configure run. Run: git submodule update --init lib/obs-websocket then re-run cmake with --fresh (or delete the build dir) to enable obs-websocket vendor request integration."
   )
+  set(ENABLE_OBS_WEBSOCKET OFF)
 endif()
 
 add_library(${CMAKE_PROJECT_NAME} MODULE)
@@ -44,6 +48,8 @@ if(ENABLE_QT)
 endif()
 
 if(ENABLE_OBS_WEBSOCKET)
+  # Consumed surface is `obs-websocket-api.h` only; the whole `lib/obs-websocket/lib` directory is intentionally exposed
+  # as a SYSTEM include path because that header lives there and SYSTEM suppresses upstream warnings.
   target_include_directories(${CMAKE_PROJECT_NAME} SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/obs-websocket/lib)
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ENABLE_OBS_WEBSOCKET)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-websocket.cpp)

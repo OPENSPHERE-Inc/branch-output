@@ -233,9 +233,10 @@ class BranchOutputStatusDock : public QFrame {
     QTimer timer;
     QTableWidget *outputTable = nullptr;
     // Invariant: touched only from the Qt UI thread. Cross-thread callers
-    // (addFilter / removeFilter / onFilterRenamed / getFilterList) route
-    // through QMetaObject::invokeMethod, so no mutex is needed. Preserve
-    // this invariant when adding new access paths.
+    // (addFilter / removeFilter / getFilterList) route through
+    // QMetaObject::invokeMethod, so no mutex is needed. Preserve this
+    // invariant when adding new access paths; entry-point methods enforce it
+    // with Q_ASSERT(thread() == QThread::currentThread()) in debug builds.
     QList<OutputTableRow *> outputTableRows;
     QLabel *applyToAllLabel = nullptr;
     QToolButton *enableAllButton = nullptr;
