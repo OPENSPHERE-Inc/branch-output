@@ -45,12 +45,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-// Lifetime guard for the dock used by addCallback/updateCallback/removeCallback
-// and onIntervalTimerTimeout from worker threads. Readers hold a shared_lock
+// Lifetime guard for the dock accessed from worker threads
+// (addCallback/updateCallback/removeCallback). Readers hold a shared_lock
 // while dereferencing the pointer (including QMetaObject::invokeMethod, whose
 // QueuedConnection postEvent is non-blocking). obs_module_unload() takes a
-// unique_lock to swap to nullptr and waits until all in-flight readers
-// release, so the dock cannot be destroyed while any reader still holds it.
+// unique_lock to swap the pointer to nullptr; readers therefore always see
+// either a valid pointer or nullptr, never a pointer mid-swap.
 static std::shared_mutex statusDockMutex;
 static BranchOutputStatusDock *statusDock = nullptr;
 
@@ -1985,9 +1985,6 @@ void obs_module_unload()
 
     BranchOutputStatusDock *dockToRemove = nullptr;
     {
-        // unique_lock waits until every reader has released its shared_lock,
-        // so no worker can still be holding a stale pointer when the dock is
-        // destroyed by obs_frontend_remove_dock() below.
         std::unique_lock lock(statusDockMutex);
         dockToRemove = statusDock;
         statusDock = nullptr;
