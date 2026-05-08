@@ -2,181 +2,57 @@
 
 [日本語版はこちら](./API_ja.md)
 
-## Recording Filename Override
+## Overview
 
-### Overview
+Branch Output exposes a small public API for **overriding the recording / replay buffer
+filename format at runtime**, on a per-filter basis. Two transports are available:
 
-Recording Filename Override allows the filename format of stream recordings and replay buffer saves
-to be overridden at runtime through Branch Output's public procedures.
+1. **proc handler** — for in-process callers (OBS Script, plugins).
+2. **obs-websocket vendor request** — for out-of-process callers (external tools, bots,
+   Stream Deck integrations). Requires obs-websocket to be installed.
 
-The overridden filename format is stored separately from the filter's property settings, and remains
-active until it is reset via procedure or OBS is closed.
+Both transports expose the same three operations:
 
-Typical use cases include organizing recorded files by the current scene, the value of a text input,
-or other external data — by overriding the filename at runtime.
+| Operation | Purpose |
+|-----------|---------|
+| Get filter list | Enumerate the Branch Output filters currently loaded (returns UUIDs) |
+| Override recording filename format | Per filter; affects stream recording |
+| Override replay buffer filename format | Per filter; affects replay buffer save |
 
-### Threading and Call Context
+The override is held separately from the filter's own property setting and stays in effect
+until cleared (pass an empty string) or OBS exits.
 
-All procedures in this API follow these threading rules:
+Typical use cases: organizing recorded files by current scene, by the value of a text input,
+or by other external state.
 
-- **Thread safety**: Callable from any thread. The call is not guaranteed to be constant-time
-  (a recording restart or file split may occur), so avoid latency-sensitive hot paths.
-- **Callback safety**: Do not call from OBS signal callbacks (`obs_source_signal`,
-  `obs_output_signal`, etc.) or frontend event callbacks (`obs_frontend_event_callback`) — a
-  deadlock may occur. Safe callers: script timers, hotkey handlers, UI event handlers. When calling
-  from a hotkey callback, ensure your own code does not hold a Branch Output lock at the call site.
-  The same restriction applies to `osi_branch_output_get_filter_list` below.
-- **Deferred application**: If recording is transitioning (pending, split, or restart in progress),
-  the override is stored and applied with up to about 1 second of delay rather than synchronously.
-  The proc call returns immediately and there is no notification when the new format becomes active.
+## proc handler API
 
-### Obtaining the Filter Source
+### Procedure summary
 
-The per-filter override procedures (`override_recording_filename_format`,
-`override_replay_buffer_filename_format`) are registered on **each individual Branch Output filter
-source** — not on the parent source/scene. To call them, you need a reference to the filter source
-itself, not its parent.
+| Procedure name | Registered on | Signature |
+|----------------|---------------|-----------|
+| `osi_branch_output_get_filter_list` | Global (`obs_get_proc_handler()`) | `(out string json)` |
+| `override_recording_filename_format` | Filter source (`obs_source_get_proc_handler(filter_source)`) | `(in string format)` |
+| `override_replay_buffer_filename_format` | Filter source (`obs_source_get_proc_handler(filter_source)`) | `(in string format)` |
 
-The typical acquisition flow is:
+For both override procedures, an empty `format` clears the override and reverts to the value
+configured in the filter properties. The `format` string supports OBS date/time specifiers
+(e.g. `%CCYY-%MM-%DD %hh-%mm-%ss`).
 
-1. Call the global procedure `osi_branch_output_get_filter_list` to obtain the UUIDs of all Branch
-   Output filters currently loaded.
-2. Use `obs_get_source_by_uuid(filter_uuid)` to get a reference to the filter source.
-3. Call `obs_source_get_proc_handler(filter_source)` to get the proc handler.
-4. Always release the source with `obs_source_release()` after use.
+### Acquiring the filter source
 
-Alternatively, if you already have a reference to the parent source, you can use
-`obs_source_get_filter_by_name(parent, filter_name)`.
+The override procedures are registered on each individual Branch Output filter, not on its
+parent source. Typical flow:
 
-### Overriding the Stream Recording Filename Format
+1. Call `osi_branch_output_get_filter_list` to obtain UUIDs of all loaded Branch Output filters.
+2. `obs_get_source_by_uuid(filter_uuid)` → filter source reference.
+3. `obs_source_get_proc_handler(filter_source)` → proc handler.
+4. Release the source with `obs_source_release()` after use.
 
-A procedure registered on the Branch Output filter source that overrides the output filename format
-for stream recording at runtime.
+If you already have a parent source reference, `obs_source_get_filter_by_name(parent,
+filter_name)` is an alternative.
 
-| Item | Description |
-|------|-------------|
-| Procedure name | `override_recording_filename_format` |
-| Signature | `void override_recording_filename_format(in string format)` |
-| Registered on | Branch Output filter source (`obs_source_get_proc_handler(filter_source)`) |
-| Parameters | `format` (string) — The new filename format. OBS date/time specifiers (e.g., `%CCYY-%MM-%DD %hh-%mm-%ss`) are supported. **Passing an empty string clears the override and reverts to the filename format configured in the filter properties.** |
-| Returns | None |
-
-**Behavior during recording**
-
-- Before recording starts: The overridden filename format is used when recording begins
-- During recording (with file splitting enabled): A file split is triggered immediately when the
-  filename format changes
-- During recording (without file splitting): Recording is restarted with the new filename format
-
-**Python sample code**
-
-```python
-import obspython as obs
-
-# Get the target Branch Output filter by UUID. Pass "" as format to clear.
-bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter:
-    ph = obs.obs_source_get_proc_handler(bo_filter)
-    cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "MyShow %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_recording_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-```
-
-**Lua sample code**
-
-```lua
-local obs = obslua
-
--- Get the target Branch Output filter by UUID. Pass "" as format to clear.
-local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter ~= nil then
-    local ph = obs.obs_source_get_proc_handler(bo_filter)
-    local cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "MyShow %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_recording_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-end
-```
-
-### Overriding the Replay Buffer Save Filename Format
-
-A procedure registered on the Branch Output filter source that overrides the output filename format
-used when the replay buffer is saved.
-
-| Item | Description |
-|------|-------------|
-| Procedure name | `override_replay_buffer_filename_format` |
-| Signature | `void override_replay_buffer_filename_format(in string format)` |
-| Registered on | Branch Output filter source (`obs_source_get_proc_handler(filter_source)`) |
-| Parameters | `format` (string) — The new filename format. OBS date/time specifiers (e.g., `%CCYY-%MM-%DD %hh-%mm-%ss`) are supported. **Passing an empty string clears the override and reverts to the filename format configured in the filter properties.** |
-| Returns | None |
-
-The overridden filename format takes effect on the next replay buffer save. The override is applied
-immediately even while the replay buffer is running, without restarting the replay buffer itself.
-
-**Python sample code**
-
-```python
-import obspython as obs
-
-# Get the target Branch Output filter by UUID. Pass "" as format to clear.
-bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter:
-    ph = obs.obs_source_get_proc_handler(bo_filter)
-    cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "Replay %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-```
-
-**Lua sample code**
-
-```lua
-local obs = obslua
-
--- Get the target Branch Output filter by UUID. Pass "" as format to clear.
-local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-if bo_filter ~= nil then
-    local ph = obs.obs_source_get_proc_handler(bo_filter)
-    local cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", "Replay %CCYY-%MM-%DD %hh-%mm-%ss")
-    obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
-    obs.calldata_free(cd)
-    obs.obs_source_release(bo_filter)
-end
-```
-
-### Retrieving the Branch Output Filter List
-
-A global procedure that returns the list of Branch Output filters currently loaded in OBS. Since the
-override procedures above require the target filter's UUID, this procedure is typically used to
-present the filter list to the user for selection.
-
-| Item | Description |
-|------|-------------|
-| Procedure name | `osi_branch_output_get_filter_list` |
-| Signature | `void osi_branch_output_get_filter_list(out string json)` |
-| Registered on | Global procedure handler (`obs_get_proc_handler()`) |
-| Parameters | `json` (out string) — JSON string representing the list of Branch Output filters |
-| Returns | None |
-
-**Notes**
-
-- The procedure is registered during `obs_module_post_load()`. Calling it before registration
-  completes fails: `proc_handler_call()` returns `false` and the `out string json` parameter is not
-  written. Always check the return value before reading `json`.
-- Filters applied to **private sources** (sources not visible in the OBS frontend) are intentionally
-  excluded from the returned list, matching the Status Dock's visibility rules.
-- The returned list is a snapshot taken at call time. Poll periodically or refresh on demand if you
-  need to react to filter additions/removals.
-- **Thread safety**: Callable from any thread.
-- **Lifetime**: Do not call after `obs_module_unload()` — behavior is undefined.
-
-**Returned JSON structure**
+### Returned JSON of `osi_branch_output_get_filter_list`
 
 ```json
 {
@@ -186,20 +62,75 @@ present the filter list to the user for selection.
       "source_uuid": "12345678-1234-1234-1234-123456789abc",
       "filter_name": "Branch Output 1",
       "filter_uuid": "87654321-4321-4321-4321-cba987654321"
-    },
-    ...
+    }
   ]
 }
 ```
 
 | Field | Description |
 |-------|-------------|
-| `source_name` | Name of the parent source/scene to which the Branch Output filter is applied |
-| `source_uuid` | UUID of the parent source/scene |
-| `filter_name` | Name of the Branch Output filter |
-| `filter_uuid` | UUID of the Branch Output filter (used when calling the override procedures) |
+| `source_name` | Parent source/scene name |
+| `source_uuid` | Parent source/scene UUID |
+| `filter_name` | Branch Output filter name |
+| `filter_uuid` | Branch Output filter UUID (used by the override procedures) |
 
-**Python sample code**
+Filters on private sources (those not visible in the OBS frontend) are excluded, matching the
+Status Dock visibility rules. The list is a snapshot taken at call time; poll or refresh on
+demand if you need to follow filter additions/removals.
+
+### Behavior of `override_recording_filename_format`
+
+| Recording state | Behavior |
+|-----------------|----------|
+| Not started | Format applied at the next recording start |
+| Recording, file split enabled | A file split is triggered immediately |
+| Recording, file split disabled | Recording is restarted |
+
+### Behavior of `override_replay_buffer_filename_format`
+
+The new format is used on the next replay buffer save. The replay buffer itself is **not**
+restarted, even if it is currently running.
+
+### Sample code: override recording filename format
+
+**Python**
+
+```python
+import obspython as obs
+
+# Pass "" as format to clear the override.
+bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
+if bo_filter:
+    ph = obs.obs_source_get_proc_handler(bo_filter)
+    cd = obs.calldata_create()
+    obs.calldata_set_string(cd, "format", "MyShow %CCYY-%MM-%DD %hh-%mm-%ss")
+    obs.proc_handler_call(ph, "override_recording_filename_format", cd)
+    obs.calldata_free(cd)
+    obs.obs_source_release(bo_filter)
+```
+
+**Lua**
+
+```lua
+local obs = obslua
+
+-- Pass "" as format to clear the override.
+local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
+if bo_filter ~= nil then
+    local ph = obs.obs_source_get_proc_handler(bo_filter)
+    local cd = obs.calldata_create()
+    obs.calldata_set_string(cd, "format", "MyShow %CCYY-%MM-%DD %hh-%mm-%ss")
+    obs.proc_handler_call(ph, "override_recording_filename_format", cd)
+    obs.calldata_free(cd)
+    obs.obs_source_release(bo_filter)
+end
+```
+
+For replay buffer, swap the procedure name to `override_replay_buffer_filename_format`.
+
+### Sample code: get filter list
+
+**Python**
 
 ```python
 import json
@@ -229,10 +160,7 @@ def get_branch_output_filters():
     return filters
 ```
 
-**Lua sample code**
-
-Since Lua does not have a built-in JSON parser, we use OBS's `obs_data_create_from_json()` to parse
-the returned JSON string.
+**Lua** — Lua has no built-in JSON parser, so we use OBS's `obs_data_create_from_json()`.
 
 ```lua
 local obs = obslua
@@ -268,166 +196,108 @@ function get_branch_output_filters()
 end
 ```
 
-### Using the Sample Scripts
+### Bundled sample scripts
 
-Two variants of each sample script are bundled with the plugin: **Python** (`.py`) and **Lua**
-(`.lua`). Both variants implement the same functionality; choose whichever language you prefer.
+Two ready-to-use OBS Scripts ship with the plugin, in both Python (`.py`) and Lua (`.lua`)
+variants. Both variants implement the same logic — pick whichever language fits your setup.
+Python requires Tools → Scripts → Python Settings to be configured; Lua works out of the box.
 
-- Python scripts require Python Settings to be properly configured in OBS under **Tools → Scripts**.
-- Lua scripts do not require any additional configuration — Lua support is built into OBS.
+Install path:
 
-On Windows, the scripts are installed at `data\obs-plugins\osi-branch-output\scripts\` under the OBS
-installation path. On macOS and Linux, the path follows the standard OBS plugin data directory
-convention.
+- Windows: `data\obs-plugins\osi-branch-output\scripts\` under the OBS install directory
+- macOS / Linux: standard OBS plugin data directory
 
-#### Common setup
+Setup:
 
-Both sample scripts share the same setup flow:
+1. OBS → Tools → Scripts → click `+`
+2. Pick the `.py` or `.lua` variant
+3. In the Description panel, set:
+   - **Text Source** — the text input to read from
+   - **Branch Output Filter** — the filter to override
+   - **Base Filename Format** — appended to the end of the filename
+4. The override applies immediately. Check Script Log for activity.
+5. While the script is loaded, the override takes precedence over the filter's own setting.
+6. Remove the script (trash button) to restore the filter's own setting.
 
-1. Open OBS menu → Tools → Scripts
-2. Click the plus (+) button at the bottom of the Scripts dialog
-3. Select the script file — either the `.py` or the `.lua` variant.
-4. In the Description panel, configure:
-   - **Text Source** — Select the text input
-   - **Branch Output Filter** — Select the Branch Output filter to override
-   - **Base Filename Format** — The base format appended to the end of the filename.
-5. The override becomes active immediately. Check **Script Log** to confirm activity.
-6. The overridden filename takes precedence over the filter's own setting while the script is
-   loaded; the filter property value is not used.
-7. To disable the override, remove the script via the trash button.
+| Script | Reads | Applies to |
+|--------|-------|------------|
+| `recording-filename-from-text` | text input value | stream recording filename format |
+| `replay-buffer-filename-from-text` | text input value | replay buffer save filename format |
 
-**Windows + "Read from file" — Lua limitation:** When the text source reads from a file, the Lua
-variant uses `io.open()`, which on Windows interprets the path in the system ANSI code page
-(e.g. CP932 on Japanese locale). Paths containing characters outside that code page may therefore
-fail to open. The Python variant is not affected (CPython uses wide-character Windows APIs). Use
-the Python variant if full UTF-8 path support is required on Windows.
+The recording variant throttles updates to **one apply per 30 s per distinct value** to avoid
+file-split / recording-restart storms. Adjust `THROTTLE_SECONDS` at the top of the script to
+tune. The replay buffer variant has no such throttle since it does not restart the buffer.
 
-#### recording-filename-from-text
+## obs-websocket vendor request
 
-Reads the value of a text input and applies it to the stream recording filename format. See
-[behavior during recording](#overriding-the-stream-recording-filename-format) above for how the
-override is applied in each recording state.
-
-**Throttling:** To avoid excessive file splits or recording restarts when the text source changes
-rapidly, the script throttles updates to one apply per 30 seconds per distinct text value. A text
-change may therefore take up to 30 seconds to be reflected. Adjust `THROTTLE_SECONDS` at the top of
-the script to tune this interval.
-
-#### replay-buffer-filename-from-text
-
-Reads the value of a text input and applies it to the replay buffer save filename format. The
-override takes effect on the next save; the replay buffer itself is not restarted.
-
-## obs-websocket Vendor Requests
-
-The same filename-override operations (and the filter listing helper) are also exposed as
-**obs-websocket vendor requests**, so external tools, bots, or Stream Deck integrations can drive
-the plugin over obs-websocket without running an in-process OBS script.
+The same three operations are also exposed as obs-websocket 5.x vendor requests, so external
+tools can drive the plugin without an in-process script.
 
 - **Vendor name:** `osi_branch_output`
-- **Transport:** obs-websocket 5.x `CallVendorRequest`
-- **Requirement:** obs-websocket must be installed. If not, these requests are unavailable.
+- **Transport:** `CallVendorRequest`
+- **Requirement:** obs-websocket must be installed.
 
 ### Security
 
-Authentication of these requests is governed entirely by obs-websocket's own configuration. The
-plugin does not add an authentication layer of its own: when obs-websocket is configured to require
-authentication, only authenticated clients can issue these requests; when obs-websocket is
-configured without authentication, any client that can reach the obs-websocket endpoint can issue
-them.
+Authentication is delegated entirely to obs-websocket. The plugin adds no separate
+authentication layer. When you expose obs-websocket beyond `localhost`, enable its password
+authentication and front the connection with TLS (e.g., terminate `wss://` at nginx or
+Caddy). Treat the obs-websocket password as a credential equivalent to OBS user authority —
+it grants full access to every request below.
 
-When exposing obs-websocket beyond `localhost`, enable obs-websocket's password authentication and
-front the connection with TLS by terminating `wss://` at a reverse proxy (e.g., nginx, Caddy). The
-obs-websocket password grants full access to every request below; treat it as a credential
-equivalent to OBS user authority.
+### Request reference
 
-### Limitations
+#### `get_filter_list`
 
-- `filter_uuid` must be a 36-character hyphenated UUID string in lowercase canonical form
-  (8-4-4-4-12 with lowercase hex digits), matching the output of `obs_source_get_uuid()`. Uppercase
-  hex, missing or extra hyphens, and other shapes are rejected with
-  `"filter_uuid must be a lowercase canonical UUID string"`.
-- `format` cannot exceed 1024 bytes. Longer strings are rejected with `"format too long"`.
-- `format` must be a relative path expression. Absolute paths (POSIX `/...`, Windows `\...` or
-  `X:\...`) and any `..` segment are rejected with
-  `"format must not contain path traversal or absolute paths"`.
-- `filter_uuid` must resolve to a Branch Output filter source. Any other source (including
-  non-existent UUIDs) is rejected with `"UUID does not refer to a Branch Output filter"`.
-- Do not send bursts of requests while a recording transition (file split, restart) is in
-  progress — a request may block until the transition completes.
+Enumerates every Branch Output filter currently loaded.
 
-### Client-side throttling
-
-The plugin does **not** rate-limit `override_recording_filename_format` or
-`override_replay_buffer_filename_format`. Each request that produces a different `format` while
-recording is active may trigger a file split or a recording restart, so a client that fires updates
-faster than the recording can settle will fragment files and stress the encoder pipeline.
-
-The bundled OBS scripts (see [Throttling](#recording-filename-from-text)) deduplicate by value and
-apply at most one update every 30 seconds per distinct `format`. Vendor requests do not pass
-through that script, so this guard is bypassed when driving the plugin over obs-websocket.
-**Implement equivalent throttling in your client** — at minimum, suppress duplicate `format` values
-and rate-limit distinct updates (≥ 30 s is a safe starting point; tune to match your file-split and
-restart tolerance).
-
-### `get_filter_list`
-
-Enumerates every Branch Output filter currently loaded in OBS.
-
-| Item | Description |
-|------|-------------|
+| Item | Value |
+|------|-------|
 | Request type | `get_filter_list` |
 | Request data | *(none)* |
 | Response | `{ "success": bool, "error"?: string, "filters": array }` |
 
-Each element of the `filters` array:
+`filters[]` element:
 
 | Field | Description |
 |-------|-------------|
-| `source_name` | Name of the parent source/scene to which the Branch Output filter is applied |
-| `source_uuid` | UUID of the parent source/scene |
-| `filter_name` | Name of the Branch Output filter |
-| `filter_uuid` | UUID of the Branch Output filter (used with the override requests below) |
+| `source_name` | Parent source/scene name |
+| `source_uuid` | Parent source/scene UUID |
+| `filter_name` | Branch Output filter name |
+| `filter_uuid` | Branch Output filter UUID (used by the override requests below) |
 
-Filters applied to **private sources** are excluded, matching the Status Dock's visibility rules.
+Filters on private sources are excluded.
 
-### `override_recording_filename_format`
+#### `override_recording_filename_format` / `override_replay_buffer_filename_format`
 
-Overrides the stream-recording filename format for a specific Branch Output filter.
+Override the filename format on a specific Branch Output filter.
 
-| Item | Description |
-|------|-------------|
-| Request type | `override_recording_filename_format` |
+| Item | Value |
+|------|-------|
+| Request type | `override_recording_filename_format` or `override_replay_buffer_filename_format` |
 | Request data | `{ "filter_uuid": string, "format": string }` |
 | Response | `{ "success": bool, "error"?: string }` |
-| Clearing the override | Pass an empty string for `format`. |
+| Clear the override | Pass `""` for `format` |
 
-`success: true` means the request was accepted and the override value was stored on the filter.
-It does **not** indicate that the new format has already been applied to a recording file.
-Application timing follows the proc handler: with file splitting enabled, a split is triggered on
-the next opportunity; without splitting, the recording is restarted; if recording is inactive, the
-new format is used on the next recording start. See
-[Overriding the Stream Recording Filename Format](#overriding-the-stream-recording-filename-format)
-above for the full behavior.
+`success: true` means the value was **stored** on the filter. It does **not** indicate that
+the new format has already been applied to a recording file (see [Behavior of
+`override_recording_filename_format`](#behavior-of-override_recording_filename_format) and
+[Behavior of `override_replay_buffer_filename_format`](#behavior-of-override_replay_buffer_filename_format)
+above).
 
-### `override_replay_buffer_filename_format`
+### Validation rules
 
-Overrides the replay buffer save filename format for a specific Branch Output filter.
+| Field | Rule |
+|-------|------|
+| `filter_uuid` | 36-char lowercase canonical UUID (8-4-4-4-12 with lowercase hex) — matches `obs_source_get_uuid()` output |
+| `filter_uuid` | Must resolve to an existing Branch Output filter source |
+| `format` | At most 1024 bytes |
+| `format` | Relative path expression only — absolute paths (`/...`, `\...`, `X:\...`), `..` segments, and a leading `~` are rejected |
 
-| Item | Description |
-|------|-------------|
-| Request type | `override_replay_buffer_filename_format` |
-| Request data | `{ "filter_uuid": string, "format": string }` |
-| Response | `{ "success": bool, "error"?: string }` |
-| Clearing the override | Pass an empty string for `format`. |
-
-`success: true` means the request was accepted and the override value was stored on the filter.
-The replay buffer itself is not restarted; the new format takes effect on the next replay buffer
-save.
+Validation failures return `{ "success": false, "error": "<message>" }` with a short
+human-readable error string.
 
 ### Example
-
-Request:
 
 ```json
 {
@@ -449,8 +319,91 @@ Successful response:
 { "success": true }
 ```
 
-Failure response (invalid UUID):
+Failure response:
 
 ```json
 { "success": false, "error": "filter_uuid must be a lowercase canonical UUID string" }
 ```
+
+## Known Limitations
+
+These items affect callers in practice but are not part of the API contract; they are listed
+together here so the main API reference stays scannable.
+
+### Do not call from OBS signal or frontend callbacks
+
+Calling any of the proc handler procedures (or invoking the corresponding vendor requests
+synchronously from the same callback) from `obs_source_signal`, `obs_output_signal`, or
+`obs_frontend_event_callback` may deadlock. Safe callers: script timers, hotkey handlers, UI
+event handlers. When calling from a hotkey, ensure your own code does not hold a Branch
+Output lock at the call site.
+
+### Deferred application during recording transitions
+
+If a recording is mid-transition (pending, splitting, or restarting), the override is stored
+and applied with up to about 1 s of delay rather than synchronously. The proc / vendor call
+returns immediately; there is no notification when the new format becomes active. Bursting
+requests during a transition can also cause individual requests to block until the transition
+completes.
+
+### Lifetime
+
+Do not call any of these procedures or vendor requests after `obs_module_unload()` —
+behavior is undefined. The procedures and vendor requests are registered during
+`obs_module_post_load()`; callers that race the early startup window must check the proc
+return value before reading `out` parameters.
+
+### Server-side throttling is not implemented
+
+The plugin does not rate-limit `override_recording_filename_format` /
+`override_replay_buffer_filename_format`. Each accepted distinct `format` while a recording
+is active triggers either a file split or a recording restart, both of which have non-trivial
+A/V cost (see below). **Implement throttling on the client side** — at minimum, suppress
+duplicate `format` values, and rate-limit distinct updates (≥ 30 s is a safe starting point).
+
+The bundled `recording-filename-from-text` script enforces this throttle internally, but
+vendor requests bypass that script. The bundled `replay-buffer-filename-from-text` script
+does not throttle because it does not restart the replay buffer.
+
+### A/V cost of frequent override changes
+
+Each accepted distinct `format` triggers one of two paths:
+
+- **Split-enabled path** (encoder kept alive, file boundary only):
+  - Cut aligned to the next encoder keyframe; latency to the cut is bounded by the configured
+    keyframe interval (typically ~2 s; with `keyint_sec=0` the GOP length follows the encoder
+    backend's native default and can extend to several seconds).
+  - New container header per file. Reordered B-frames preceding the cut IDR are flushed into
+    the previous file, so no encoded frames are lost across the boundary, but PTS continuity
+    across files depends on each file's container `start_time` — naive concatenation can
+    leave a small gap at the boundary for streams using B-frames.
+  - AAC encoder priming samples appear at the start of each new file (AAC-LC: 2112 samples =
+    2048 + 64 per ISO/IEC 14496-3; HE-AAC adds a further 481 samples of SBR delay). Naive
+    concatenation can therefore produce an audible click or short gap at each cut.
+- **Recording-restart path** (encoder torn down and recreated):
+  - Hardware encoder backends (NVENC, QSV, AMF, VideoToolbox) recreate session/GPU contexts.
+    Typical stall: 100 ms – 1 s. Cold-start cases (first session after process launch, macOS
+    VideoToolbox HEVC, certain NVENC driver states) can exceed 1 s.
+  - Latency is dominated by session creation, not by the keyframe interval.
+
+Choose a client-side throttle interval that comfortably exceeds these costs.
+
+### `obs_data_get_string()` cannot distinguish missing key from empty value
+
+By libobs convention, `obs_data_get_string()` returns `""` both for a missing key and for an
+explicitly empty string, so the plugin cannot tell the two cases apart:
+
+- A missing `filter_uuid` is treated as `""` and rejected with `"filter_uuid is required"`.
+- A missing `format` is treated as `""`, which **clears** any active override.
+
+Send keys explicitly when the distinction matters, and validate request shapes on the client
+side.
+
+### Lua sample script + non-ANSI paths on Windows
+
+When the `recording-filename-from-text` / `replay-buffer-filename-from-text` Lua variant
+reads a text source whose mode is "Read from file", it opens the file with `io.open()`. On
+Windows, `io.open()` interprets the path in the system ANSI code page (e.g., CP932 on a
+Japanese locale), so paths containing characters outside that code page may fail to open.
+The Python variant uses CPython's wide-character Windows APIs and is unaffected — switch to
+the Python variant if full UTF-8 path support is required on Windows.
