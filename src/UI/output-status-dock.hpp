@@ -22,6 +22,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-frontend-api.h>
 #include <obs.hpp>
 
+#include <atomic>
+
 #include <QFrame>
 #include <QPointer>
 #include <QList>
@@ -53,12 +55,6 @@ struct BranchOutputFilterInfo {
     QString filterName;
     QString filterUuid;
 };
-Q_DECLARE_METATYPE(BranchOutputFilterInfo)
-// QList<BranchOutputFilterInfo> is auto-registered lazily by Qt 6 on first
-// use via template machinery. The explicit qRegisterMetaType<QList<...>>()
-// in obs_module_post_load() is a defensive pre-registration to close the
-// race against first cross-thread use, and MUST precede the matching
-// proc_handler_add that publishes the proc invoking the meta call.
 
 class OutputTableCellItem : public QTableWidgetItem {
     enum ItemRole {
@@ -232,10 +228,10 @@ class BranchOutputStatusDock : public QFrame {
 
     QTimer timer;
     QTableWidget *outputTable = nullptr;
-    // Invariant: touched only from the Qt UI thread. Cross-thread callers
-    // (addFilter / removeFilter / onFilterRenamed / getFilterList) route
-    // through QMetaObject::invokeMethod, so no mutex is needed. Preserve
-    // this invariant when adding new access paths.
+    // Invariant: touched only from the Qt UI thread; no mutex is needed.
+    // Cross-thread callers use QMetaObject::invokeMethod with QueuedConnection.
+    // Same-thread calls (e.g. removeFilter from the update() timer slot) also
+    // exist and are intentional.
     QList<OutputTableRow *> outputTableRows;
     QLabel *applyToAllLabel = nullptr;
     QToolButton *enableAllButton = nullptr;
@@ -247,6 +243,11 @@ class BranchOutputStatusDock : public QFrame {
     QToolButton *saveReplayBufferAllButton = nullptr;
     QLabel *interlockLabel = nullptr;
     QComboBox *interlockComboBox = nullptr;
+    // QComboBox mirror so getInterlockType() can be called from non-UI threads
+    // (e.g. the BranchOutputFilter interval timer slot, whose thread affinity
+    // follows addCallback's caller). Updated on the UI thread whenever the
+    // combo selection changes or settings are applied.
+    std::atomic<int> interlockTypeAtomic;
     OBSSignal sourceAddedSignal;
     obs_hotkey_id enableAllHotkey;
     obs_hotkey_id disableAllHotkey;
@@ -261,6 +262,8 @@ class BranchOutputStatusDock : public QFrame {
 
     void update();
     void updateOutputToggles(BranchOutputFilter *filter);
+    QList<BranchOutputFilterInfo> buildFilterListSnapshot() const;
+    void publishFilterListSnapshot();
     void applyEnableAllButtonEnabled();
     void applyDisableAllButtonEnabled();
     void applySplitRecordingAllButtonEnabled();
@@ -293,10 +296,6 @@ public:
     explicit BranchOutputStatusDock(QWidget *parent = (QWidget *)nullptr);
     ~BranchOutputStatusDock();
 
-    // Q_INVOKABLE (not a slot): invoked by name via QMetaObject::invokeMethod
-    // as a cross-thread RPC entry, not connected to any signal.
-    Q_INVOKABLE QList<BranchOutputFilterInfo> getFilterList() const;
-
 public slots:
     void addRow(BranchOutputFilter *filter, size_t streamingIndex, RowOutputType outputType, size_t groupIndex = 0);
     void addFilter(BranchOutputFilter *filter);
@@ -310,7 +309,7 @@ public slots:
     void resetStatsAll();
     void sort();
 
-    inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
+    inline int getInterlockType() const { return interlockTypeAtomic.load(std::memory_order_relaxed); };
 };
 
 class OutputTableRow : public QObject {
