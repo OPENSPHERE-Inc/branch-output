@@ -86,6 +86,8 @@ def get_branch_output_filters():
 
 def parse_selected_filter(value):
     """Parse 'source_uuid::filter_uuid' into (source_uuid, filter_uuid)."""
+    if not value:
+        return "", ""
     if "::" in value:
         parts = value.split("::", 1)
         return parts[0], parts[1]
@@ -104,11 +106,14 @@ def sanitize_filename(text):
     """
     if text is None:
         return ""
-    # Fold Unicode "Other" category (Cc/Cf/Cs/Cn/Co) to space. Keeps the
-    # literal space explicitly so the following split()/join() collapses
-    # runs, and avoids str.isprintable() which would leak ZWJ/BiDi marks.
+    # Fold Unicode "Other" (Cc/Cf/Cs/Cn/Co) and "Separator"
+    # (Zs/Zl/Zp, e.g. NBSP / IDEOGRAPHIC SPACE / LINE SEPARATOR) categories
+    # to ASCII space so the following split()/join() collapses runs.
+    # Keeps the literal space explicitly and avoids str.isprintable(), which
+    # would leak ZWJ/BiDi marks. Folding Z* matches the Lua variant's
+    # is_unicode_space() coverage.
     cleaned = "".join(
-        ch if ch == " " or unicodedata.category(ch)[0] != "C" else " "
+        ch if ch == " " or unicodedata.category(ch)[0] not in ("C", "Z") else " "
         for ch in text
     )
     # Collapse runs of whitespace and trim
@@ -135,18 +140,29 @@ def sanitize_filename(text):
 
 
 def read_text_from_source(text_source):
-    """Read text from a Text (GDI+) source.
+    """Read text from a Text (GDI+ or FreeType2) source.
 
     Returns (text, ok). ok = False means the caller should clear the override.
     """
+    # GDI+ stores read-from-file as (read_from_file, file); FreeType2 uses
+    # (from_file, text_file). Branch on the unversioned source id so both
+    # source families honor their "read from file" mode correctly.
+    source_id = obs.obs_source_get_unversioned_id(text_source)
+    if source_id in ("text_ft2_source", "text_ft2_source_v2"):
+        from_file_key = "from_file"
+        file_path_key = "text_file"
+    else:
+        from_file_key = "read_from_file"
+        file_path_key = "file"
+
     settings = obs.obs_source_get_settings(text_source)
     result_text = None
     ok = True
 
     try:
-        read_from_file = obs.obs_data_get_bool(settings, "read_from_file")
+        read_from_file = obs.obs_data_get_bool(settings, from_file_key)
         if read_from_file:
-            file_path = obs.obs_data_get_string(settings, "file")
+            file_path = obs.obs_data_get_string(settings, file_path_key)
             if not file_path:
                 obs.script_log(obs.LOG_WARNING,
                                "Text source is set to 'read from file' but no file path is configured; clearing override")
@@ -155,12 +171,17 @@ def read_text_from_source(text_source):
                 try:
                     # Open in binary mode so BOM bytes are not translated.
                     # Limit read size to prevent performance issues on accidental large-file selection.
+                    # Read one extra byte so len(data) > MAX_READ_SIZE
+                    # unambiguously signals truncation even when the file
+                    # is exactly MAX_READ_SIZE bytes.
                     with open(file_path, "rb") as f:
-                        data = f.read(MAX_READ_SIZE)
-                        if f.read(1):
-                            obs.script_log(obs.LOG_WARNING,
-                                           f"Text file exceeds {MAX_READ_SIZE} bytes; "
-                                           "only the first chunk is used")
+                        data = f.read(MAX_READ_SIZE + 1)
+                    truncated = len(data) > MAX_READ_SIZE
+                    if truncated:
+                        obs.script_log(obs.LOG_WARNING,
+                                       f"Text file exceeds {MAX_READ_SIZE} bytes; "
+                                       "only the first chunk is used")
+                        data = data[:MAX_READ_SIZE]
                     # UTF-8 BOM: strip it.
                     if data[:3] == b"\xef\xbb\xbf":
                         data = data[3:]
@@ -170,8 +191,14 @@ def read_text_from_source(text_source):
                                        "UTF-16 text files are not supported; please save the text file as UTF-8")
                         ok = False
                     if ok:
+                        # When truncated, the cut may land inside a multibyte
+                        # UTF-8 sequence; drop the trailing partial codepoint
+                        # instead of failing the whole read. Mirrors the Lua
+                        # variant which skips strict UTF-8 validation on
+                        # truncation.
+                        decode_errors = "ignore" if truncated else "strict"
                         try:
-                            result_text = data.decode("utf-8")
+                            result_text = data.decode("utf-8", errors=decode_errors)
                         except UnicodeDecodeError as e:
                             obs.script_log(obs.LOG_WARNING, f"Failed to decode text file as UTF-8: {e}")
                             ok = False
@@ -201,7 +228,7 @@ def call_override_proc(filter_uuid, format_value):
         return False
 
     try:
-        filter_id = obs.obs_source_get_id(bo_filter)
+        filter_id = obs.obs_source_get_unversioned_id(bo_filter)
         if filter_id != BRANCH_OUTPUT_FILTER_ID:
             obs.script_log(obs.LOG_WARNING,
                            f"Source (uuid: {filter_uuid}) is not a Branch Output filter (id: {filter_id})")
@@ -253,15 +280,6 @@ def update_recording_format():
             clear_override()
         return
 
-    # Skip if text hasn't changed
-    if current_text == last_text:
-        return
-
-    # Throttle: skip if the same text was already applied within THROTTLE_SECONDS
-    now = time.time()
-    if current_text == last_applied_text and (now - last_applied_time) < THROTTLE_SECONDS:
-        return
-
     # Build the new format string
     sanitized = sanitize_filename(current_text)
     if sanitized and base_format:
@@ -277,12 +295,30 @@ def update_recording_format():
             clear_override()
         return
 
+    # Cache the resolved new_format (not raw current_text) so two raw inputs
+    # differing only in control chars / trailing whitespace — which collapse
+    # to the same sanitized prefix — do not trigger a redundant proc re-call.
+    if new_format == last_text:
+        return
+
+    # Throttle: skip if the same format was already applied within THROTTLE_SECONDS
+    now = time.time()
+    if new_format == last_applied_text and (now - last_applied_time) < THROTTLE_SECONDS:
+        return
+
     if call_override_proc(filter_uuid, new_format):
-        last_text = current_text
-        last_applied_text = current_text
+        last_text = new_format
+        last_applied_text = new_format
         last_applied_time = now
         override_cleared = False
         obs.script_log(obs.LOG_INFO, f"{LOG_LABEL} updated: {new_format}")
+    else:
+        # Filter missing or proc call failed: cache new_format so the
+        # "same format" early-return suppresses retries on subsequent ticks
+        # until the text or selection actually changes. Without this the
+        # timer would re-issue the warning every tick at 1 Hz.
+        last_text = new_format
+        override_cleared = True
 
 
 def timer_callback():
@@ -362,9 +398,11 @@ def script_update(settings):
     global text_source_uuid, selected_filter, base_format, last_text
     global last_applied_text, last_applied_time, override_cleared
 
-    # Remember the previously selected filter so we can clear its override
-    # if the user changed the selection.
-    _, old_filter_uuid = parse_selected_filter(selected_filter)
+    # Capture previous identifiers before overwriting them so we can detect
+    # selection changes (clear old filter override, reset throttle window).
+    prev_text_source_uuid = text_source_uuid
+    prev_selected_filter = selected_filter
+    _, old_filter_uuid = parse_selected_filter(prev_selected_filter)
 
     text_source_uuid = obs.obs_data_get_string(settings, "text_source")
     selected_filter = obs.obs_data_get_string(settings, "selected_filter")
@@ -384,11 +422,17 @@ def script_update(settings):
         clear_override()
         return
 
-    # Reset state to force update on next tick
+    # Force re-apply on next tick (text or filter selection changed, or
+    # base_format was edited).
     last_text = None
-    last_applied_text = None
-    last_applied_time = 0.0
-    override_cleared = False
+    override_cleared = False  # reset to "needs re-apply"
+    # Preserve last_applied_text / last_applied_time when only base_format
+    # changed, so dragging a slider does not bypass THROTTLE_SECONDS.
+    selection_changed = (prev_text_source_uuid != text_source_uuid
+                         or prev_selected_filter != selected_filter)
+    if selection_changed:
+        last_applied_text = None
+        last_applied_time = 0.0
 
 
 def script_load(settings):
@@ -400,21 +444,8 @@ def script_load(settings):
 
 
 def clear_override():
-    """Clear the filename format override by sending empty string.
-
-    Sets override_cleared = True to suppress redundant proc calls on
-    subsequent timer ticks until a new format is applied or the
-    selection changes. Also reset the cached text state so that if the
-    text source reappears later with the same content as before, the
-    override is re-applied rather than being suppressed by the early-
-    return "same text" check in update_recording_format().
-
-    Note: resetting last_applied_time to 0.0 intentionally bypasses the
-    THROTTLE_SECONDS window on the next successful apply. This is the
-    desired behavior so that a source that disappears and returns can
-    re-apply its override immediately rather than waiting out the
-    throttle. If the text source flaps rapidly, the throttle will not
-    suppress those transitions.
+    """Clear the filename format override and reset last_applied_time to
+    bypass THROTTLE_SECONDS so unchanged content is re-applied immediately.
     """
     global override_cleared, last_text, last_applied_text, last_applied_time
 
