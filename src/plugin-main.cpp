@@ -27,6 +27,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 
 #include <QRegularExpression>
 
@@ -44,16 +45,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-// Atomic so addCallback/updateCallback/removeCallback can safely read the
-// pointer when dispatching QMetaObject::invokeMethod from worker threads.
-//
-// FIXME: A worker that loads the pointer before obs_module_unload() runs
-// statusDock.exchange(nullptr) can still reach QMetaObject::invokeMethod
-// after the dock QObject is destroyed. This also covers workers already
-// inside onGetFilterList that continue calling obs_data_* after the module
-// is unloaded. Needs an in-flight counter or QPointer-based UI-thread
-// marshalling.
-static std::atomic<BranchOutputStatusDock *> statusDock{nullptr};
+// Lifetime guard for the dock used by addCallback/updateCallback/removeCallback
+// and onIntervalTimerTimeout from worker threads. Readers hold a shared_lock
+// while dereferencing the pointer (including QMetaObject::invokeMethod, whose
+// QueuedConnection postEvent is non-blocking). obs_module_unload() takes a
+// unique_lock to swap to nullptr and waits until all in-flight readers
+// release, so the dock cannot be destroyed while any reader still holds it.
+static std::shared_mutex statusDockMutex;
+static BranchOutputStatusDock *statusDock = nullptr;
 
 // Set by obs_module_unload() before module-owned state is torn down. Procs
 // registered via obs_get_proc_handler() outlive the module (libobs has no
@@ -1050,8 +1049,13 @@ void BranchOutputFilter::onIntervalTimerTimeout()
         return;
     }
 
-    auto *dock = statusDock.load();
-    auto interlockType = dock ? dock->getInterlockType() : INTERLOCK_TYPE_ALWAYS_ON;
+    int interlockType = INTERLOCK_TYPE_ALWAYS_ON;
+    {
+        std::shared_lock lock(statusDockMutex);
+        if (statusDock) {
+            interlockType = statusDock->getInterlockType();
+        }
+    }
     auto sourceEnabled = obs_source_enabled(filterSource);
     auto streamingActive = countActiveStreamings() > 0;
 
@@ -1631,9 +1635,12 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
     connect(intervalTimer, SIGNAL(timeout()), this, SLOT(onIntervalTimerTimeout()));
 
     // Register to status dock
-    if (auto *dock = statusDock.load()) {
-        // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(dock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+    {
+        std::shared_lock lock(statusDockMutex);
+        if (statusDock) {
+            // Show in status dock (Thread-safe way)
+            QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+        }
     }
 
     // Register hotkeys
@@ -1681,9 +1688,12 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
     registerHotkey();
 
     // Update status dock
-    if (auto *dock = statusDock.load()) {
-        // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(dock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+    {
+        std::shared_lock lock(statusDockMutex);
+        if (statusDock) {
+            // Show in status dock (Thread-safe way)
+            QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+        }
     }
 
     obs_log(LOG_INFO, "%s: Filter updated", qUtf8Printable(name));
@@ -1745,9 +1755,14 @@ void BranchOutputFilter::removeCallback()
 
     // Do not call stopOutput() here as this will cause a crash.
 
-    if (auto *dock = statusDock.load()) {
-        // Unregister from output status dock (In proper thread)
-        QMetaObject::invokeMethod(dock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+    {
+        std::shared_lock lock(statusDockMutex);
+        if (statusDock) {
+            // Unregister from output status dock (In proper thread)
+            QMetaObject::invokeMethod(
+                statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this)
+            );
+        }
     }
 
     // Unregister hotkeys
@@ -1939,7 +1954,10 @@ void obs_module_post_load()
     // genuinely-no-filters.
     publishFilterListSnapshot(QList<BranchOutputFilterInfo>{});
 
-    statusDock.store(BranchOutputFilter::createOutputStatusDock());
+    {
+        std::unique_lock lock(statusDockMutex);
+        statusDock = BranchOutputFilter::createOutputStatusDock();
+    }
 
     // Register global proc handler for script access (obs-websocket style).
     // data=nullptr: onGetFilterList reads the filter-list snapshot directly.
@@ -1965,7 +1983,17 @@ void obs_module_unload()
         filterListSnapshot.reset();
     }
 
-    if (statusDock.exchange(nullptr) != nullptr) {
+    BranchOutputStatusDock *dockToRemove = nullptr;
+    {
+        // unique_lock waits until every reader has released its shared_lock,
+        // so no worker can still be holding a stale pointer when the dock is
+        // destroyed by obs_frontend_remove_dock() below.
+        std::unique_lock lock(statusDockMutex);
+        dockToRemove = statusDock;
+        statusDock = nullptr;
+    }
+
+    if (dockToRemove != nullptr) {
         obs_frontend_remove_dock("BranchOutputStatusDock");
     }
 
