@@ -13,7 +13,7 @@ Inputs (look up by id == "{finding-id}"):
 
 For each id:
 
-1. Read the related source and mentally compose the changes required for the fix. When the change involves adding a comment (including FIXME / TODO), also concretize the planned wording and insertion point.
+1. Read the related source and produce a concrete fix plan: for each edit, write `{file:line} — {what to change}`. For added comments (including FIXME / TODO), include the planned wording and insertion point. Cost / future / decision in the steps below must be grounded in this plan.
 2. Diffusion-signal classification (multiple selections allowed; none also allowed):
    a. Introduction of a new concept (a library / API / language feature not yet used)
    b. Expansion of fix scope (files / modules not modified in the current branch)
@@ -48,7 +48,13 @@ For each id:
 
 6. Write to `{{tmp_dir}}/estimates/{finding-id}.json`.
 
-`{{tmp_dir}}/estimates/{finding-id}.json` format: `{id, specialist, verdict (Maintain | Downgrade | Alternative), cost (S|M|L), future (S|M|L), signals (["a","b",...] or []), rationale, memo_value}`
+`{{tmp_dir}}/estimates/{finding-id}.json` format: `{id, specialist, verdict (Maintain | Downgrade | Alternative), cost (S|M|L), future (S|M|L), signals (["a","b",...] or []), fix_plan, rationale, memo_value}`
+
+fix_plan format: array of strings, each entry `"{file:line} — {what to change}"`. Include comment wording for added comments. Reflect the plan finalized at Step 5:
+
+- Maintain: code-change edits (after Step 5 comment-necessity exclusion)
+- Alternative: FIXME / TODO insertion(s) only
+- Downgrade: the rejected plan that was costed (record as-is)
 
 memo_value format:
 
