@@ -26,6 +26,7 @@ If the argument is `$ARGUMENTS`, interpret it as the review target specification
 ## Options
 
 - `--base {branch}` — Specify the base branch. Defaults to `main` or `master`.
+- `--output {path}` — Specify the final report output path (`{final_doc_path}`).
 
 ### Default Review Target
 
@@ -35,6 +36,12 @@ If the user does not explicitly specify a review target, use the following as th
 2. Working tree changes — staged (`git diff --cached`) and unstaged (`git diff`) changes.
 
 If no base branch is specified via `--base`, use whichever of `main` or `master` exists on the remote (prefer `main` if both exist).
+
+### Output Destination (`{final_doc_path}`)
+
+- If `--output` is given, use that value.
+- Default when not specified: `.claude/tmp/parallel-review-{timestamp}.md` (`{timestamp}` matches the working directory name). Do not place it under tmp_dir (it would be deleted in Step 4).
+- When invoked from an upper orchestrator (e.g., review-rounds), the caller specifies the path.
 
 ## Common Sub-Agent Instructions
 
@@ -75,7 +82,7 @@ Include `template_id` (Read from the template's frontmatter) in the return value
 5. Receive the return value (`{line_count, recommended_reviewers, extension_summary, rationale, template_id}`) from the sub-agent.
 6. Verify that `template_id` matches `b3e2f1a7-9c84-4d56-8e3b-7f1a4c9d2e85`. If it does not match, re-launch the sub-agent.
 7. Adopt `recommended_reviewers` as-is as the final reviewer list, and pass each element's `name` to `subagent_type` in Step 2.
-8. If `line_count == 0`, generate an empty review document at `{output_path}` and proceed directly to Step 4.
+8. If `line_count == 0`, generate an empty review document at `{final_doc_path}` and proceed directly to Step 4.
 
 ## Step 2 — Launch Parallel Reviewers
 
@@ -137,18 +144,6 @@ Include `template_id` (Read from the template's frontmatter) in the return value
 ```
 
 Receive the return value (`{doc_path, findings_total, severity_counts, duplicates_merged, template_id}`) from the aggregator sub-agent. Verify that `template_id` matches `7a5f8c1d-3e92-4b67-9c4a-2d8e1f7b3c54`. If it does not match, re-launch the sub-agent.
-
-### Final Report Format
-
-Template: `.claude/skills/parallel-review/templates/review-doc.md` (the aggregator Sub Reads this to grasp the skeleton)
-
-### Format Rules
-
-- Each finding is an independent subsection with the heading `### {finding-id} — `{location}``.
-- For each finding, list metadata (reviewers) as bullets, and below that write the "Finding" with a bold label.
-- After the finding body and before the `---` separator, place the metadata insertion markers `<!-- METADATA({finding-id}) -->` and `<!-- /METADATA({finding-id}) -->`, separated from surrounding content by blank lines. **Output the space between the markers as empty** (a later step inserts metadata mechanically).
-- Separate findings with a `---` horizontal rule. **Do not output a Status line** (it is outside this skill's responsibility).
-- For severity sections with no applicable findings (`## Critical` / `## Major` / `## Minor` / `## Info`), **do not omit the heading**; output the heading and write `No findings` in the body.
 
 ## Step 4 — Clean Up Temporary Files
 

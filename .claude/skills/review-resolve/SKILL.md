@@ -71,6 +71,8 @@ The leader (you) does not place the verification body in context.
 ```
 {tmp_dir} = .claude/tmp/review-resolve-{timestamp}/
 {tmp_dir}/verifications/{id}.json  ← Output from the verification sub-agent (one file per finding)
+{tmp_dir}/events.jsonl             ← Output from the aggregator sub-agent (input to render-review.py)
+{tmp_dir}/resolve-summary.md       ← Output from the aggregator sub-agent (verification report)
 ```
 
 At the start of Step 1, the leader creates `{tmp_dir}` with `mkdir -p {tmp_dir}/verifications`.
@@ -78,7 +80,7 @@ After Step 4 completes, the leader removes it with `.claude/scripts/rm-tmp.sh {t
 
 ### events.jsonl
 
-events.jsonl lives in the same directory as the markdown, named `{basename}.events.jsonl` (e.g., `review-round1.md` → `review-round1.events.jsonl`; hereafter `{events_path}`). Format:
+events.jsonl is placed at `{tmp_dir}/events.jsonl`. Format:
 
 ```jsonl
 {"id":"C-1","field":"verification","value":"✅ Verified — Null check fix is accurate"}
@@ -143,7 +145,6 @@ As your first action, you MUST Read `.claude/skills/review-resolve/templates/com
 Variables (substitute into the template's {{...}} placeholders):
 - tmp_dir: {tmp_dir}
 - document_path: {document_path}
-- events_path: {events_path}
 
 Round-specific overrides (apply after following the template's instructions):
 - (none)
@@ -151,7 +152,7 @@ Round-specific overrides (apply after following the template's instructions):
 Include `template_id` (Read from the template's frontmatter) in the return value.
 ```
 
-2. Receive the return value from the aggregator sub-agent (`{events_path, summary_path, summary_line, resolved_count, feedback_count, unresolved_count, template_id}`). Verify that `template_id` matches `1c5e8b2f-7d34-4a96-b8c1-5e9a3f7d2c84`. If it does not match, relaunch the sub-agent.
+2. Receive the return value from the aggregator sub-agent (`{summary_path, summary_line, resolved_count, feedback_count, unresolved_count, template_id}`). Verify that `template_id` matches `1c5e8b2f-7d34-4a96-b8c1-5e9a3f7d2c84`. If it does not match, relaunch the sub-agent.
 
 3. The leader removes `{tmp_dir}` in one shot:
    ```bash

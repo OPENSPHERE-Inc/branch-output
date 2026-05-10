@@ -14,7 +14,7 @@ Input:
 Output:
 
 - Verification report: `{{tmp_dir}}/resolve-summary.md`
-- events.jsonl: `{{events_path}}` (`{basename}.events.jsonl` in the same directory as `{{document_path}}`)
+- events.jsonl: `{{tmp_dir}}/events.jsonl`
 - Updated `{{document_path}}`
 
 Procedure:
@@ -29,9 +29,8 @@ Procedure:
    - "## Summary": bullet list with the number of findings verified / Resolved / Feedback Required / Unresolved
    - "## Feedback Details": for each finding with outcome == Feedback, include "### {finding-id} — Feedback", "Original finding (feedback_detail.description)", "Trailing field", "Actual state (feedback_detail.current_state)", "Issue (feedback_detail.issue)", "Suggestion (feedback_detail.suggestion)", separating entries with ---
 
-2. Write verification events to `{{events_path}}` as JSONL, one event per line. Format: `{"id":"...","field":"verification","value":"<memo_value>"}`. Do not write entries with outcome == Unresolved.
+2. Write verification events to `{{tmp_dir}}/events.jsonl` as JSONL, one event per line. Format: `{"id":"...","field":"verification","value":"<memo_value>"}`. Do not write entries with outcome == Unresolved.
 
-3. Run `python .claude/scripts/render-review.py {{document_path}} {{events_path}} {{document_path}}`.
-4. Remove with `.claude/scripts/rm-tmp.sh {{events_path}}`.
+3. Run `python .claude/scripts/render-review.py {{document_path}} {{tmp_dir}}/events.jsonl {{document_path}}`.
 
-Return value: `{events_path, summary_path, summary_line (<=200 chars; e.g., "3 resolved, 1 feedback (M-1), 2 unresolved"), resolved_count, feedback_count, unresolved_count, template_id}`. Include the `template_id` value Read from this template's frontmatter as-is.
+Return value: `{summary_path, summary_line (<=200 chars; e.g., "3 resolved, 1 feedback (M-1), 2 unresolved"), resolved_count, feedback_count, unresolved_count, template_id}`. Include the `template_id` value Read from this template's frontmatter as-is.

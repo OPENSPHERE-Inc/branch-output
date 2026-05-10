@@ -168,7 +168,7 @@ Procedure:
 
 1. Display in console: `## Round {N} — Step 4: Review Resolve`
 2. Per the review-resolve § procedure, launch in order: analysis Sub → verification Subs (parallel) → aggregator Sub.
-3. The orchestrator holds only the return values (`{events_path, summary_path, summary_line, resolved_count, feedback_count, unresolved_count}`) in context. Do not read the verification body.
+3. The orchestrator holds only the return values (`{summary_path, summary_line, resolved_count, feedback_count, unresolved_count}`) in context. Do not read the verification body.
 
 ### 2.4 — Feedback confirmation and re-fix loop
 
