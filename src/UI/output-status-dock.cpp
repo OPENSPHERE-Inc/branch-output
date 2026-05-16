@@ -562,10 +562,13 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
     applyDisableAllButtonEnabled();
 }
 
+// Per-row button visibility is refreshed only by the dock timer, which
+// runs solely while the dock widget is visible; batch actions must not
+// gate on it. Each filter action self-guards under outputMutex.
 void BranchOutputStatusDock::splitRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isSplitRecordingButtonShow()) {
+        if (row->outputType == ROW_OUTPUT_RECORDING) {
             row->filter->splitRecording();
         }
     }
@@ -574,7 +577,7 @@ void BranchOutputStatusDock::splitRecordingAll()
 void BranchOutputStatusDock::pauseRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isPauseRecordingButtonShow()) {
+        if (row->outputType == ROW_OUTPUT_RECORDING) {
             row->filter->pauseRecording();
         }
     }
@@ -583,7 +586,7 @@ void BranchOutputStatusDock::pauseRecordingAll()
 void BranchOutputStatusDock::unpauseRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isUnpauseRecordingButtonShow()) {
+        if (row->outputType == ROW_OUTPUT_RECORDING) {
             row->filter->unpauseRecording();
         }
     }
@@ -592,7 +595,7 @@ void BranchOutputStatusDock::unpauseRecordingAll()
 void BranchOutputStatusDock::addChapterToRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isAddChapterToRecordingButtonShow()) {
+        if (row->outputType == ROW_OUTPUT_RECORDING) {
             row->filter->addChapterToRecording();
         }
     }
@@ -601,7 +604,7 @@ void BranchOutputStatusDock::addChapterToRecordingAll()
 void BranchOutputStatusDock::saveReplayBufferAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_REPLAY_BUFFER && row->status->isSaveReplayBufferButtonShow()) {
+        if (row->outputType == ROW_OUTPUT_REPLAY_BUFFER) {
             row->filter->saveReplayBuffer();
         }
     }
