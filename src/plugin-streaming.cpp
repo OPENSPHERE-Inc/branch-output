@@ -30,11 +30,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define OUTPUT_MAX_RETRIES 7
 #define OUTPUT_RETRY_DELAY_SECS 1
 #define RECONNECT_ATTEMPTING_TIMEOUT_NS 2000000000ULL
+// RECONNECT_STALL_TIMEOUT_NS must exceed RECONNECT_ATTEMPTING_TIMEOUT_NS:
+// stall detection guarantees the graceful-stop timeout has already elapsed.
 // Threshold for detecting a stalled OBS reconnect (TCP connect / RTMP handshake hung
-// with no progress). This is an intentional aggressive recovery bound, not a precise
-// classification threshold; slow-but-valid reconnects that happen to exceed 30 s
-// (e.g., late attempts with exponential backoff plus a long TCP connect) may also
-// trigger recovery.
+// with no progress). False positives are possible for slow-but-valid reconnects with long backoff intervals.
 #define RECONNECT_STALL_TIMEOUT_NS 30000000000ULL
 
 obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, size_t index)
