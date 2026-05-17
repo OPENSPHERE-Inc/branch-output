@@ -31,8 +31,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define OUTPUT_RETRY_DELAY_SECS 1
 #define RECONNECT_ATTEMPTING_TIMEOUT_NS 2000000000ULL
 // Threshold for detecting a stalled OBS reconnect (TCP connect / RTMP handshake hung
-// with no progress). Must be well above OUTPUT_MAX_RETRIES * OUTPUT_RETRY_DELAY_SECS
-// so a normal retry sequence is never misclassified as a stall.
+// with no progress). This is an intentional aggressive recovery bound, not a precise
+// classification threshold; slow-but-valid reconnects that happen to exceed 30 s
+// (e.g., late attempts with exponential backoff plus a long TCP connect) may also
+// trigger recovery.
 #define RECONNECT_STALL_TIMEOUT_NS 30000000000ULL
 
 obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, size_t index)
@@ -170,6 +172,9 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
         [](void *_data, calldata_t *) {
             auto context = static_cast<BranchOutputStreamingContext *>(_data);
             context->outputStarting = false;
+            // Clear any stale reconnect timestamp so a later reconnect episode is not
+            // misjudged as stalled by reconnectStallDetected() / reconnectAttemptingTimedOut().
+            context->reconnectAttemptingAt = 0;
             obs_log(LOG_DEBUG, "%s: Streaming output has activated", obs_output_get_name(context->output));
         },
         &streamings[index]
@@ -182,6 +187,17 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
             auto context = static_cast<BranchOutputStreamingContext *>(_data);
             context->reconnectAttemptingAt = os_gettime_ns();
             obs_log(LOG_DEBUG, "%s: Streaming output is reconnecting", obs_output_get_name(context->output));
+        },
+        &streamings[index]
+    );
+
+    // Track reconnect_success signal (delayed-capture reconnect path emits this without "activate")
+    streamings[index].outputReconnectSuccessSignal.Connect(
+        obs_output_get_signal_handler(streamings[index].output), "reconnect_success",
+        [](void *_data, calldata_t *) {
+            auto context = static_cast<BranchOutputStreamingContext *>(_data);
+            context->reconnectAttemptingAt = 0;
+            obs_log(LOG_DEBUG, "%s: Streaming output reconnected", obs_output_get_name(context->output));
         },
         &streamings[index]
     );
@@ -228,6 +244,7 @@ void BranchOutputFilter::stopStreamingOutput(size_t index)
     streamings[index].outputStartingSignal.Disconnect();
     streamings[index].outputActivateSignal.Disconnect();
     streamings[index].outputReconnectSignal.Disconnect();
+    streamings[index].outputReconnectSuccessSignal.Disconnect();
     streamings[index].outputStopSignal.Disconnect();
 
     streamings[index].output = nullptr;
