@@ -1422,8 +1422,9 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                             );
                             // FIXME: obs_output_stop() pthread_joins the uninterruptible reconnect
                             // thread, so a hung connect blocks this timer thread under
-                            // pluginMutex + outputMutex. Root-cause fix (bounded/non-joining stop)
-                            // is out of plugin scope — track in a separate PR.
+                            // pluginMutex + outputMutex — stalling all threads that contend for
+                            // those mutexes, not just this timer. Root-cause fix (bounded/non-joining
+                            // stop) is out of plugin scope — track in a separate PR.
                             stopSingleStreamingIndividual(i);
                             return;
                         }
