@@ -846,12 +846,17 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
 
         for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
             auto audioContext = &audios[i];
-            audioContext->encoder = nullptr;
 
+            // Close the audio_t (joins its worker thread) before releasing the
+            // encoder. The worker may still be inside receive_audio() for this
+            // encoder; the encoder (and its pause.mutex) must outlive that final
+            // iteration, otherwise the worker unlocks a destroyed mutex.
             if (audioContext->capture) {
                 delete audioContext->capture;
                 audioContext->capture = nullptr;
             }
+
+            audioContext->encoder = nullptr;
         }
     }
 

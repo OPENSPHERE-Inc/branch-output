@@ -28,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <optional>
 
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 #include <QVariant>
 
@@ -158,6 +159,45 @@ inline void loadHotkey(obs_hotkey_id id, const char *name)
 inline QString getIndexedPropNameFormat(size_t index, size_t base = 0)
 {
     return index == base ? QString("%1") : QString("%%1_%1").arg(index);
+}
+
+// Default SRT listener accept timeout in microseconds (matches the unit of the
+// SRT URL "listen_timeout" query parameter consumed by OBS's ffmpeg mpegts muxer).
+#define DEFAULT_SRT_LISTEN_TIMEOUT_US 5000000
+
+// An SRT listener URL without "listen_timeout" makes srt_accept() block forever
+// while no peer is connected. OBS's ffmpeg_mpegts_stop_internal() then deadlocks
+// the calling thread in pthread_join() until a peer connects, so a peerless stop
+// freezes OBS. Append a bounded default timeout so a stop can complete; an
+// explicit listen_timeout in the URL is left untouched.
+inline QString applyDefaultSrtListenTimeout(const QString &url)
+{
+    if (!url.startsWith("srt://", Qt::CaseInsensitive)) {
+        return url;
+    }
+
+    auto queryPos = url.indexOf('?');
+    if (queryPos < 0) {
+        return url;
+    }
+
+    const auto params = url.mid(queryPos + 1).split('&', Qt::SkipEmptyParts);
+    bool isListener = false;
+    bool hasListenTimeout = false;
+    for (const auto &param : params) {
+        const auto key = param.section('=', 0, 0);
+        if (key == "mode" && param.section('=', 1) == "listener") {
+            isListener = true;
+        } else if (key == "listen_timeout") {
+            hasListenTimeout = true;
+        }
+    }
+
+    if (!isListener || hasListenTimeout) {
+        return url;
+    }
+
+    return QString("%1&listen_timeout=%2").arg(url).arg(DEFAULT_SRT_LISTEN_TIMEOUT_US);
 }
 
 inline bool encoderAvailable(const char *encoder)
