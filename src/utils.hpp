@@ -165,14 +165,17 @@ inline QString getIndexedPropNameFormat(size_t index, size_t base = 0)
 // SRT URL "listen_timeout" query parameter consumed by OBS's ffmpeg mpegts muxer).
 #define DEFAULT_SRT_LISTEN_TIMEOUT_US 5000000
 
-// An SRT listener URL without "listen_timeout" makes srt_accept() block forever
-// while no peer is connected. OBS's ffmpeg_mpegts_stop_internal() then deadlocks
-// the calling thread in pthread_join() until a peer connects, so a peerless stop
-// freezes OBS. Append a bounded default timeout so a stop can complete; an
-// explicit listen_timeout in the URL is left untouched.
+// An SRT listener URL without "listen_timeout" makes OBS's libsrt block in
+// srt_accept() until a peer connects; a peerless stop then deadlocks the caller
+// in ffmpeg_mpegts_stop_internal()'s pthread_join(). Inject a bounded default so
+// a stop can complete; an explicit listen_timeout is left as-is.
+//
+// Matching is case-sensitive to mirror OBS's libsrt parsing (strncmp scheme,
+// av_find_info_tag keys); a case-insensitive match could treat a key OBS ignores
+// as present and wrongly skip injection.
 inline QString applyDefaultSrtListenTimeout(const QString &url)
 {
-    if (!url.startsWith("srt://", Qt::CaseInsensitive)) {
+    if (!url.startsWith("srt://")) {
         return url;
     }
 
@@ -197,7 +200,13 @@ inline QString applyDefaultSrtListenTimeout(const QString &url)
         return url;
     }
 
-    return QString("%1&listen_timeout=%2").arg(url).arg(DEFAULT_SRT_LISTEN_TIMEOUT_US);
+    // Trim trailing '&' so a user query ending in '&' does not yield "&&".
+    QString base = url;
+    while (base.endsWith('&')) {
+        base.chop(1);
+    }
+
+    return QString("%1&listen_timeout=%2").arg(base).arg(DEFAULT_SRT_LISTEN_TIMEOUT_US);
 }
 
 inline bool encoderAvailable(const char *encoder)

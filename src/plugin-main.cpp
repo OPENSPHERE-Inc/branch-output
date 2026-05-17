@@ -856,6 +856,9 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
                 audioContext->capture = nullptr;
             }
 
+            // audio is a borrowed pointer (capture-owned or obs_get_audio());
+            // clear it so it does not dangle until the next startOutput().
+            audioContext->audio = nullptr;
             audioContext->encoder = nullptr;
         }
     }
