@@ -1387,11 +1387,24 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             }
 
             for (size_t i = 0; i < MAX_SERVICES; i++) {
-                if (streamings[i].active && streamings[i].output && !obs_output_active(streamings[i].output) &&
-                    !obs_output_reconnecting(streamings[i].output)) {
+                if (!streamings[i].active || !streamings[i].output) {
+                    continue;
+                }
+                if (!obs_output_active(streamings[i].output) && !obs_output_reconnecting(streamings[i].output)) {
                     // Restart streaming
                     obs_log(LOG_INFO, "%s (%zu): Attempting reactivate the streaming output", qUtf8Printable(name), i);
                     reconnectStreamingOutput(i);
+                } else if (obs_output_reconnecting(streamings[i].output) && reconnectStallDetected(i)) {
+                    // OBS internal reconnect is stalled (TCP connect or RTMP handshake hung with
+                    // no progress). obs_output_stop() must not be called directly while reconnecting
+                    // (crashes OBS), so route recovery through the crash-safe graceful stop path.
+                    // The output is recreated by the start-evaluation logic on a later tick.
+                    // Limit to one slot per tick to avoid rapid state transitions.
+                    obs_log(
+                        LOG_WARNING, "%s (%zu): Reconnect stalled, forcing graceful restart", qUtf8Printable(name), i
+                    );
+                    stopSingleStreamingIndividual(i);
+                    return;
                 }
             }
 

@@ -30,6 +30,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define OUTPUT_MAX_RETRIES 7
 #define OUTPUT_RETRY_DELAY_SECS 1
 #define RECONNECT_ATTEMPTING_TIMEOUT_NS 2000000000ULL
+// Threshold for detecting a stalled OBS reconnect (TCP connect / RTMP handshake hung
+// with no progress). Must be well above OUTPUT_MAX_RETRIES * OUTPUT_RETRY_DELAY_SECS
+// so a normal retry sequence is never misclassified as a stall.
+#define RECONNECT_STALL_TIMEOUT_NS 30000000000ULL
 
 obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, size_t index)
 {
@@ -254,6 +258,12 @@ bool BranchOutputFilter::reconnectAttemptingTimedOut(size_t index)
 {
     auto attemptingAt = streamings[index].reconnectAttemptingAt.load();
     return attemptingAt && os_gettime_ns() - attemptingAt > RECONNECT_ATTEMPTING_TIMEOUT_NS;
+}
+
+bool BranchOutputFilter::reconnectStallDetected(size_t index)
+{
+    auto attemptingAt = streamings[index].reconnectAttemptingAt.load();
+    return attemptingAt && os_gettime_ns() - attemptingAt > RECONNECT_STALL_TIMEOUT_NS;
 }
 
 void BranchOutputFilter::setStreamingUserEnabled(size_t index, bool enabled)

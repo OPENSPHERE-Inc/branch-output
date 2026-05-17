@@ -216,6 +216,7 @@ class BranchOutputFilter : public QObject {
     void stopStreamingOutput(size_t index = 0);
     void reconnectStreamingOutput(size_t index = 0);
     bool reconnectAttemptingTimedOut(size_t index = 0);
+    bool reconnectStallDetected(size_t index = 0);
     bool someStreamingsStarting();
     int countEnabledStreamings(obs_data_t *settings);
     int countAliveStreamings();
