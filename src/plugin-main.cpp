@@ -1386,25 +1386,48 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 restartRecordingOutput();
             }
 
-            for (size_t i = 0; i < MAX_SERVICES; i++) {
-                if (!streamings[i].active || !streamings[i].output) {
-                    continue;
-                }
-                if (!obs_output_active(streamings[i].output) && !obs_output_reconnecting(streamings[i].output)) {
-                    // Restart streaming
-                    obs_log(LOG_INFO, "%s (%zu): Attempting reactivate the streaming output", qUtf8Printable(name), i);
-                    reconnectStreamingOutput(i);
-                } else if (obs_output_reconnecting(streamings[i].output) && reconnectStallDetected(i)) {
-                    // OBS internal reconnect is stalled (TCP connect or RTMP handshake hung with
-                    // no progress). obs_output_stop() must not be called directly while reconnecting
-                    // (crashes OBS), so route recovery through the crash-safe graceful stop path.
-                    // The output is recreated by the start-evaluation logic on a later tick.
-                    // Limit to one slot per tick to avoid rapid state transitions.
-                    obs_log(
-                        LOG_WARNING, "%s (%zu): Reconnect stalled, forcing graceful restart", qUtf8Printable(name), i
-                    );
-                    stopSingleStreamingIndividual(i);
-                    return;
+            // Guard per-slot streamings[i].output access against concurrent nulling in
+            // stopStreamingOutput() / releaseInfrastructureIfIdle(). Lock order:
+            // pluginMutex -> outputMutex (matches stopOutputGracefully() and the
+            // Individual stop functions). Inner calls re-enter these recursive mutexes.
+            pthread_mutex_lock(&pluginMutex);
+            {
+                OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+                pthread_mutex_lock(&outputMutex);
+                {
+                    OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+                    for (size_t i = 0; i < MAX_SERVICES; i++) {
+                        if (!streamings[i].active || !streamings[i].output) {
+                            continue;
+                        }
+                        if (!obs_output_active(streamings[i].output) &&
+                            !obs_output_reconnecting(streamings[i].output)) {
+                            // Restart streaming
+                            obs_log(
+                                LOG_INFO, "%s (%zu): Attempting reactivate the streaming output", qUtf8Printable(name),
+                                i
+                            );
+                            reconnectStreamingOutput(i);
+                        } else if (obs_output_reconnecting(streamings[i].output) && reconnectStallDetected(i)) {
+                            // OBS internal reconnect is stalled (TCP connect or RTMP handshake hung
+                            // with no progress). obs_output_stop() must not be called directly while
+                            // reconnecting (crashes OBS), so route recovery through the crash-safe
+                            // graceful stop path. Limit to one slot per tick to avoid rapid state
+                            // transitions.
+                            obs_log(
+                                LOG_WARNING, "%s (%zu): Reconnect stalled, forcing graceful restart",
+                                qUtf8Printable(name), i
+                            );
+                            // FIXME: obs_output_stop() pthread_joins the uninterruptible reconnect
+                            // thread, so a hung connect blocks this timer thread under
+                            // pluginMutex + outputMutex. Root-cause fix (bounded/non-joining stop)
+                            // is out of plugin scope — track in a separate PR.
+                            stopSingleStreamingIndividual(i);
+                            return;
+                        }
+                    }
                 }
             }
 
