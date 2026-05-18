@@ -1414,17 +1414,16 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                             // OBS internal reconnect is stalled (TCP connect or RTMP handshake hung
                             // with no progress). obs_output_stop() must not be called directly while
                             // reconnecting (crashes OBS), so route recovery through the crash-safe
-                            // graceful stop path. Limit to one slot per tick to avoid rapid state
-                            // transitions.
+                            // graceful stop path. This only stops the slot; restart is performed by
+                            // a later tick's startEligibleStreamings() (INDIVIDUAL: L1176,
+                            // non-INDIVIDUAL: L1236). Limit to one slot per tick to avoid rapid
+                            // state transitions.
                             obs_log(
                                 LOG_WARNING, "%s (%zu): Reconnect stalled, forcing graceful restart",
                                 qUtf8Printable(name), i
                             );
-                            // FIXME: obs_output_stop() pthread_joins the uninterruptible reconnect
-                            // thread, so a hung connect blocks this timer thread under
-                            // pluginMutex + outputMutex — stalling all threads that contend for
-                            // those mutexes, not just this timer. Root-cause fix (bounded/non-joining
-                            // stop) is out of plugin scope — track in a separate PR.
+                            // FIXME: obs_output_stop() pthread_joins the uninterruptible reconnect thread; a hung connect
+                            // blocks under pluginMutex + outputMutex. Root-cause fix (bounded/non-joining stop) needs a separate PR.
                             stopSingleStreamingIndividual(i);
                             return;
                         }
