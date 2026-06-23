@@ -7,6 +7,10 @@
 > If you would like to help our projects, please support us.
 >
 > [<img src="https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86" />](https://github.com/sponsors/OPENSPHERE-Inc)
+> 
+> ### Sponsors (Thank you for your support)
+> 
+> [nhicks00](https://github.com/nhicks00)
 
 [<img src="./screenshot1.jpg" />](./screenshot1.jpg)
 

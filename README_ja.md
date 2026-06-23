@@ -5,6 +5,10 @@
 > プロジェクトにご協力いただける方は、是非ご支援ください。
 > 
 > [<img src="https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86" />](https://github.com/sponsors/OPENSPHERE-Inc)
+> 
+> ### スポンサー (ご支援ありがとうございます)
+> 
+> [nhicks00](https://github.com/nhicks00)
 
 
 [<img src="./screenshot1.jpg" />](./screenshot1.jpg)
