@@ -89,7 +89,6 @@ class FilterCell : public QWidget {
     Q_OBJECT
 
     OutputTableCellItem *_item;
-    QCheckBox *selectionCheckbox;
     QLabel *name;
 
     OBSSignal filterRenamedSignal;
@@ -98,7 +97,6 @@ class FilterCell : public QWidget {
 
 signals:
     void renamed(const QString &newName);
-    void selectionChanged(bool selected);
 
 public:
     explicit FilterCell(
@@ -107,8 +105,6 @@ public:
     ~FilterCell();
 
     void setTextValue(const QString &value);
-    void setSelected(bool selected);
-    inline bool isSelected() const { return selectionCheckbox->isChecked(); }
     inline OutputTableCellItem *item() const { return _item; }
 };
 
@@ -252,7 +248,6 @@ class BranchOutputStatusDock : public QFrame {
     Qt::SortOrder sortingOrder;
 
     void update();
-    void updateOutputToggles(BranchOutputFilter *filter);
     void applySelectionButtonsEnabled();
     void applySplitRecordingAllButtonEnabled();
     void applyPauseRecordingAllButtonEnabled();
@@ -276,7 +271,6 @@ class BranchOutputStatusDock : public QFrame {
 
 private slots:
     void onHeaderPressed(int index);
-    void onOutputUserEnabledChanged();
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
@@ -291,6 +285,7 @@ public slots:
     void addFilter(BranchOutputFilter *filter);
     void removeFilter(BranchOutputFilter *filter);
     void setEabnleAll(bool enabled);
+    void applySelection(bool manualOverride);
     void playSelected();
     void stopSelected();
     void splitRecordingAll();
@@ -330,7 +325,9 @@ class OutputTableRow : public QObject {
     int first_dropped = 0;
 
     void update();
-    void updateOutputToggle();
+    bool outputUserEnabled() const;
+    void setOutputUserEnabled(bool enabled);
+    bool isOutputActive() const;
     void reset();
     void splitRecording();
     void pauseRecording();

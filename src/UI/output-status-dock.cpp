@@ -348,6 +348,9 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
 {
     auto *dock = static_cast<BranchOutputStatusDock *>(param);
 
+    // Note: the *_STARTED cases below arm the checked outputs automatically when
+    // the OBS output matching the current interlock mode starts; the engine then
+    // starts them and stops them again when the interlock condition ends.
     switch (event) {
     case OBS_FRONTEND_EVENT_EXIT:
         dock->saveSettings();
@@ -355,6 +358,39 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
     case OBS_FRONTEND_EVENT_PROFILE_CHANGING:
         dock->saveSettings();
         break;
+    case OBS_FRONTEND_EVENT_STREAMING_STARTED: {
+        auto type = dock->getInterlockType();
+        if (type == BranchOutputFilter::INTERLOCK_TYPE_STREAMING ||
+            type == BranchOutputFilter::INTERLOCK_TYPE_STREAMING_RECORDING ||
+            type == BranchOutputFilter::INTERLOCK_TYPE_INDIVIDUAL) {
+            dock->applySelection(false);
+        }
+        break;
+    }
+    case OBS_FRONTEND_EVENT_RECORDING_STARTED: {
+        auto type = dock->getInterlockType();
+        if (type == BranchOutputFilter::INTERLOCK_TYPE_RECORDING ||
+            type == BranchOutputFilter::INTERLOCK_TYPE_STREAMING_RECORDING ||
+            type == BranchOutputFilter::INTERLOCK_TYPE_INDIVIDUAL) {
+            dock->applySelection(false);
+        }
+        break;
+    }
+    case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED: {
+        auto type = dock->getInterlockType();
+        if (type == BranchOutputFilter::INTERLOCK_TYPE_REPLAY_BUFFER ||
+            type == BranchOutputFilter::INTERLOCK_TYPE_INDIVIDUAL) {
+            dock->applySelection(false);
+        }
+        break;
+    }
+    case OBS_FRONTEND_EVENT_VIRTUALCAM_STARTED: {
+        auto type = dock->getInterlockType();
+        if (type == BranchOutputFilter::INTERLOCK_TYPE_VIRTUAL_CAM) {
+            dock->applySelection(false);
+        }
+        break;
+    }
     case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
         // Defer to ensure Qt event loop has finished processing the profile change
         QMetaObject::invokeMethod(
@@ -385,13 +421,6 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 {
     // Ensure filter removed
     removeFilter(filter);
-
-    // Immediate checkbox sync when output user-enabled state changes (e.g. from hotkeys)
-    connect(
-        filter, &BranchOutputFilter::outputUserEnabledChanged, this,
-        &BranchOutputStatusDock::onOutputUserEnabledChanged,
-        static_cast<Qt::ConnectionType>(Qt::UniqueConnection | Qt::QueuedConnection)
-    );
 
     OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
 
@@ -458,36 +487,23 @@ void BranchOutputStatusDock::update()
     sort();
 }
 
-void BranchOutputStatusDock::updateOutputToggles(BranchOutputFilter *filter)
-{
-    foreach (auto row, outputTableRows) {
-        if (row->filter == filter) {
-            row->updateOutputToggle();
-        }
-    }
-}
-
-void BranchOutputStatusDock::onOutputUserEnabledChanged()
-{
-    auto filter = qobject_cast<BranchOutputFilter *>(sender());
-    if (filter) {
-        updateOutputToggles(filter);
-    }
-}
-
 void BranchOutputStatusDock::applySelectionButtonsEnabled()
 {
-    // Play is enabled while at least one checked filter is stopped, Stop while at least one is running
+    // Play is enabled while at least one checked output is not actually running,
+    // Stop while at least one checked output is running or armed
     bool canPlay = false;
     bool canStop = false;
     foreach (auto row, outputTableRows) {
-        if (!row->filterCell->isSelected()) {
+        if (row->outputType == ROW_OUTPUT_NONE || !row->outputName->isChecked()) {
             continue;
         }
-        if (obs_source_enabled(row->filter->filterSource)) {
-            canStop = true;
-        } else {
+        auto active = row->isOutputActive();
+        auto armed = row->outputUserEnabled() && obs_source_enabled(row->filter->filterSource);
+        if (!active) {
             canPlay = true;
+        }
+        if (active || armed) {
+            canStop = true;
         }
     }
     playSelectedButton->setEnabled(canPlay);
@@ -571,24 +587,70 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
     applySelectionButtonsEnabled();
 }
 
-void BranchOutputStatusDock::playSelected()
+void BranchOutputStatusDock::applySelection(bool manualOverride)
 {
+    // Collect filters that have at least one output checked
+    QSet<BranchOutputFilter *> involved;
     foreach (auto row, outputTableRows) {
-        if (row->groupIndex == 0 && row->filterCell->isSelected()) {
-            // Do only once for each filters
-            obs_source_set_enabled(row->filter->filterSource, true);
+        if (row->outputType != ROW_OUTPUT_NONE && row->outputName->isChecked()) {
+            involved.insert(row->filter);
+        }
+    }
+
+    // Within involved filters, apply the selection to the per-output user-enabled flags:
+    // checked outputs will start, unchecked ones will stop. Untouched filters keep running as-is.
+    foreach (auto row, outputTableRows) {
+        if (row->outputType != ROW_OUTPUT_NONE && involved.contains(row->filter)) {
+            row->setOutputUserEnabled(row->outputName->isChecked());
+        }
+    }
+
+    // Enable the involved filters. With manualOverride, force-start them regardless of the
+    // interlock mode (the engine treats them as "Always ON" until Stop Selected); without it,
+    // the interlock decides when the armed outputs actually run.
+    foreach (auto filter, involved) {
+        if (manualOverride) {
+            filter->setManualStartOverride(true);
+        }
+        if (!obs_source_enabled(filter->filterSource)) {
+            obs_source_set_enabled(filter->filterSource, true);
         }
     }
 
     applySelectionButtonsEnabled();
 }
 
+void BranchOutputStatusDock::playSelected()
+{
+    applySelection(true);
+}
+
 void BranchOutputStatusDock::stopSelected()
 {
+    QSet<BranchOutputFilter *> involved;
     foreach (auto row, outputTableRows) {
-        if (row->groupIndex == 0 && row->filterCell->isSelected()) {
-            // Do only once for each filters
-            obs_source_set_enabled(row->filter->filterSource, false);
+        if (row->outputType != ROW_OUTPUT_NONE && row->outputName->isChecked()) {
+            row->setOutputUserEnabled(false);
+            involved.insert(row->filter);
+        }
+    }
+
+    // Disable filters that no longer have any user-enabled output so their
+    // shared infrastructure is released; the selection checkboxes stay checked
+    // so the same set can be restarted with Play Selected.
+    foreach (auto filter, involved) {
+        bool anyEnabled = false;
+        foreach (auto row, outputTableRows) {
+            if (row->filter == filter && row->outputType != ROW_OUTPUT_NONE && row->outputUserEnabled()) {
+                anyEnabled = true;
+                break;
+            }
+        }
+        if (!anyEnabled) {
+            filter->setManualStartOverride(false);
+            if (obs_source_enabled(filter->filterSource)) {
+                obs_source_set_enabled(filter->filterSource, false);
+            }
         }
     }
 
@@ -803,42 +865,29 @@ OutputTableRow::OutputTableRow(
             rowId, QTStr("Streaming%1").arg(streamingIndex + 1), filter->isStreamingUserEnabled(streamingIndex),
             ROW_OUTPUT_STREAMING, nullptr, parent
         );
-        outputName->setToolTip(QTStr("StreamingToggleTooltip"));
+        outputName->setToolTip(QTStr("SelectForPlayTooltip"));
         break;
     case ROW_OUTPUT_RECORDING:
         outputName = new OutputCell(
             rowId, QTStr("Recording"), filter->isRecordingUserEnabled(), ROW_OUTPUT_RECORDING, filter->filterSource,
             parent
         );
-        outputName->setToolTip(QTStr("RecordingToggleTooltip"));
+        outputName->setToolTip(QTStr("SelectForPlayTooltip"));
         break;
     case ROW_OUTPUT_REPLAY_BUFFER:
         outputName = new OutputCell(
             rowId, QTStr("ReplayBuffer"), filter->isReplayBufferUserEnabled(), ROW_OUTPUT_REPLAY_BUFFER,
             filter->filterSource, parent
         );
-        outputName->setToolTip(QTStr("ReplayBufferToggleTooltip"));
+        outputName->setToolTip(QTStr("SelectForPlayTooltip"));
         break;
     default:
         outputName = new OutputCell(rowId, QTStr("None"), true, ROW_OUTPUT_NONE, nullptr, parent);
     }
 
-    // Connect per-output toggle to filter's user-enabled flags
-    connect(outputName, &OutputCell::toggled, this, [this](bool checked) {
-        switch (outputType) {
-        case ROW_OUTPUT_STREAMING:
-            filter->setStreamingUserEnabled(streamingIndex, checked);
-            break;
-        case ROW_OUTPUT_RECORDING:
-            filter->setRecordingUserEnabled(checked);
-            break;
-        case ROW_OUTPUT_REPLAY_BUFFER:
-            filter->setReplayBufferUserEnabled(checked);
-            break;
-        default:
-            break;
-        }
-    });
+    // The checkbox is a pure selection mark: it takes effect via Play/Stop Selected.
+    // Only the play/stop button states need refreshing when the selection changes.
+    connect(outputName, &OutputCell::toggled, this, [parent](bool) { parent->applySelectionButtonsEnabled(); });
 
     droppedFrames = new LabelCell(rowId, "", parent);
     megabytesSent = new LabelCell(rowId, "", parent);
@@ -885,16 +934,6 @@ OutputTableRow::OutputTableRow(
     connect(status, &StatusCell::addChapterToRecordingButtonClicked, this, [this]() { addChapterToRecording(); });
     connect(status, &StatusCell::saveReplayBufferButtonClicked, this, [this]() { filter->saveReplayBuffer(); });
 
-    // Keep selection in sync across rows of the same filter and refresh the play button state
-    connect(filterCell, &FilterCell::selectionChanged, this, [this, parent](bool selected) {
-        foreach (auto otherRow, parent->outputTableRows) {
-            if (otherRow->filter == filter && otherRow->filterCell != filterCell) {
-                otherRow->filterCell->setSelected(selected);
-            }
-        }
-        parent->applySelectionButtonsEnabled();
-    });
-
     // Setup rename event
     connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &) {
         updateRowId(); // Update row ID with new filter name
@@ -911,35 +950,54 @@ OutputTableRow::~OutputTableRow()
     disconnect(this);
 }
 
-void OutputTableRow::updateOutputToggle()
+bool OutputTableRow::outputUserEnabled() const
 {
-    // Sync per-output toggle checkbox with filter's user-enabled flags.
-    // Only update when the state has actually changed to avoid unnecessary work
-    // and prevent potential UI glitch if the user is clicking the checkbox.
-    bool desiredChecked = false;
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
-        desiredChecked = filter->isStreamingUserEnabled(streamingIndex);
+        return filter->isStreamingUserEnabled(streamingIndex);
+    case ROW_OUTPUT_RECORDING:
+        return filter->isRecordingUserEnabled();
+    case ROW_OUTPUT_REPLAY_BUFFER:
+        return filter->isReplayBufferUserEnabled();
+    default:
+        return false;
+    }
+}
+
+void OutputTableRow::setOutputUserEnabled(bool enabled)
+{
+    switch (outputType) {
+    case ROW_OUTPUT_STREAMING:
+        filter->setStreamingUserEnabled(streamingIndex, enabled);
         break;
     case ROW_OUTPUT_RECORDING:
-        desiredChecked = filter->isRecordingUserEnabled();
+        filter->setRecordingUserEnabled(enabled);
         break;
     case ROW_OUTPUT_REPLAY_BUFFER:
-        desiredChecked = filter->isReplayBufferUserEnabled();
+        filter->setReplayBufferUserEnabled(enabled);
         break;
     default:
         break;
     }
-    if (outputName->isChecked() != desiredChecked) {
-        outputName->setChecked(desiredChecked);
+}
+
+bool OutputTableRow::isOutputActive() const
+{
+    switch (outputType) {
+    case ROW_OUTPUT_STREAMING:
+        return filter->streamings[streamingIndex].active;
+    case ROW_OUTPUT_RECORDING:
+        return filter->recordingActive || filter->recordingPending;
+    case ROW_OUTPUT_REPLAY_BUFFER:
+        return filter->replayBufferActive;
+    default:
+        return false;
     }
 }
 
 // Imitate UI/window-basic-stats.cpp
 void OutputTableRow::update()
 {
-    updateOutputToggle();
-
     obs_output_t *output;
 
     switch (outputType) {
@@ -1063,10 +1121,16 @@ void OutputTableRow::update()
         }
         if (outputType == ROW_OUTPUT_RECORDING && filter->recordingPending) {
             status->setTextValue(QTStr("Status.Pending"));
+            status->setTheme("", "");
+        } else if (outputType != ROW_OUTPUT_NONE && outputUserEnabled() && obs_source_enabled(filter->filterSource)) {
+            // Armed but the interlock condition is not met yet (e.g. Individual mode
+            // waiting for its OBS counterpart to start)
+            status->setTextValue(QTStr("Status.Waiting"));
+            status->setTheme("warning", "text-warning");
         } else {
             status->setTextValue(QTStr("Status.Inactive"));
+            status->setTheme("", "");
         }
-        status->setTheme("", "");
         status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_NONE);
         status->setSplitRecordingButtonShow(false);
         status->setPauseRecordingButtonShow(false);
@@ -1285,23 +1349,12 @@ FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_sourc
 {
     setMinimumHeight(27);
 
-    // Plain selection checkbox: checking does not start/stop anything by itself,
-    // the selection is applied via the "Play Selected" button or hotkey.
-    selectionCheckbox = new QCheckBox(this);
-    selectionCheckbox->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
-    selectionCheckbox->setChecked(obs_source_enabled(source));
-    selectionCheckbox->setCursor(Qt::PointingHandCursor);
-    selectionCheckbox->setToolTip(QTStr("SelectForPlayTooltip"));
-
-    connect(selectionCheckbox, &QCheckBox::clicked, this, [this](bool checked) { emit selectionChanged(checked); });
-
     name = new QLabel(this);
 
-    auto checkboxLayout = new QHBoxLayout();
-    checkboxLayout->setContentsMargins(0, 0, 0, 0);
-    checkboxLayout->addWidget(selectionCheckbox);
-    checkboxLayout->addWidget(name);
-    setLayout(checkboxLayout);
+    auto cellLayout = new QHBoxLayout();
+    cellLayout->setContentsMargins(0, 0, 0, 0);
+    cellLayout->addWidget(name);
+    setLayout(cellLayout);
 
     // Listen signal for filter update
     filterRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", FilterCell::onFilterRenamed, this);
@@ -1325,13 +1378,6 @@ void FilterCell::onFilterRenamed(void *data, calldata_t *cd)
 {
     auto cell = static_cast<FilterCell *>(data);
     cell->setTextValue(calldata_string(cd, "new_name"));
-}
-
-void FilterCell::setSelected(bool selected)
-{
-    selectionCheckbox->blockSignals(true);
-    selectionCheckbox->setChecked(selected);
-    selectionCheckbox->blockSignals(false);
 }
 
 //--- ParentCell class ---//

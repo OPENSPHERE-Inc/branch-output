@@ -102,6 +102,12 @@ class BranchOutputFilter : public QObject {
     std::atomic<bool> recordingUserEnabled;
     std::atomic<bool> replayBufferUserEnabled;
 
+    // Manual override set by the status dock's "Play Selected" button.
+    // While set, the filter behaves as if the interlock type was "Always ON",
+    // so the selected outputs start regardless of the current interlock mode.
+    // Not persisted; cleared by "Stop Selected" once no output remains user-enabled.
+    std::atomic<bool> manualStartOverride{false};
+
     // Filter source (Do not use OBSSourceAutoRelease)
     obs_source_t *filterSource;
 
@@ -206,6 +212,8 @@ class BranchOutputFilter : public QObject {
     void setReplayBufferUserEnabled(bool enabled);
     bool isRecordingUserEnabled() const { return recordingUserEnabled.load(std::memory_order_relaxed); }
     bool isReplayBufferUserEnabled() const { return replayBufferUserEnabled.load(std::memory_order_relaxed); }
+    void setManualStartOverride(bool enabled) { manualStartOverride.store(enabled, std::memory_order_relaxed); }
+    bool isManualStartOverride() const { return manualStartOverride.load(std::memory_order_relaxed); }
     std::optional<CropRect> calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings);
     QString applyFilenameFormatArgs(const QString &format, bool noSpace);
 

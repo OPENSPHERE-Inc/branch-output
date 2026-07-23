@@ -1005,6 +1005,11 @@ void BranchOutputFilter::onIntervalTimerTimeout()
     }
 
     auto interlockType = statusDock ? statusDock->getInterlockType() : INTERLOCK_TYPE_ALWAYS_ON;
+    if (isManualStartOverride()) {
+        // "Play Selected" in the status dock takes precedence over the interlock:
+        // run the user-enabled outputs as if the mode was "Always ON".
+        interlockType = INTERLOCK_TYPE_ALWAYS_ON;
+    }
     auto sourceEnabled = obs_source_enabled(filterSource);
     auto streamingActive = countActiveStreamings() > 0;
 
