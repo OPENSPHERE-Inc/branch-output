@@ -89,7 +89,7 @@ class FilterCell : public QWidget {
     Q_OBJECT
 
     OutputTableCellItem *_item;
-    QCheckBox *visibilityCheckbox;
+    QCheckBox *selectionCheckbox;
     QLabel *name;
 
     OBSSignal enableSignal;
@@ -100,6 +100,7 @@ class FilterCell : public QWidget {
 
 signals:
     void renamed(const QString &newName);
+    void selectionChanged(bool selected);
 
 public:
     explicit FilterCell(
@@ -108,7 +109,8 @@ public:
     ~FilterCell();
 
     void setTextValue(const QString &value);
-    inline bool isVisibilityChecked() const { return visibilityCheckbox->isChecked(); }
+    void setSelected(bool selected);
+    inline bool isSelected() const { return selectionCheckbox->isChecked(); }
     inline OutputTableCellItem *item() const { return _item; }
 };
 
@@ -228,8 +230,7 @@ class BranchOutputStatusDock : public QFrame {
     QTableWidget *outputTable = nullptr;
     QList<OutputTableRow *> outputTableRows;
     QLabel *applyToAllLabel = nullptr;
-    QToolButton *enableAllButton = nullptr;
-    QToolButton *disableAllButton = nullptr;
+    QToolButton *playSelectedButton = nullptr;
     QToolButton *splitRecordingAllButton = nullptr;
     QToolButton *pauseRecordingAllButton = nullptr;
     QToolButton *unpauseRecordingAllButton = nullptr;
@@ -240,6 +241,7 @@ class BranchOutputStatusDock : public QFrame {
     OBSSignal sourceAddedSignal;
     obs_hotkey_id enableAllHotkey;
     obs_hotkey_id disableAllHotkey;
+    obs_hotkey_id playSelectedHotkey;
     obs_hotkey_id splitRecordingAllHotkey;
     obs_hotkey_id pauseRecordingAllHotkey;
     obs_hotkey_id unpauseRecordingAllHotkey;
@@ -251,8 +253,7 @@ class BranchOutputStatusDock : public QFrame {
 
     void update();
     void updateOutputToggles(BranchOutputFilter *filter);
-    void applyEnableAllButtonEnabled();
-    void applyDisableAllButtonEnabled();
+    void applyPlaySelectedButtonEnabled();
     void applySplitRecordingAllButtonEnabled();
     void applyPauseRecordingAllButtonEnabled();
     void applyUnpauseRecordingAllButtonEnabled();
@@ -265,6 +266,7 @@ class BranchOutputStatusDock : public QFrame {
     static void onOBSFrontendEvent(enum obs_frontend_event event, void *param);
     static void onEanbleAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onDisableAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onPlaySelectedHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onSplitRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onPauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onUnpauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
@@ -288,6 +290,7 @@ public slots:
     void addFilter(BranchOutputFilter *filter);
     void removeFilter(BranchOutputFilter *filter);
     void setEabnleAll(bool enabled);
+    void playSelected();
     void splitRecordingAll();
     void pauseRecordingAll();
     void unpauseRecordingAll();

@@ -103,17 +103,13 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     // Tool buttons
     applyToAllLabel = new QLabel(QTStr("ApplyToAll"), this);
 
-    enableAllButton = new QToolButton(this);
-    enableAllButton->setToolTip(QTStr("EnableAll"));
-    enableAllButton->setIcon(QIcon(":/branch-output/images/visible.svg"));
-    enableAllButton->setEnabled(false);
-    connect(enableAllButton, &QToolButton::clicked, this, [this]() { setEabnleAll(true); });
-
-    disableAllButton = new QToolButton(this);
-    disableAllButton->setToolTip(QTStr("DisableAll"));
-    disableAllButton->setIcon(QIcon(":/branch-output/images/invisible.svg"));
-    disableAllButton->setEnabled(false);
-    connect(disableAllButton, &QToolButton::clicked, this, [this]() { setEabnleAll(false); });
+    playSelectedButton = new QToolButton(this);
+    playSelectedButton->setText(QTStr("PlaySelected"));
+    playSelectedButton->setToolTip(QTStr("PlaySelectedTooltip"));
+    playSelectedButton->setIcon(QIcon(":/branch-output/images/play.svg"));
+    playSelectedButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    playSelectedButton->setEnabled(false);
+    connect(playSelectedButton, &QToolButton::clicked, this, [this]() { playSelected(); });
 
     splitRecordingAllButton = new QToolButton(this);
     splitRecordingAllButton->setToolTip(QTStr("SplitAllRecordings"));
@@ -157,10 +153,10 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     interlockComboBox->addItem(QTStr("AlwaysOff"), BranchOutputFilter::INTERLOCK_TYPE_ALWAYS_OFF);
 
     auto buttonsContainerLayout = new QHBoxLayout();
+    buttonsContainerLayout->addWidget(playSelectedButton);
+    buttonsContainerLayout->addSpacing(10);
     buttonsContainerLayout->addWidget(applyToAllLabel);
     buttonsContainerLayout->addSpacing(5);
-    buttonsContainerLayout->addWidget(enableAllButton);
-    buttonsContainerLayout->addWidget(disableAllButton);
     buttonsContainerLayout->addWidget(splitRecordingAllButton);
     buttonsContainerLayout->addWidget(pauseRecordingAllButton);
     buttonsContainerLayout->addWidget(unpauseRecordingAllButton);
@@ -181,6 +177,9 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     );
     disableAllHotkey = obs_hotkey_register_frontend(
         "DisableAllBranchOutputsHotkey", obs_module_text("DisableAllHotkey"), onDisableAllHotkeyPressed, this
+    );
+    playSelectedHotkey = obs_hotkey_register_frontend(
+        "PlaySelectedBranchOutputsHotkey", obs_module_text("PlaySelectedHotkey"), onPlaySelectedHotkeyPressed, this
     );
     splitRecordingAllHotkey = obs_hotkey_register_frontend(
         "SplitRecordingAllBranchOutputsHotkey", obs_module_text("SplitRecordingAllHotkey"),
@@ -206,6 +205,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     loadSettings();
     loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
     loadHotkey(disableAllHotkey, "DisableAllBranchOutputsHotkey");
+    loadHotkey(playSelectedHotkey, "PlaySelectedBranchOutputsHotkey");
     loadHotkey(splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
     loadHotkey(pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
     loadHotkey(unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
@@ -234,6 +234,7 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
     // Unregister hotkeys
     obs_hotkey_unregister(enableAllHotkey);
     obs_hotkey_unregister(disableAllHotkey);
+    obs_hotkey_unregister(playSelectedHotkey);
     obs_hotkey_unregister(splitRecordingAllHotkey);
     obs_hotkey_unregister(pauseRecordingAllHotkey);
     obs_hotkey_unregister(unpauseRecordingAllHotkey);
@@ -363,8 +364,7 @@ void BranchOutputStatusDock::addRow(
     auto row = (int)outputTableRows.size();
     outputTableRows.push_back(new OutputTableRow(row, filter, streamingIndex, outputType, groupIndex, this));
 
-    applyEnableAllButtonEnabled();
-    applyDisableAllButtonEnabled();
+    applyPlaySelectedButtonEnabled();
 }
 
 void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
@@ -435,8 +435,7 @@ void BranchOutputStatusDock::update()
         row->update();
     }
 
-    applyEnableAllButtonEnabled();
-    applyDisableAllButtonEnabled();
+    applyPlaySelectedButtonEnabled();
     applySplitRecordingAllButtonEnabled();
     applyPauseRecordingAllButtonEnabled();
     applyUnpauseRecordingAllButtonEnabled();
@@ -462,26 +461,16 @@ void BranchOutputStatusDock::onOutputUserEnabledChanged()
     }
 }
 
-void BranchOutputStatusDock::applyEnableAllButtonEnabled()
+void BranchOutputStatusDock::applyPlaySelectedButtonEnabled()
 {
+    // Enabled while at least one filter's selection differs from its actual enabled state
     foreach (auto row, outputTableRows) {
-        if (!row->filterCell->isVisibilityChecked()) {
-            enableAllButton->setEnabled(true);
+        if (row->filterCell->isSelected() != obs_source_enabled(row->filter->filterSource)) {
+            playSelectedButton->setEnabled(true);
             return;
         }
     }
-    enableAllButton->setEnabled(false);
-}
-
-void BranchOutputStatusDock::applyDisableAllButtonEnabled()
-{
-    foreach (auto row, outputTableRows) {
-        if (row->filterCell->isVisibilityChecked()) {
-            disableAllButton->setEnabled(true);
-            return;
-        }
-    }
-    disableAllButton->setEnabled(false);
+    playSelectedButton->setEnabled(false);
 }
 
 void BranchOutputStatusDock::applySplitRecordingAllButtonEnabled()
@@ -558,8 +547,19 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
         }
     }
 
-    applyEnableAllButtonEnabled();
-    applyDisableAllButtonEnabled();
+    applyPlaySelectedButtonEnabled();
+}
+
+void BranchOutputStatusDock::playSelected()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->groupIndex == 0) {
+            // Do only once for each filters: start checked filters, stop unchecked ones
+            obs_source_set_enabled(row->filter->filterSource, row->filterCell->isSelected());
+        }
+    }
+
+    applyPlaySelectedButtonEnabled();
 }
 
 void BranchOutputStatusDock::splitRecordingAll()
@@ -668,6 +668,14 @@ void BranchOutputStatusDock::onDisableAllHotkeyPressed(void *data, obs_hotkey_id
     auto dock = static_cast<BranchOutputStatusDock *>(data);
     if (pressed) {
         dock->setEabnleAll(false);
+    }
+}
+
+void BranchOutputStatusDock::onPlaySelectedHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    auto dock = static_cast<BranchOutputStatusDock *>(data);
+    if (pressed) {
+        dock->playSelected();
     }
 }
 
@@ -835,6 +843,16 @@ OutputTableRow::OutputTableRow(
     connect(status, &StatusCell::unpauseRecordingButtonClicked, this, [this]() { unpauseRecording(); });
     connect(status, &StatusCell::addChapterToRecordingButtonClicked, this, [this]() { addChapterToRecording(); });
     connect(status, &StatusCell::saveReplayBufferButtonClicked, this, [this]() { filter->saveReplayBuffer(); });
+
+    // Keep selection in sync across rows of the same filter and refresh the play button state
+    connect(filterCell, &FilterCell::selectionChanged, this, [this, parent](bool selected) {
+        foreach (auto otherRow, parent->outputTableRows) {
+            if (otherRow->filter == filter && otherRow->filterCell != filterCell) {
+                otherRow->filterCell->setSelected(selected);
+            }
+        }
+        parent->applyPlaySelectedButtonEnabled();
+    });
 
     // Setup rename event
     connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &) {
@@ -1226,22 +1244,21 @@ FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_sourc
 {
     setMinimumHeight(27);
 
-    visibilityCheckbox = new QCheckBox(this);
-    visibilityCheckbox->setProperty("visibilityCheckBox", true);      // Until OBS 30
-    visibilityCheckbox->setProperty("class", "indicator-visibility"); // Since OBS 31
-    visibilityCheckbox->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
-    visibilityCheckbox->setChecked(obs_source_enabled(source));
-    visibilityCheckbox->setCursor(Qt::PointingHandCursor);
+    // Plain selection checkbox: checking does not start/stop anything by itself,
+    // the selection is applied via the "Play Selected" button or hotkey.
+    selectionCheckbox = new QCheckBox(this);
+    selectionCheckbox->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+    selectionCheckbox->setChecked(obs_source_enabled(source));
+    selectionCheckbox->setCursor(Qt::PointingHandCursor);
+    selectionCheckbox->setToolTip(QTStr("SelectForPlayTooltip"));
 
-    connect(visibilityCheckbox, &QCheckBox::clicked, this, [source](bool visible) {
-        obs_source_set_enabled(source, visible);
-    });
+    connect(selectionCheckbox, &QCheckBox::clicked, this, [this](bool checked) { emit selectionChanged(checked); });
 
     name = new QLabel(this);
 
     auto checkboxLayout = new QHBoxLayout();
     checkboxLayout->setContentsMargins(0, 0, 0, 0);
-    checkboxLayout->addWidget(visibilityCheckbox);
+    checkboxLayout->addWidget(selectionCheckbox);
     checkboxLayout->addWidget(name);
     setLayout(checkboxLayout);
 
@@ -1277,7 +1294,14 @@ void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
 {
     auto item = static_cast<FilterCell *>(data);
     auto enabled = calldata_bool(cd, "enabled");
-    item->visibilityCheckbox->setChecked(enabled);
+    item->setSelected(enabled);
+}
+
+void FilterCell::setSelected(bool selected)
+{
+    selectionCheckbox->blockSignals(true);
+    selectionCheckbox->setChecked(selected);
+    selectionCheckbox->blockSignals(false);
 }
 
 //--- ParentCell class ---//
@@ -1340,8 +1364,6 @@ OutputCell::OutputCell(
     setMinimumHeight(27);
 
     outputToggleCheckbox = new QCheckBox(this);
-    outputToggleCheckbox->setProperty("visibilityCheckBox", true);      // Until OBS 30
-    outputToggleCheckbox->setProperty("class", "indicator-visibility"); // Since OBS 31
     outputToggleCheckbox->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
     outputToggleCheckbox->setChecked(checked);
     outputToggleCheckbox->setCursor(Qt::PointingHandCursor);
