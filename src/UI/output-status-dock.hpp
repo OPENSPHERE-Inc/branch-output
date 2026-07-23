@@ -92,10 +92,8 @@ class FilterCell : public QWidget {
     QCheckBox *selectionCheckbox;
     QLabel *name;
 
-    OBSSignal enableSignal;
     OBSSignal filterRenamedSignal;
 
-    static void onVisibilityChanged(void *data, calldata_t *cd);
     static void onFilterRenamed(void *data, calldata_t *cd);
 
 signals:
@@ -231,6 +229,7 @@ class BranchOutputStatusDock : public QFrame {
     QList<OutputTableRow *> outputTableRows;
     QLabel *applyToAllLabel = nullptr;
     QToolButton *playSelectedButton = nullptr;
+    QToolButton *stopSelectedButton = nullptr;
     QToolButton *splitRecordingAllButton = nullptr;
     QToolButton *pauseRecordingAllButton = nullptr;
     QToolButton *unpauseRecordingAllButton = nullptr;
@@ -242,6 +241,7 @@ class BranchOutputStatusDock : public QFrame {
     obs_hotkey_id enableAllHotkey;
     obs_hotkey_id disableAllHotkey;
     obs_hotkey_id playSelectedHotkey;
+    obs_hotkey_id stopSelectedHotkey;
     obs_hotkey_id splitRecordingAllHotkey;
     obs_hotkey_id pauseRecordingAllHotkey;
     obs_hotkey_id unpauseRecordingAllHotkey;
@@ -253,7 +253,7 @@ class BranchOutputStatusDock : public QFrame {
 
     void update();
     void updateOutputToggles(BranchOutputFilter *filter);
-    void applyPlaySelectedButtonEnabled();
+    void applySelectionButtonsEnabled();
     void applySplitRecordingAllButtonEnabled();
     void applyPauseRecordingAllButtonEnabled();
     void applyUnpauseRecordingAllButtonEnabled();
@@ -267,6 +267,7 @@ class BranchOutputStatusDock : public QFrame {
     static void onEanbleAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onDisableAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onPlaySelectedHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+    static void onStopSelectedHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onSplitRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onPauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onUnpauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
@@ -291,6 +292,7 @@ public slots:
     void removeFilter(BranchOutputFilter *filter);
     void setEabnleAll(bool enabled);
     void playSelected();
+    void stopSelected();
     void splitRecordingAll();
     void pauseRecordingAll();
     void unpauseRecordingAll();

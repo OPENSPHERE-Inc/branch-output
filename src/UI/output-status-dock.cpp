@@ -111,6 +111,14 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     playSelectedButton->setEnabled(false);
     connect(playSelectedButton, &QToolButton::clicked, this, [this]() { playSelected(); });
 
+    stopSelectedButton = new QToolButton(this);
+    stopSelectedButton->setText(QTStr("StopSelected"));
+    stopSelectedButton->setToolTip(QTStr("StopSelectedTooltip"));
+    stopSelectedButton->setIcon(QIcon(":/branch-output/images/stop.svg"));
+    stopSelectedButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    stopSelectedButton->setEnabled(false);
+    connect(stopSelectedButton, &QToolButton::clicked, this, [this]() { stopSelected(); });
+
     splitRecordingAllButton = new QToolButton(this);
     splitRecordingAllButton->setToolTip(QTStr("SplitAllRecordings"));
     splitRecordingAllButton->setIcon(QIcon(":/branch-output/images/scissors.svg"));
@@ -154,6 +162,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
 
     auto buttonsContainerLayout = new QHBoxLayout();
     buttonsContainerLayout->addWidget(playSelectedButton);
+    buttonsContainerLayout->addWidget(stopSelectedButton);
     buttonsContainerLayout->addSpacing(10);
     buttonsContainerLayout->addWidget(applyToAllLabel);
     buttonsContainerLayout->addSpacing(5);
@@ -181,6 +190,9 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     playSelectedHotkey = obs_hotkey_register_frontend(
         "PlaySelectedBranchOutputsHotkey", obs_module_text("PlaySelectedHotkey"), onPlaySelectedHotkeyPressed, this
     );
+    stopSelectedHotkey = obs_hotkey_register_frontend(
+        "StopSelectedBranchOutputsHotkey", obs_module_text("StopSelectedHotkey"), onStopSelectedHotkeyPressed, this
+    );
     splitRecordingAllHotkey = obs_hotkey_register_frontend(
         "SplitRecordingAllBranchOutputsHotkey", obs_module_text("SplitRecordingAllHotkey"),
         onSplitRecordingAllHotkeyPressed, this
@@ -206,6 +218,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
     loadHotkey(disableAllHotkey, "DisableAllBranchOutputsHotkey");
     loadHotkey(playSelectedHotkey, "PlaySelectedBranchOutputsHotkey");
+    loadHotkey(stopSelectedHotkey, "StopSelectedBranchOutputsHotkey");
     loadHotkey(splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
     loadHotkey(pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
     loadHotkey(unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
@@ -235,6 +248,7 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
     obs_hotkey_unregister(enableAllHotkey);
     obs_hotkey_unregister(disableAllHotkey);
     obs_hotkey_unregister(playSelectedHotkey);
+    obs_hotkey_unregister(stopSelectedHotkey);
     obs_hotkey_unregister(splitRecordingAllHotkey);
     obs_hotkey_unregister(pauseRecordingAllHotkey);
     obs_hotkey_unregister(unpauseRecordingAllHotkey);
@@ -364,7 +378,7 @@ void BranchOutputStatusDock::addRow(
     auto row = (int)outputTableRows.size();
     outputTableRows.push_back(new OutputTableRow(row, filter, streamingIndex, outputType, groupIndex, this));
 
-    applyPlaySelectedButtonEnabled();
+    applySelectionButtonsEnabled();
 }
 
 void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
@@ -435,7 +449,7 @@ void BranchOutputStatusDock::update()
         row->update();
     }
 
-    applyPlaySelectedButtonEnabled();
+    applySelectionButtonsEnabled();
     applySplitRecordingAllButtonEnabled();
     applyPauseRecordingAllButtonEnabled();
     applyUnpauseRecordingAllButtonEnabled();
@@ -461,16 +475,23 @@ void BranchOutputStatusDock::onOutputUserEnabledChanged()
     }
 }
 
-void BranchOutputStatusDock::applyPlaySelectedButtonEnabled()
+void BranchOutputStatusDock::applySelectionButtonsEnabled()
 {
-    // Enabled while at least one filter's selection differs from its actual enabled state
+    // Play is enabled while at least one checked filter is stopped, Stop while at least one is running
+    bool canPlay = false;
+    bool canStop = false;
     foreach (auto row, outputTableRows) {
-        if (row->filterCell->isSelected() != obs_source_enabled(row->filter->filterSource)) {
-            playSelectedButton->setEnabled(true);
-            return;
+        if (!row->filterCell->isSelected()) {
+            continue;
+        }
+        if (obs_source_enabled(row->filter->filterSource)) {
+            canStop = true;
+        } else {
+            canPlay = true;
         }
     }
-    playSelectedButton->setEnabled(false);
+    playSelectedButton->setEnabled(canPlay);
+    stopSelectedButton->setEnabled(canStop);
 }
 
 void BranchOutputStatusDock::applySplitRecordingAllButtonEnabled()
@@ -547,19 +568,31 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
         }
     }
 
-    applyPlaySelectedButtonEnabled();
+    applySelectionButtonsEnabled();
 }
 
 void BranchOutputStatusDock::playSelected()
 {
     foreach (auto row, outputTableRows) {
-        if (row->groupIndex == 0) {
-            // Do only once for each filters: start checked filters, stop unchecked ones
-            obs_source_set_enabled(row->filter->filterSource, row->filterCell->isSelected());
+        if (row->groupIndex == 0 && row->filterCell->isSelected()) {
+            // Do only once for each filters
+            obs_source_set_enabled(row->filter->filterSource, true);
         }
     }
 
-    applyPlaySelectedButtonEnabled();
+    applySelectionButtonsEnabled();
+}
+
+void BranchOutputStatusDock::stopSelected()
+{
+    foreach (auto row, outputTableRows) {
+        if (row->groupIndex == 0 && row->filterCell->isSelected()) {
+            // Do only once for each filters
+            obs_source_set_enabled(row->filter->filterSource, false);
+        }
+    }
+
+    applySelectionButtonsEnabled();
 }
 
 void BranchOutputStatusDock::splitRecordingAll()
@@ -676,6 +709,14 @@ void BranchOutputStatusDock::onPlaySelectedHotkeyPressed(void *data, obs_hotkey_
     auto dock = static_cast<BranchOutputStatusDock *>(data);
     if (pressed) {
         dock->playSelected();
+    }
+}
+
+void BranchOutputStatusDock::onStopSelectedHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+{
+    auto dock = static_cast<BranchOutputStatusDock *>(data);
+    if (pressed) {
+        dock->stopSelected();
     }
 }
 
@@ -851,7 +892,7 @@ OutputTableRow::OutputTableRow(
                 otherRow->filterCell->setSelected(selected);
             }
         }
-        parent->applyPlaySelectedButtonEnabled();
+        parent->applySelectionButtonsEnabled();
     });
 
     // Setup rename event
@@ -1265,16 +1306,12 @@ FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_sourc
     // Listen signal for filter update
     filterRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", FilterCell::onFilterRenamed, this);
 
-    // Listen signal for filter enabled/disabled
-    enableSignal.Connect(obs_source_get_signal_handler(source), "enable", FilterCell::onVisibilityChanged, this);
-
     setTextValue(textValue);
 }
 
 FilterCell::~FilterCell()
 {
     filterRenamedSignal.Disconnect();
-    enableSignal.Disconnect();
 }
 
 void FilterCell::setTextValue(const QString &textValue)
@@ -1288,13 +1325,6 @@ void FilterCell::onFilterRenamed(void *data, calldata_t *cd)
 {
     auto cell = static_cast<FilterCell *>(data);
     cell->setTextValue(calldata_string(cd, "new_name"));
-}
-
-void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
-{
-    auto item = static_cast<FilterCell *>(data);
-    auto enabled = calldata_bool(cd, "enabled");
-    item->setSelected(enabled);
 }
 
 void FilterCell::setSelected(bool selected)
