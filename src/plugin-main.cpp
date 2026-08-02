@@ -863,6 +863,16 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
         }
     }
 
+    // Stop the private video_t (joins its worker thread) before releasing the encoder, for
+    // the same reason as the audio_t above. obs_view_remove() only flags the mix for removal
+    // on the graphics thread, so it is not a synchronization point.
+    // FIXME: A GPU video encoder is driven from libobs' GPU encode thread via the mix's
+    // gpu_encoders array, which only obs_encoder_stop() detaches. Closing that path needs the
+    // output's start to be resolved before infrastructure is released.
+    if (videoOutput) {
+        video_output_stop(videoOutput);
+    }
+
     videoEncoder = nullptr;
 
     if (filterVideoCapture) {
