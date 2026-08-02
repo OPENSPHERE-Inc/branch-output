@@ -549,7 +549,10 @@ bool BranchOutputFilter::stopSingleStreamingOutputGracefully(size_t index)
 
     if (streamings[index].output && streamings[index].active) {
         if (streamings[index].stopping) {
-            if (reconnectAttemptingTimedOut(index)) {
+            // A reconnect that succeeds clears reconnectAttemptingAt, so the timeout gate alone
+            // would never open once "stopping" is latched. Leaving the reconnecting state is
+            // itself sufficient grounds to stop.
+            if (!obs_output_reconnecting(streamings[index].output) || reconnectAttemptingTimedOut(index)) {
                 stopStreamingOutput(index);
             } else {
                 return false;
