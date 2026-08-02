@@ -1422,9 +1422,14 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                                 LOG_WARNING, "%s (%zu): Reconnect stalled, forcing graceful restart",
                                 qUtf8Printable(name), i
                             );
-                            // FIXME: obs_output_stop() joins the output's in-flight connect thread, so a hung
-                            // connect blocks this timer thread under pluginMutex + outputMutex. Root-cause fix
-                            // (bounded/non-joining stop) needs a separate PR.
+                            // FIXME: obs_output_stop() on a reconnecting output reaches the output
+                            // implementation's stop callback, which joins the in-flight connect
+                            // thread (rtmp_stream_stop() -> pthread_join(connect_thread)) with no
+                            // bound other than the OS connect / handshake timeout, blocking this
+                            // timer thread while pluginMutex and outputMutex are held. libobs' own
+                            // reconnect-thread join is not the blocker; reconnect_stop_event
+                            // releases it. Root-cause fix (bounded / non-joining stop) needs a
+                            // separate PR.
                             stopSingleStreamingIndividual(i);
                             return;
                         }
