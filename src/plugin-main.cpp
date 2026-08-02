@@ -1422,8 +1422,9 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                                 LOG_WARNING, "%s (%zu): Reconnect stalled, forcing graceful restart",
                                 qUtf8Printable(name), i
                             );
-                            // FIXME: obs_output_stop() pthread_joins the uninterruptible reconnect thread; a hung connect
-                            // blocks under pluginMutex + outputMutex. Root-cause fix (bounded/non-joining stop) needs a separate PR.
+                            // FIXME: obs_output_stop() joins the output's in-flight connect thread, so a hung
+                            // connect blocks this timer thread under pluginMutex + outputMutex. Root-cause fix
+                            // (bounded/non-joining stop) needs a separate PR.
                             stopSingleStreamingIndividual(i);
                             return;
                         }
