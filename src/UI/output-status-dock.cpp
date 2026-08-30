@@ -240,8 +240,8 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
 void BranchOutputStatusDock::loadHotkeys()
 {
     obs_hotkey_update_atomic(
-        [](void *data) {
-            auto *dock = static_cast<BranchOutputStatusDock *>(data);
+        [](void *context) {
+            auto *dock = static_cast<BranchOutputStatusDock *>(context);
             loadHotkey(dock->enableAllHotkey, "EnableAllBranchOutputsHotkey");
             loadHotkey(dock->disableAllHotkey, "DisableAllBranchOutputsHotkey");
             loadHotkey(dock->splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
