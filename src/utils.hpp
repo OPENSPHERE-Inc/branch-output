@@ -155,8 +155,9 @@ inline void loadHotkey(obs_hotkey_id id, const char *name)
         array = obs_data_get_array(data, "bindings");
     }
 
-    if (!array) {
-        array = obs_data_array_create();
+    if (!array || obs_data_array_count(array) == 0) {
+        obs_hotkey_load_bindings(id, nullptr, 0);
+        return;
     }
 
     obs_hotkey_load(id, array);

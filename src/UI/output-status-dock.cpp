@@ -239,13 +239,19 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
 
 void BranchOutputStatusDock::loadHotkeys()
 {
-    loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
-    loadHotkey(disableAllHotkey, "DisableAllBranchOutputsHotkey");
-    loadHotkey(splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
-    loadHotkey(pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
-    loadHotkey(unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
-    loadHotkey(addChapterToRecordingAllHotkey, "AddChapterToRecordingAllBranchOutputsHotkey");
-    loadHotkey(saveReplayBufferAllHotkey, "SaveReplayBufferAllBranchOutputsHotkey");
+    obs_hotkey_update_atomic(
+        [](void *data) {
+            auto *dock = static_cast<BranchOutputStatusDock *>(data);
+            loadHotkey(dock->enableAllHotkey, "EnableAllBranchOutputsHotkey");
+            loadHotkey(dock->disableAllHotkey, "DisableAllBranchOutputsHotkey");
+            loadHotkey(dock->splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->addChapterToRecordingAllHotkey, "AddChapterToRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->saveReplayBufferAllHotkey, "SaveReplayBufferAllBranchOutputsHotkey");
+        },
+        this
+    );
 }
 
 void BranchOutputStatusDock::loadSettings()
@@ -346,12 +352,13 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
         dock->saveSettings();
         break;
     case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
+        dock->loadHotkeys();
+
         // Defer to ensure Qt event loop has finished processing the profile change
         QMetaObject::invokeMethod(
             dock,
             [dock]() {
                 dock->loadSettings();
-                dock->loadHotkeys();
                 dock->sort();
             },
             Qt::QueuedConnection
