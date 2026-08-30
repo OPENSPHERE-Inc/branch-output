@@ -204,13 +204,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     );
 
     loadSettings();
-    loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
-    loadHotkey(disableAllHotkey, "DisableAllBranchOutputsHotkey");
-    loadHotkey(splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
-    loadHotkey(pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
-    loadHotkey(unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
-    loadHotkey(addChapterToRecordingAllHotkey, "AddChapterToRecordingAllBranchOutputsHotkey");
-    loadHotkey(saveReplayBufferAllHotkey, "SaveReplayBufferAllBranchOutputsHotkey");
+    loadHotkeys();
 
     sort();
 
@@ -241,6 +235,17 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
     obs_hotkey_unregister(saveReplayBufferAllHotkey);
 
     obs_log(LOG_DEBUG, "BranchOutputStatusDock destroyed");
+}
+
+void BranchOutputStatusDock::loadHotkeys()
+{
+    loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
+    loadHotkey(disableAllHotkey, "DisableAllBranchOutputsHotkey");
+    loadHotkey(splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
+    loadHotkey(pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
+    loadHotkey(unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
+    loadHotkey(addChapterToRecordingAllHotkey, "AddChapterToRecordingAllBranchOutputsHotkey");
+    loadHotkey(saveReplayBufferAllHotkey, "SaveReplayBufferAllBranchOutputsHotkey");
 }
 
 void BranchOutputStatusDock::loadSettings()
@@ -346,6 +351,7 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
             dock,
             [dock]() {
                 dock->loadSettings();
+                dock->loadHotkeys();
                 dock->sort();
             },
             Qt::QueuedConnection

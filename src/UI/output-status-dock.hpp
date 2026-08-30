@@ -260,6 +260,7 @@ class BranchOutputStatusDock : public QFrame {
     void applySaveReplayBufferAllButtonEnabled();
     void saveSettings();
     void loadSettings();
+    void loadHotkeys();
     void applySettings(obs_data_t *settings);
 
     static void onOBSFrontendEvent(enum obs_frontend_event event, void *param);

@@ -150,10 +150,16 @@ inline obs_data_t *loadHotkeyData(const char *name)
 inline void loadHotkey(obs_hotkey_id id, const char *name)
 {
     OBSDataAutoRelease data = loadHotkeyData(name);
+    OBSDataArrayAutoRelease array;
     if (data) {
-        OBSDataArrayAutoRelease array = obs_data_get_array(data, "bindings");
-        obs_hotkey_load(id, array);
+        array = obs_data_get_array(data, "bindings");
     }
+
+    if (!array) {
+        array = obs_data_array_create();
+    }
+
+    obs_hotkey_load(id, array);
 }
 
 inline QString getIndexedPropNameFormat(size_t index, size_t base = 0)
