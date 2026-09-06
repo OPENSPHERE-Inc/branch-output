@@ -45,6 +45,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // All three mutexes are recursive — safe to re-lock from the same thread.
 extern pthread_mutex_t pluginMutex;
 
+// Publish a fresh filter-list snapshot consumed by the global proc handler.
+// Defined in plugin-main.cpp; thread-safe (mutex-guarded).
+void publishFilterListSnapshot(QList<BranchOutputFilterInfo> snapshot);
+
 class BranchOutputFilter : public QObject {
     Q_OBJECT
 
@@ -236,6 +240,7 @@ class BranchOutputFilter : public QObject {
     bool canAddChapterToRecording();
     bool canSplitRecording();
     bool splitRecording();
+    bool splitRecording(obs_output_t *output);
     bool pauseRecording();
     bool unpauseRecording();
     bool addChapterToRecording(QString chapterName = QString());

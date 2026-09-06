@@ -52,7 +52,8 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
       sortingColumnIndex(0),
       sortingOrder(Qt::AscendingOrder),
       ascendingIcon(":/branch-output/images/sort-ascending.svg"),
-      descendingIcon(":/branch-output/images/sort-descending.svg")
+      descendingIcon(":/branch-output/images/sort-descending.svg"),
+      interlockTypeAtomic(BranchOutputFilter::INTERLOCK_TYPE_ALWAYS_ON)
 {
     setMinimumWidth(320);
 
@@ -155,6 +156,9 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     interlockComboBox->addItem(QTStr("VirtualCam"), BranchOutputFilter::INTERLOCK_TYPE_VIRTUAL_CAM);
     interlockComboBox->addItem(QTStr("Individual"), BranchOutputFilter::INTERLOCK_TYPE_INDIVIDUAL);
     interlockComboBox->addItem(QTStr("AlwaysOff"), BranchOutputFilter::INTERLOCK_TYPE_ALWAYS_OFF);
+    connect(interlockComboBox, &QComboBox::currentIndexChanged, this, [this](int) {
+        interlockTypeAtomic.store(interlockComboBox->currentData().toInt(), std::memory_order_relaxed);
+    });
 
     auto buttonsContainerLayout = new QHBoxLayout();
     buttonsContainerLayout->addWidget(applyToAllLabel);
@@ -291,6 +295,7 @@ void BranchOutputStatusDock::applySettings(obs_data_t *settings)
     }
 
     interlockComboBox->setCurrentIndex(interlockComboBox->findData(obs_data_get_int(settings, "interlock")));
+    interlockTypeAtomic.store(interlockComboBox->currentData().toInt(), std::memory_order_relaxed);
 
     auto sortingColumn = QString(obs_data_get_string(settings, "sortingColumn"));
     for (int i = 0; i < outputTable->columnCount(); i++) {
@@ -421,6 +426,7 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     }
 
     sort();
+    publishFilterListSnapshot();
 }
 
 void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
@@ -435,6 +441,7 @@ void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
     }
 
     sort();
+    publishFilterListSnapshot();
 }
 
 void BranchOutputStatusDock::update()
@@ -856,10 +863,12 @@ OutputTableRow::OutputTableRow(
     connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &) {
         updateRowId(); // Update row ID with new filter name
         parent->sort();
+        parent->publishFilterListSnapshot();
     });
     connect(parentCell, &ParentCell::renamed, this, [this, parent](const QString &) {
         updateRowId(); // Update row ID with new source name
         parent->sort();
+        parent->publishFilterListSnapshot();
     });
 }
 
@@ -1286,14 +1295,25 @@ void FilterCell::setTextValue(const QString &textValue)
 void FilterCell::onFilterRenamed(void *data, calldata_t *cd)
 {
     auto cell = static_cast<FilterCell *>(data);
-    cell->setTextValue(calldata_string(cd, "new_name"));
+    // OBS rename signals may fire from non-UI threads; marshal the QLabel
+    // mutation (and the renamed signal cascade) onto the UI thread to keep
+    // outputTableRows / Qt widgets touched only from the UI thread.
+    QString newName = QString::fromUtf8(calldata_string(cd, "new_name"));
+    QMetaObject::invokeMethod(
+        cell, [cell, newName]() { cell->setTextValue(newName); }, Qt::QueuedConnection
+    );
 }
 
 void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
 {
-    auto item = static_cast<FilterCell *>(data);
+    auto cell = static_cast<FilterCell *>(data);
+    // OBS enable signals may fire from non-UI threads; marshal the QCheckBox
+    // mutation onto the UI thread (Qt forbids QWidget state changes from
+    // threads other than the GUI thread).
     auto enabled = calldata_bool(cd, "enabled");
-    item->visibilityCheckbox->setChecked(enabled);
+    QMetaObject::invokeMethod(
+        cell, [cell, enabled]() { cell->visibilityCheckbox->setChecked(enabled); }, Qt::QueuedConnection
+    );
 }
 
 //--- ParentCell class ---//
@@ -1319,8 +1339,13 @@ ParentCell::~ParentCell()
 void ParentCell::onParentRenamed(void *data, calldata_t *cd)
 {
     auto cell = static_cast<ParentCell *>(data);
-    auto newName = calldata_string(cd, "new_name");
-    cell->setTextValue(newName);
+    // OBS rename signals may fire from non-UI threads; marshal the QLabel
+    // mutation (and the renamed signal cascade) onto the UI thread to keep
+    // outputTableRows / Qt widgets touched only from the UI thread.
+    QString newName = QString::fromUtf8(calldata_string(cd, "new_name"));
+    QMetaObject::invokeMethod(
+        cell, [cell, newName]() { cell->setTextValue(newName); }, Qt::QueuedConnection
+    );
 }
 
 void ParentCell::setTextValue(const QString &textValue)
@@ -1567,7 +1592,9 @@ void StatusCell::setTextValue(const QString &textValue)
     _item->setData(Qt::UserRole, textValue);
 }
 
-QList<BranchOutputFilterInfo> BranchOutputStatusDock::getFilterList() const
+// Snapshot reflects the last state seen by the UI thread; it may lag live OBS
+// state until the next rename signal or add/remove event is processed.
+QList<BranchOutputFilterInfo> BranchOutputStatusDock::buildFilterListSnapshot() const
 {
     QList<BranchOutputFilterInfo> list;
     QSet<obs_source_t *> seen;
@@ -1593,4 +1620,9 @@ QList<BranchOutputFilterInfo> BranchOutputStatusDock::getFilterList() const
     }
 
     return list;
+}
+
+void BranchOutputStatusDock::publishFilterListSnapshot()
+{
+    ::publishFilterListSnapshot(buildFilterListSnapshot());
 }

@@ -286,6 +286,8 @@ bool BranchOutputFilter::canSplitRecording()
 
 bool BranchOutputFilter::splitRecording()
 {
+    OBSOutputAutoRelease recordingOutputRef;
+
     pthread_mutex_lock(&outputMutex);
     {
         OBSMutexAutoUnlock locked(&outputMutex);
@@ -293,15 +295,30 @@ bool BranchOutputFilter::splitRecording()
         if (!splitRecordingEnabled || !recordingActive || !recordingOutput) {
             return false;
         }
-
-        // Immitate obs_frontend_recording_split_file()
-        proc_handler_t *ph = obs_output_get_proc_handler(recordingOutput);
-        uint8_t stack[128];
-        calldata cd;
-        calldata_init_fixed(&cd, stack, sizeof(stack));
-        proc_handler_call(ph, "split_file", &cd);
-        return calldata_bool(&cd, "split_file_enabled");
+        recordingOutputRef = obs_output_get_ref(recordingOutput);
     }
+
+    if (!recordingOutputRef) {
+        return false;
+    }
+    return splitRecording(recordingOutputRef.Get());
+}
+
+// Precondition: caller must verify splitRecordingEnabled, recordingActive, and
+// recordingPending under outputMutex before acquiring a strong ref to output.
+bool BranchOutputFilter::splitRecording(obs_output_t *output)
+{
+    if (!output) {
+        return false;
+    }
+
+    // Immitate obs_frontend_recording_split_file()
+    proc_handler_t *ph = obs_output_get_proc_handler(output);
+    uint8_t stack[128];
+    calldata cd;
+    calldata_init_fixed(&cd, stack, sizeof(stack));
+    proc_handler_call(ph, "split_file", &cd);
+    return calldata_bool(&cd, "split_file_enabled");
 }
 
 bool BranchOutputFilter::pauseRecording()
@@ -382,7 +399,10 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
     auto filter = static_cast<BranchOutputFilter *>(data);
 
     const char *format = calldata_string(cd, "format");
+    OBSOutputAutoRelease recordingOutputRef;
+    QString resolvedOverride;
     bool needsSplit = false;
+    bool needsFormatUpdate = false;
 
     pthread_mutex_lock(&filter->outputMutex);
     {
@@ -404,34 +424,45 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
 
         // Recording is active
         if (filter->splitRecordingEnabled && !filter->recordingPending) {
-            // Split file enabled: update format setting, then trigger split outside mutex
-            OBSDataAutoRelease filterSettings = obs_source_get_settings(filter->filterSource);
-            bool noSpace = obs_data_get_bool(filterSettings, "no_space_filename");
-            QString appliedFormat = filter->applyFilenameFormatArgs(
-                filter->recordingFilenameFormatOverride.isEmpty()
-                    ? QString(obs_data_get_string(filterSettings, "filename_formatting"))
-                    : filter->recordingFilenameFormatOverride,
-                noSpace
-            );
-
-            OBSDataAutoRelease settings = obs_data_create();
-            obs_data_set_string(settings, "format", qUtf8Printable(appliedFormat));
-            obs_output_update(filter->recordingOutput, settings);
-
-            needsSplit = true;
-            obs_log(
-                LOG_INFO, "%s: Recording output format updated: %s", qUtf8Printable(filter->name),
-                qUtf8Printable(appliedFormat)
-            );
+            // Called under outputMutex; obs_output_update() runs after release
+            // to avoid mixing outputMutex with libobs's internal source mutex.
+            // FIXME: if the output is stopped or replaced between mutex release
+            // and obs_output_update(), the update is a no-op and the override
+            // is silently dropped.
+            resolvedOverride = filter->recordingFilenameFormatOverride;
+            recordingOutputRef = obs_output_get_ref(filter->recordingOutput);
+            needsFormatUpdate = (recordingOutputRef != nullptr);
+            needsSplit = needsFormatUpdate;
         } else {
             // Delegate to intervalTimer: stop (if pending) or restart
             filter->recordingSettingsOverridden = true;
         }
     }
 
+    if (needsFormatUpdate) {
+        // filterSource is immutable after construction so the settings read
+        // does not need outputMutex protection.
+        OBSDataAutoRelease filterSettings = obs_source_get_settings(filter->filterSource);
+        bool noSpace = obs_data_get_bool(filterSettings, "no_space_filename");
+        QString appliedFormat = filter->applyFilenameFormatArgs(
+            resolvedOverride.isEmpty() ? QString(obs_data_get_string(filterSettings, "filename_formatting"))
+                                       : resolvedOverride,
+            noSpace
+        );
+
+        OBSDataAutoRelease settings = obs_data_create();
+        obs_data_set_string(settings, "format", qUtf8Printable(appliedFormat));
+        obs_output_update(recordingOutputRef, settings);
+
+        obs_log(
+            LOG_INFO, "%s: Recording output format updated: %s", qUtf8Printable(filter->name),
+            qUtf8Printable(appliedFormat)
+        );
+    }
+
     // Split can be called directly (safe from any thread)
     if (needsSplit) {
-        filter->splitRecording();
+        filter->splitRecording(recordingOutputRef.Get());
     }
 }
 
