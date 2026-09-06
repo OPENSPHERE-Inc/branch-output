@@ -70,11 +70,12 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       width(0),
       height(0),
       cropScene(nullptr),
+      splitRecordingEnabled(false),
+      addChapterToRecordingEnabled(false),
       toggleEnableHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
       splitRecordingHotkeyId(OBS_INVALID_HOTKEY_ID),
       togglePauseRecordingHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
       addChapterToRecordingHotkeyId(OBS_INVALID_HOTKEY_ID),
-      splitRecordingEnabled(false),
       recordingSettingsOverridden(false),
       replayBufferActive(false),
       saveReplayBufferHotkeyId(OBS_INVALID_HOTKEY_ID),
@@ -845,13 +846,31 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
 
         for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
             auto audioContext = &audios[i];
-            audioContext->encoder = nullptr;
 
+            // Close the audio_t (joins its worker thread) before releasing the
+            // encoder. The worker may still be inside receive_audio() for this
+            // encoder; the encoder (and its pause.mutex) must outlive that final
+            // iteration, otherwise the worker unlocks a destroyed mutex.
             if (audioContext->capture) {
                 delete audioContext->capture;
                 audioContext->capture = nullptr;
             }
+
+            // audio is a borrowed pointer (capture-owned or obs_get_audio());
+            // clear it so it does not dangle until the next startOutput().
+            audioContext->audio = nullptr;
+            audioContext->encoder = nullptr;
         }
+    }
+
+    // Stop the private video_t (joins its worker thread) before releasing the encoder, for
+    // the same reason as the audio_t above. obs_view_remove() only flags the mix for removal
+    // on the graphics thread, so it is not a synchronization point.
+    // FIXME: A GPU video encoder is driven from libobs' GPU encode thread via the mix's
+    // gpu_encoders array, which only obs_encoder_stop() detaches. Closing that path needs the
+    // output's start to be resolved before infrastructure is released.
+    if (videoOutput) {
+        video_output_stop(videoOutput);
     }
 
     videoEncoder = nullptr;
