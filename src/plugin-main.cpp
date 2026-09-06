@@ -1386,12 +1386,54 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 restartRecordingOutput();
             }
 
-            for (size_t i = 0; i < MAX_SERVICES; i++) {
-                if (streamings[i].active && streamings[i].output && !obs_output_active(streamings[i].output) &&
-                    !obs_output_reconnecting(streamings[i].output)) {
-                    // Restart streaming
-                    obs_log(LOG_INFO, "%s (%zu): Attempting reactivate the streaming output", qUtf8Printable(name), i);
-                    reconnectStreamingOutput(i);
+            // Guard per-slot streamings[i].output access against concurrent nulling in
+            // stopStreamingOutput() / releaseInfrastructureIfIdle(). Lock order:
+            // pluginMutex -> outputMutex (matches stopOutputGracefully() and the
+            // Individual stop functions). Inner calls re-enter these recursive mutexes.
+            pthread_mutex_lock(&pluginMutex);
+            {
+                OBSMutexAutoUnlock pluginLocked(&pluginMutex);
+
+                pthread_mutex_lock(&outputMutex);
+                {
+                    OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+                    for (size_t i = 0; i < MAX_SERVICES; i++) {
+                        if (!streamings[i].active || !streamings[i].output) {
+                            continue;
+                        }
+                        if (!obs_output_active(streamings[i].output) &&
+                            !obs_output_reconnecting(streamings[i].output)) {
+                            // Restart streaming
+                            obs_log(
+                                LOG_INFO, "%s (%zu): Attempting reactivate the streaming output", qUtf8Printable(name),
+                                i
+                            );
+                            reconnectStreamingOutput(i);
+                        } else if (obs_output_reconnecting(streamings[i].output) && reconnectStallDetected(i)) {
+                            // OBS internal reconnect is stalled (TCP connect or RTMP handshake hung
+                            // with no progress). obs_output_stop() must not be called directly while
+                            // reconnecting (crashes OBS), so route recovery through the crash-safe
+                            // graceful stop path. This only stops the slot; restart is performed by
+                            // a later tick's startEligibleStreamings() (INDIVIDUAL: L1176,
+                            // non-INDIVIDUAL: L1236). Limit to one slot per tick to avoid rapid
+                            // state transitions.
+                            obs_log(
+                                LOG_WARNING, "%s (%zu): Reconnect stalled, forcing graceful restart",
+                                qUtf8Printable(name), i
+                            );
+                            // FIXME: obs_output_stop() on a reconnecting output reaches the output
+                            // implementation's stop callback, which joins the in-flight connect
+                            // thread (rtmp_stream_stop() -> pthread_join(connect_thread)) with no
+                            // bound other than the OS connect / handshake timeout, blocking this
+                            // timer thread while pluginMutex and outputMutex are held. libobs' own
+                            // reconnect-thread join is not the blocker; reconnect_stop_event
+                            // releases it. Root-cause fix (bounded / non-joining stop) needs a
+                            // separate PR.
+                            stopSingleStreamingIndividual(i);
+                            return;
+                        }
+                    }
                 }
             }
 
