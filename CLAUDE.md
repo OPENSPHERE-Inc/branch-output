@@ -34,6 +34,7 @@ branch-output/
 ├── src/
 │   ├── plugin-main.cpp      # Plugin entry point, BranchOutputFilter core logic
 │   ├── plugin-main.hpp      # BranchOutputFilter class declaration
+│   ├── plugin-hotkey.cpp    # Hotkey registration sync, binding cache, filter enable/disable callbacks
 │   ├── plugin-streaming.cpp # Streaming output logic (individual start/stop, per-slot control)
 │   ├── plugin-stream-recording.cpp  # Stream recording output logic (individual start/stop)
 │   ├── plugin-replay-buffer.cpp  # Replay buffer output logic (individual start/stop)
@@ -367,7 +368,8 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 
 ### Modifying Hotkeys
 
-- Add the new hotkey's base name and locale key as a `HotkeyText` constant at the top of `plugin-main.cpp`, and its ID member to `BranchOutputFilter` (`plugin-main.hpp`).
+- Hotkey registration and the binding cache are implemented in `src/plugin-hotkey.cpp`. The per-output-type hotkey callbacks live with their output type (`plugin-streaming.cpp` / `plugin-stream-recording.cpp` / `plugin-replay-buffer.cpp`).
+- Add the new hotkey's base name and locale key as a `HotkeyText` constant at the top of `plugin-hotkey.cpp`, and its ID member to `BranchOutputFilter` (`plugin-main.hpp`).
 - Wire it into the sync function of the group it belongs to (`syncFilterToggleHotkeys()` / `syncStreamingAllHotkeys()` / `syncStreamingSlotHotkeys()` / `syncRecordingHotkeys()` / `syncReplayBufferHotkeys()`), plus `captureRegisteredHotkeyBindings()` and `updateHotkeyDescriptions()`.
 - A group is registered and unregistered as a unit, and its registration state is decided by one representative ID. Register the representative first and abort the group when it fails.
 - When adding a new group, wire it into both `syncHotkeyGroups()` and `unregisterAllHotkeys()`.
