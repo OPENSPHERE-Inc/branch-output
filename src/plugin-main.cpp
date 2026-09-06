@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 
 #include <QRegularExpression>
+#include <QStringList>
 
 #include "audio/audio-capture.hpp"
 #include "video/filter-video-capture.hpp"
@@ -112,6 +113,13 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
         obs_data_set_bool(settings, "use_profile_recording_path", true);
     }
 
+    hotkeyBindingsCache = obs_data_create();
+    OBSDataAutoRelease savedHotkeyBindings = obs_data_get_obj(settings, HOTKEY_BINDINGS_KEY);
+    if (savedHotkeyBindings) {
+        obs_data_apply(hotkeyBindingsCache, savedHotkeyBindings);
+    }
+    hotkeyHarvestPending = !obs_data_has_user_value(settings, HOTKEY_BINDINGS_KEY);
+
     // Migrate audio_source schema
     auto audioSource = obs_data_get_string(settings, "audio_source");
     if (!strncmp(audioSource, "master_track_", strlen("master_track_"))) {
@@ -151,188 +159,580 @@ BranchOutputFilter::~BranchOutputFilter()
     pthread_mutex_destroy(&audioMutex);
 }
 
-void BranchOutputFilter::unregisterAllHotkeys()
-{
-    if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
-        toggleEnableHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-    if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(splitRecordingHotkeyId);
-        splitRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (togglePauseRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(togglePauseRecordingHotkeyPairId);
-        togglePauseRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-    if (addChapterToRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(addChapterToRecordingHotkeyId);
-        addChapterToRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (saveReplayBufferHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(saveReplayBufferHotkeyId);
-        saveReplayBufferHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (enableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(enableAllStreamingHotkeyId);
-        enableAllStreamingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (disableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(disableAllStreamingHotkeyId);
-        disableAllStreamingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (toggleStreamingServiceHotkeyPairIds[i] != OBS_INVALID_HOTKEY_PAIR_ID) {
-            obs_hotkey_pair_unregister(toggleStreamingServiceHotkeyPairIds[i]);
-            toggleStreamingServiceHotkeyPairIds[i] = OBS_INVALID_HOTKEY_PAIR_ID;
-        }
-    }
-    if (toggleRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(toggleRecordingHotkeyPairId);
-        toggleRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-    if (toggleReplayBufferHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(toggleReplayBufferHotkeyPairId);
-        toggleReplayBufferHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-}
+// Hotkey base names and locale keys. Base names become part of the persisted hotkey name
+// ("<base>.<uuid>"), which OBS and HOTKEY_BINDINGS_KEY use to match saved key bindings.
+struct HotkeyText {
+    const char *base;
+    const char *textKey;
+};
 
-// OBS hotkey persistence note:
-// OBS persists hotkey keybindings in source->context.hotkey_data using the hotkey **name string**
-// as the dictionary key (NOT the numeric obs_hotkey_id / obs_hotkey_pair_id).
-// When a hotkey is unregistered and re-registered with the same name string,
-// obs_hotkey_register_internal() automatically restores saved keybindings from context.hotkey_data.
-// Therefore, unregister→re-register cycles do NOT lose user keybindings.
-// See: libobs/obs-hotkey.c — obs_hotkey_register_internal(), load_bindings(), enum_save_hotkey().
-//
-// This function conditionally registers hotkeys based on which output types are currently enabled
-// in settings, keeping OBS's hotkey settings UI clean. It is called from:
-//   - addCallback() — initial registration when filter is added
-//   - filterRenamedSignal handler — re-register with updated description text
-//   - updateCallback() — re-register when settings change (output types enabled/disabled)
-void BranchOutputFilter::registerHotkey()
+static const HotkeyText HK_ENABLE_FILTER{"EnableFilter", "EnableHotkey"};
+static const HotkeyText HK_DISABLE_FILTER{"DisableFilter", "DisableHotkey"};
+static const HotkeyText HK_ENABLE_ALL_STREAMING{"EnableAllStreaming", "EnableAllStreamingHotkey"};
+static const HotkeyText HK_DISABLE_ALL_STREAMING{"DisableAllStreaming", "DisableAllStreamingHotkey"};
+static const HotkeyText HK_ENABLE_STREAMING_SERVICE{"EnableStreamingService", "EnableStreamingServiceHotkey"};
+static const HotkeyText HK_DISABLE_STREAMING_SERVICE{"DisableStreamingService", "DisableStreamingServiceHotkey"};
+static const HotkeyText HK_SPLIT_RECORDING{"SplitRecordingFile", "SplitRecordingFileHotkey"};
+static const HotkeyText HK_PAUSE_RECORDING{"PauseRecording", "PauseRecordingHotkey"};
+static const HotkeyText HK_UNPAUSE_RECORDING{"UnpauseRecording", "UnpauseRecordingHotkey"};
+static const HotkeyText HK_ADD_CHAPTER_TO_RECORDING{"AddChapterToRecordingFile", "AddChapterToRecordingFileHotkey"};
+static const HotkeyText HK_ENABLE_RECORDING{"EnableRecordingIndividual", "EnableRecordingIndividualHotkey"};
+static const HotkeyText HK_DISABLE_RECORDING{"DisableRecordingIndividual", "DisableRecordingIndividualHotkey"};
+static const HotkeyText HK_SAVE_REPLAY_BUFFER{"SaveReplayBuffer", "SaveReplayBufferHotkey"};
+static const HotkeyText HK_ENABLE_REPLAY_BUFFER{"EnableReplayBufferIndividual", "EnableReplayBufferIndividualHotkey"};
+static const HotkeyText HK_DISABLE_REPLAY_BUFFER{"DisableReplayBufferIndividual", "DisableReplayBufferIndividualHotkey"};
+
+// Caller must hold the libobs hotkey mutex.
+static void captureHotkeyBindings(obs_data_t *cache, obs_hotkey_id id, const QString &fullName)
 {
-    auto parent = obs_filter_get_parent(filterSource);
-    if (!parent) {
+    if (id == OBS_INVALID_HOTKEY_ID) {
         return;
     }
 
-    // Unregister all previous hotkeys
-    unregisterAllHotkeys();
+    OBSDataArrayAutoRelease live = obs_hotkey_save(id);
+    if (live) {
+        obs_data_set_array(cache, qUtf8Printable(fullName), live);
+    }
+}
 
-    auto uuid = obs_source_get_uuid(filterSource);
-    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+// Caller must hold the libobs hotkey mutex.
+static void
+captureHotkeyPairBindings(obs_data_t *cache, obs_hotkey_pair_id id, const QString &fullName0, const QString &fullName1)
+{
+    if (id == OBS_INVALID_HOTKEY_PAIR_ID) {
+        return;
+    }
 
-    // Register enable/disable filter hotkey (always registered)
-    auto enableFilterName = QString("EnableFilter.%1").arg(uuid);
-    auto enableFilterDescription = QString(obs_module_text("EnableHotkey")).arg(name);
-    auto disableFilterName = QString("DisableFilter.%1").arg(uuid);
-    auto disableFilterDescription = QString(obs_module_text("DisableHotkey")).arg(name);
+    // obs_hotkey_pair_save() leaves the output pointer of a side it cannot find untouched.
+    obs_data_array_t *rawLive0 = nullptr;
+    obs_data_array_t *rawLive1 = nullptr;
+    obs_hotkey_pair_save(id, &rawLive0, &rawLive1);
+    OBSDataArrayAutoRelease live0 = rawLive0;
+    OBSDataArrayAutoRelease live1 = rawLive1;
 
-    toggleEnableHotkeyPairId = obs_hotkey_pair_register_source(
-        parent, qUtf8Printable(enableFilterName), qUtf8Printable(enableFilterDescription),
-        qUtf8Printable(disableFilterName), qUtf8Printable(disableFilterDescription), onEnableFilterHotkeyPressed,
-        onDisableFilterHotkeyPressed, this, this
+    if (live0) {
+        obs_data_set_array(cache, qUtf8Printable(fullName0), live0);
+    }
+    if (live1) {
+        obs_data_set_array(cache, qUtf8Printable(fullName1), live1);
+    }
+}
+
+QString BranchOutputFilter::buildHotkeyName(const char *base) const
+{
+    return QString("%1.%2").arg(base).arg(obs_source_get_uuid(filterSource));
+}
+
+QString BranchOutputFilter::buildStreamingSlotHotkeyName(const char *base, size_t index) const
+{
+    return QString("%1%2.%3").arg(base).arg(index).arg(obs_source_get_uuid(filterSource));
+}
+
+QString BranchOutputFilter::buildHotkeyDescription(const char *textKey) const
+{
+    return QString(obs_module_text(textKey)).arg(name);
+}
+
+QString BranchOutputFilter::buildStreamingSlotHotkeyDescription(const char *textKey, size_t index) const
+{
+    return QString(obs_module_text(textKey)).arg(name).arg(index + 1);
+}
+
+// Caller must hold the libobs hotkey mutex.
+obs_hotkey_id BranchOutputFilter::registerHotkeyWithRestore(
+    obs_source_t *parent, const QString &fullName, const QString &description, obs_hotkey_func func
+)
+{
+    auto id = obs_hotkey_register_source(parent, qUtf8Printable(fullName), qUtf8Printable(description), func, this);
+    if (id == OBS_INVALID_HOTKEY_ID) {
+        return id;
+    }
+
+    // obs_hotkey_save() reports what libobs restored from the scene collection on registration.
+    OBSDataArrayAutoRelease live = obs_hotkey_save(id);
+    if (obs_data_array_count(live) > 0) {
+        return id;
+    }
+
+    OBSDataArrayAutoRelease cached = obs_data_get_array(hotkeyBindingsCache, qUtf8Printable(fullName));
+    if (obs_data_array_count(cached) > 0) {
+        obs_hotkey_load(id, cached);
+        obs_log(
+            LOG_DEBUG, "%s: Restored hotkey bindings for '%s' from cache", qUtf8Printable(name),
+            qUtf8Printable(fullName)
+        );
+    }
+
+    return id;
+}
+
+// Caller must hold the libobs hotkey mutex.
+obs_hotkey_pair_id BranchOutputFilter::registerHotkeyPairWithRestore(
+    obs_source_t *parent, const QString &fullName0, const QString &description0, const QString &fullName1,
+    const QString &description1, obs_hotkey_active_func func0, obs_hotkey_active_func func1
+)
+{
+    auto id = obs_hotkey_pair_register_source(
+        parent, qUtf8Printable(fullName0), qUtf8Printable(description0), qUtf8Printable(fullName1),
+        qUtf8Printable(description1), func0, func1, this, this
     );
+    if (id == OBS_INVALID_HOTKEY_PAIR_ID) {
+        return id;
+    }
 
-    // --- Streaming hotkeys (only when streaming is enabled) ---
-    if (isStreamingGroupEnabled(settings)) {
-        // Enable/disable all streaming hotkeys
-        auto enableAllStreamingName = QString("EnableAllStreaming.%1").arg(uuid);
-        auto enableAllStreamingDesc = QString(obs_module_text("EnableAllStreamingHotkey")).arg(name);
+    obs_data_array_t *rawLive0 = nullptr;
+    obs_data_array_t *rawLive1 = nullptr;
+    obs_hotkey_pair_save(id, &rawLive0, &rawLive1);
+    OBSDataArrayAutoRelease live0 = rawLive0;
+    OBSDataArrayAutoRelease live1 = rawLive1;
 
-        enableAllStreamingHotkeyId = obs_hotkey_register_source(
-            parent, qUtf8Printable(enableAllStreamingName), qUtf8Printable(enableAllStreamingDesc),
-            onEnableAllStreamingHotkeyPressed, this
+    OBSDataArrayAutoRelease cached0 = obs_data_get_array(hotkeyBindingsCache, qUtf8Printable(fullName0));
+    OBSDataArrayAutoRelease cached1 = obs_data_get_array(hotkeyBindingsCache, qUtf8Printable(fullName1));
+    bool restore0 = obs_data_array_count(live0) == 0 && obs_data_array_count(cached0) > 0;
+    bool restore1 = obs_data_array_count(live1) == 0 && obs_data_array_count(cached1) > 0;
+    if (!restore0 && !restore1) {
+        return id;
+    }
+
+    // obs_hotkey_pair_load() clears both sides before loading, so the side that is not restored
+    // has to be handed back its current bindings.
+    obs_data_array_t *loadData0 = restore0 ? cached0 : live0;
+    obs_data_array_t *loadData1 = restore1 ? cached1 : live1;
+    obs_hotkey_pair_load(id, loadData0, loadData1);
+
+    if (restore0) {
+        obs_log(
+            LOG_DEBUG, "%s: Restored hotkey bindings for '%s' from cache", qUtf8Printable(name),
+            qUtf8Printable(fullName0)
         );
-
-        auto disableAllStreamingName = QString("DisableAllStreaming.%1").arg(uuid);
-        auto disableAllStreamingDesc = QString(obs_module_text("DisableAllStreamingHotkey")).arg(name);
-
-        disableAllStreamingHotkeyId = obs_hotkey_register_source(
-            parent, qUtf8Printable(disableAllStreamingName), qUtf8Printable(disableAllStreamingDesc),
-            onDisableAllStreamingHotkeyPressed, this
+    }
+    if (restore1) {
+        obs_log(
+            LOG_DEBUG, "%s: Restored hotkey bindings for '%s' from cache", qUtf8Printable(name),
+            qUtf8Printable(fullName1)
         );
+    }
 
-        // Per-slot streaming enable/disable hotkeys (only for configured slots)
-        for (size_t i = 0; i < MAX_SERVICES; i++) {
-            if (!isStreamingEnabled(settings, i)) {
-                continue;
-            }
+    return id;
+}
 
-            auto enableName = QString("EnableStreamingService%1.%2").arg(i).arg(uuid);
-            auto enableDesc = QString(obs_module_text("EnableStreamingServiceHotkey")).arg(name).arg(i + 1);
-            auto disableName = QString("DisableStreamingService%1.%2").arg(i).arg(uuid);
-            auto disableDesc = QString(obs_module_text("DisableStreamingServiceHotkey")).arg(name).arg(i + 1);
+// Caller must hold the libobs hotkey mutex.
+void BranchOutputFilter::unregisterHotkeyWithCapture(obs_hotkey_id &id, const QString &fullName)
+{
+    if (id == OBS_INVALID_HOTKEY_ID) {
+        return;
+    }
 
-            toggleStreamingServiceHotkeyPairIds[i] = obs_hotkey_pair_register_source(
-                parent, qUtf8Printable(enableName), qUtf8Printable(enableDesc), qUtf8Printable(disableName),
-                qUtf8Printable(disableDesc), onEnableStreamingServiceHotkeyPressed,
-                onDisableStreamingServiceHotkeyPressed, this, this
-            );
+    captureHotkeyBindings(hotkeyBindingsCache, id, fullName);
+    obs_hotkey_unregister(id);
+    id = OBS_INVALID_HOTKEY_ID;
+}
+
+// Caller must hold the libobs hotkey mutex.
+void BranchOutputFilter::unregisterHotkeyPairWithCapture(
+    obs_hotkey_pair_id &id, const QString &fullName0, const QString &fullName1
+)
+{
+    if (id == OBS_INVALID_HOTKEY_PAIR_ID) {
+        return;
+    }
+
+    captureHotkeyPairBindings(hotkeyBindingsCache, id, fullName0, fullName1);
+    obs_hotkey_pair_unregister(id);
+    id = OBS_INVALID_HOTKEY_PAIR_ID;
+}
+
+// Caller must hold the libobs hotkey mutex.
+void BranchOutputFilter::syncFilterToggleHotkeys(obs_source_t *parent, bool desired)
+{
+    bool registered = toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID;
+    if (desired == registered) {
+        return;
+    }
+
+    auto enableName = buildHotkeyName(HK_ENABLE_FILTER.base);
+    auto disableName = buildHotkeyName(HK_DISABLE_FILTER.base);
+
+    if (desired) {
+        toggleEnableHotkeyPairId = registerHotkeyPairWithRestore(
+            parent, enableName, buildHotkeyDescription(HK_ENABLE_FILTER.textKey), disableName,
+            buildHotkeyDescription(HK_DISABLE_FILTER.textKey), onEnableFilterHotkeyPressed, onDisableFilterHotkeyPressed
+        );
+        if (toggleEnableHotkeyPairId == OBS_INVALID_HOTKEY_PAIR_ID) {
+            obs_log(LOG_WARNING, "%s: Filter toggle hotkey registration failed", qUtf8Printable(name));
+            return;
+        }
+    } else {
+        unregisterHotkeyPairWithCapture(toggleEnableHotkeyPairId, enableName, disableName);
+    }
+
+    obs_log(LOG_DEBUG, "%s: Filter toggle hotkeys %s", qUtf8Printable(name), desired ? "registered" : "unregistered");
+}
+
+// Caller must hold the libobs hotkey mutex.
+void BranchOutputFilter::syncStreamingAllHotkeys(obs_source_t *parent, bool desired)
+{
+    bool registered = enableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID;
+    if (desired == registered) {
+        return;
+    }
+
+    auto enableName = buildHotkeyName(HK_ENABLE_ALL_STREAMING.base);
+    auto disableName = buildHotkeyName(HK_DISABLE_ALL_STREAMING.base);
+
+    if (desired) {
+        enableAllStreamingHotkeyId = registerHotkeyWithRestore(
+            parent, enableName, buildHotkeyDescription(HK_ENABLE_ALL_STREAMING.textKey),
+            onEnableAllStreamingHotkeyPressed
+        );
+        if (enableAllStreamingHotkeyId == OBS_INVALID_HOTKEY_ID) {
+            obs_log(LOG_WARNING, "%s: Streaming hotkey registration failed", qUtf8Printable(name));
+            return;
+        }
+        disableAllStreamingHotkeyId = registerHotkeyWithRestore(
+            parent, disableName, buildHotkeyDescription(HK_DISABLE_ALL_STREAMING.textKey),
+            onDisableAllStreamingHotkeyPressed
+        );
+    } else {
+        unregisterHotkeyWithCapture(enableAllStreamingHotkeyId, enableName);
+        unregisterHotkeyWithCapture(disableAllStreamingHotkeyId, disableName);
+    }
+
+    obs_log(LOG_DEBUG, "%s: Streaming hotkeys %s", qUtf8Printable(name), desired ? "registered" : "unregistered");
+}
+
+// Caller must hold the libobs hotkey mutex.
+void BranchOutputFilter::syncStreamingSlotHotkeys(obs_source_t *parent, size_t index, bool desired)
+{
+    if (index >= MAX_SERVICES) {
+        return;
+    }
+
+    bool registered = toggleStreamingServiceHotkeyPairIds[index] != OBS_INVALID_HOTKEY_PAIR_ID;
+    if (desired == registered) {
+        return;
+    }
+
+    auto enableName = buildStreamingSlotHotkeyName(HK_ENABLE_STREAMING_SERVICE.base, index);
+    auto disableName = buildStreamingSlotHotkeyName(HK_DISABLE_STREAMING_SERVICE.base, index);
+
+    if (desired) {
+        toggleStreamingServiceHotkeyPairIds[index] = registerHotkeyPairWithRestore(
+            parent, enableName, buildStreamingSlotHotkeyDescription(HK_ENABLE_STREAMING_SERVICE.textKey, index),
+            disableName, buildStreamingSlotHotkeyDescription(HK_DISABLE_STREAMING_SERVICE.textKey, index),
+            onEnableStreamingServiceHotkeyPressed, onDisableStreamingServiceHotkeyPressed
+        );
+        if (toggleStreamingServiceHotkeyPairIds[index] == OBS_INVALID_HOTKEY_PAIR_ID) {
+            obs_log(LOG_WARNING, "%s: Streaming slot %zu hotkey registration failed", qUtf8Printable(name), index);
+            return;
+        }
+    } else {
+        unregisterHotkeyPairWithCapture(toggleStreamingServiceHotkeyPairIds[index], enableName, disableName);
+    }
+
+    obs_log(
+        LOG_DEBUG, "%s: Streaming slot %zu hotkeys %s", qUtf8Printable(name), index,
+        desired ? "registered" : "unregistered"
+    );
+}
+
+// Caller must hold the libobs hotkey mutex.
+void BranchOutputFilter::syncRecordingHotkeys(obs_source_t *parent, bool desired)
+{
+    bool registered = splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID;
+    if (desired == registered) {
+        return;
+    }
+
+    auto splitName = buildHotkeyName(HK_SPLIT_RECORDING.base);
+    auto pauseName = buildHotkeyName(HK_PAUSE_RECORDING.base);
+    auto unpauseName = buildHotkeyName(HK_UNPAUSE_RECORDING.base);
+    auto addChapterName = buildHotkeyName(HK_ADD_CHAPTER_TO_RECORDING.base);
+    auto enableName = buildHotkeyName(HK_ENABLE_RECORDING.base);
+    auto disableName = buildHotkeyName(HK_DISABLE_RECORDING.base);
+
+    if (desired) {
+        splitRecordingHotkeyId = registerHotkeyWithRestore(
+            parent, splitName, buildHotkeyDescription(HK_SPLIT_RECORDING.textKey), onSplitRecordingFileHotkeyPressed
+        );
+        if (splitRecordingHotkeyId == OBS_INVALID_HOTKEY_ID) {
+            obs_log(LOG_WARNING, "%s: Recording hotkey registration failed", qUtf8Printable(name));
+            return;
+        }
+        togglePauseRecordingHotkeyPairId = registerHotkeyPairWithRestore(
+            parent, pauseName, buildHotkeyDescription(HK_PAUSE_RECORDING.textKey), unpauseName,
+            buildHotkeyDescription(HK_UNPAUSE_RECORDING.textKey), onPauseRecordingHotkeyPressed,
+            onUnpauseRecordingHotkeyPressed
+        );
+        addChapterToRecordingHotkeyId = registerHotkeyWithRestore(
+            parent, addChapterName, buildHotkeyDescription(HK_ADD_CHAPTER_TO_RECORDING.textKey),
+            onAddChapterToRecordingFileHotkeyPressed
+        );
+        toggleRecordingHotkeyPairId = registerHotkeyPairWithRestore(
+            parent, enableName, buildHotkeyDescription(HK_ENABLE_RECORDING.textKey), disableName,
+            buildHotkeyDescription(HK_DISABLE_RECORDING.textKey), onEnableRecordingHotkeyPressed,
+            onDisableRecordingHotkeyPressed
+        );
+    } else {
+        unregisterHotkeyWithCapture(splitRecordingHotkeyId, splitName);
+        unregisterHotkeyPairWithCapture(togglePauseRecordingHotkeyPairId, pauseName, unpauseName);
+        unregisterHotkeyWithCapture(addChapterToRecordingHotkeyId, addChapterName);
+        unregisterHotkeyPairWithCapture(toggleRecordingHotkeyPairId, enableName, disableName);
+    }
+
+    obs_log(LOG_DEBUG, "%s: Recording hotkeys %s", qUtf8Printable(name), desired ? "registered" : "unregistered");
+}
+
+// Caller must hold the libobs hotkey mutex.
+void BranchOutputFilter::syncReplayBufferHotkeys(obs_source_t *parent, bool desired)
+{
+    bool registered = saveReplayBufferHotkeyId != OBS_INVALID_HOTKEY_ID;
+    if (desired == registered) {
+        return;
+    }
+
+    auto saveName = buildHotkeyName(HK_SAVE_REPLAY_BUFFER.base);
+    auto enableName = buildHotkeyName(HK_ENABLE_REPLAY_BUFFER.base);
+    auto disableName = buildHotkeyName(HK_DISABLE_REPLAY_BUFFER.base);
+
+    if (desired) {
+        saveReplayBufferHotkeyId = registerHotkeyWithRestore(
+            parent, saveName, buildHotkeyDescription(HK_SAVE_REPLAY_BUFFER.textKey), onSaveReplayBufferHotkeyPressed
+        );
+        if (saveReplayBufferHotkeyId == OBS_INVALID_HOTKEY_ID) {
+            obs_log(LOG_WARNING, "%s: Replay buffer hotkey registration failed", qUtf8Printable(name));
+            return;
+        }
+        toggleReplayBufferHotkeyPairId = registerHotkeyPairWithRestore(
+            parent, enableName, buildHotkeyDescription(HK_ENABLE_REPLAY_BUFFER.textKey), disableName,
+            buildHotkeyDescription(HK_DISABLE_REPLAY_BUFFER.textKey), onEnableReplayBufferHotkeyPressed,
+            onDisableReplayBufferHotkeyPressed
+        );
+    } else {
+        unregisterHotkeyWithCapture(saveReplayBufferHotkeyId, saveName);
+        unregisterHotkeyPairWithCapture(toggleReplayBufferHotkeyPairId, enableName, disableName);
+    }
+
+    obs_log(LOG_DEBUG, "%s: Replay buffer hotkeys %s", qUtf8Printable(name), desired ? "registered" : "unregistered");
+}
+
+// Caller must hold the libobs hotkey mutex.
+// registerAll ignores the settings and treats every group as desired.
+void BranchOutputFilter::syncHotkeyGroups(obs_source_t *parent, obs_data_t *settings, bool registerAll)
+{
+    syncFilterToggleHotkeys(parent, true);
+
+    bool streaming = registerAll || isStreamingGroupEnabled(settings);
+    syncStreamingAllHotkeys(parent, streaming);
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        syncStreamingSlotHotkeys(parent, i, registerAll || (streaming && isStreamingEnabled(settings, i)));
+    }
+
+    syncRecordingHotkeys(parent, registerAll || isRecordingEnabled(settings));
+    syncReplayBufferHotkeys(parent, registerAll || isReplayBufferEnabled(settings));
+}
+
+// Caller must hold the libobs hotkey mutex.
+void BranchOutputFilter::captureRegisteredHotkeyBindings()
+{
+    captureHotkeyPairBindings(
+        hotkeyBindingsCache, toggleEnableHotkeyPairId, buildHotkeyName(HK_ENABLE_FILTER.base),
+        buildHotkeyName(HK_DISABLE_FILTER.base)
+    );
+    captureHotkeyBindings(
+        hotkeyBindingsCache, enableAllStreamingHotkeyId, buildHotkeyName(HK_ENABLE_ALL_STREAMING.base)
+    );
+    captureHotkeyBindings(
+        hotkeyBindingsCache, disableAllStreamingHotkeyId, buildHotkeyName(HK_DISABLE_ALL_STREAMING.base)
+    );
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        captureHotkeyPairBindings(
+            hotkeyBindingsCache, toggleStreamingServiceHotkeyPairIds[i],
+            buildStreamingSlotHotkeyName(HK_ENABLE_STREAMING_SERVICE.base, i),
+            buildStreamingSlotHotkeyName(HK_DISABLE_STREAMING_SERVICE.base, i)
+        );
+    }
+    captureHotkeyBindings(hotkeyBindingsCache, splitRecordingHotkeyId, buildHotkeyName(HK_SPLIT_RECORDING.base));
+    captureHotkeyPairBindings(
+        hotkeyBindingsCache, togglePauseRecordingHotkeyPairId, buildHotkeyName(HK_PAUSE_RECORDING.base),
+        buildHotkeyName(HK_UNPAUSE_RECORDING.base)
+    );
+    captureHotkeyBindings(
+        hotkeyBindingsCache, addChapterToRecordingHotkeyId, buildHotkeyName(HK_ADD_CHAPTER_TO_RECORDING.base)
+    );
+    captureHotkeyPairBindings(
+        hotkeyBindingsCache, toggleRecordingHotkeyPairId, buildHotkeyName(HK_ENABLE_RECORDING.base),
+        buildHotkeyName(HK_DISABLE_RECORDING.base)
+    );
+    captureHotkeyBindings(hotkeyBindingsCache, saveReplayBufferHotkeyId, buildHotkeyName(HK_SAVE_REPLAY_BUFFER.base));
+    captureHotkeyPairBindings(
+        hotkeyBindingsCache, toggleReplayBufferHotkeyPairId, buildHotkeyName(HK_ENABLE_REPLAY_BUFFER.base),
+        buildHotkeyName(HK_DISABLE_REPLAY_BUFFER.base)
+    );
+}
+
+// Caller must hold the libobs hotkey mutex.
+// Entries of another filter appear when a filter is duplicated together with its settings.
+// An empty binding array and a missing key mean the same thing on restore.
+void BranchOutputFilter::pruneHotkeyBindingsCache()
+{
+    auto suffix = QString(".%1").arg(obs_source_get_uuid(filterSource));
+    QStringList staleKeys;
+
+    for (auto item = obs_data_first(hotkeyBindingsCache); item; obs_data_item_next(&item)) {
+        auto key = QString(obs_data_item_get_name(item));
+        if (!key.endsWith(suffix) || obs_data_item_gettype(item) != OBS_DATA_ARRAY) {
+            staleKeys.append(key);
+            continue;
+        }
+
+        OBSDataArrayAutoRelease bindings = obs_data_item_get_array(item);
+        if (obs_data_array_count(bindings) == 0) {
+            staleKeys.append(key);
         }
     }
 
-    // --- Recording hotkeys (only when recording is enabled) ---
-    if (isRecordingEnabled(settings)) {
-        auto splitName = QString("SplitRecordingFile.%1").arg(uuid);
-        auto splitDescription = QString(obs_module_text("SplitRecordingFileHotkey")).arg(name);
+    for (const auto &key : staleKeys) {
+        obs_data_erase(hotkeyBindingsCache, qUtf8Printable(key));
+    }
+}
 
-        splitRecordingHotkeyId = obs_hotkey_register_source(
-            parent, qUtf8Printable(splitName), qUtf8Printable(splitDescription), onSplitRecordingFileHotkeyPressed, this
-        );
-
-        auto pauseRecordingName = QString("PauseRecording.%1").arg(uuid);
-        auto pauseRecordingDescription = QString(obs_module_text("PauseRecordingHotkey")).arg(name);
-        auto unpauseRecordingName = QString("UnpauseRecording.%1").arg(uuid);
-        auto unpauseRecordingDescription = QString(obs_module_text("UnpauseRecordingHotkey")).arg(name);
-
-        togglePauseRecordingHotkeyPairId = obs_hotkey_pair_register_source(
-            parent, qUtf8Printable(pauseRecordingName), qUtf8Printable(pauseRecordingDescription),
-            qUtf8Printable(unpauseRecordingName), qUtf8Printable(unpauseRecordingDescription),
-            onPauseRecordingHotkeyPressed, onUnpauseRecordingHotkeyPressed, this, this
-        );
-
-        auto addChapterName = QString("AddChapterToRecordingFile.%1").arg(uuid);
-        auto addChapterDescription = QString(obs_module_text("AddChapterToRecordingFileHotkey")).arg(name);
-        addChapterToRecordingHotkeyId = obs_hotkey_register_source(
-            parent, qUtf8Printable(addChapterName), qUtf8Printable(addChapterDescription),
-            onAddChapterToRecordingFileHotkeyPressed, this
-        );
-
-        // Enable/disable recording hotkey
-        auto enableRecName = QString("EnableRecordingIndividual.%1").arg(uuid);
-        auto enableRecDesc = QString(obs_module_text("EnableRecordingIndividualHotkey")).arg(name);
-        auto disableRecName = QString("DisableRecordingIndividual.%1").arg(uuid);
-        auto disableRecDesc = QString(obs_module_text("DisableRecordingIndividualHotkey")).arg(name);
-
-        toggleRecordingHotkeyPairId = obs_hotkey_pair_register_source(
-            parent, qUtf8Printable(enableRecName), qUtf8Printable(enableRecDesc), qUtf8Printable(disableRecName),
-            qUtf8Printable(disableRecDesc), onEnableRecordingHotkeyPressed, onDisableRecordingHotkeyPressed, this, this
-        );
+// OBS replaces the parent source's hotkey_data with the bindings of the hotkeys that are
+// registered at save time, so bindings of hotkeys this filter unregisters would be lost.
+// Every hotkey call and every cache access runs inside obs_hotkey_update_atomic(): the description
+// setters take no lock of their own, and the callers run on several threads.
+void BranchOutputFilter::syncHotkeys(obs_data_t *settings)
+{
+    auto parent = obs_filter_get_parent(filterSource);
+    // sourceIsPrivate() enumerates sources and must not run under the hotkey mutex.
+    // Registering against a private parent is not allowed: obs_hotkey_pair_register_source()
+    // accepts one while obs_hotkey_register_source() rejects it, which would leave a group
+    // half registered.
+    if (!parent || sourceIsPrivate(parent)) {
+        return;
     }
 
-    // --- Replay buffer hotkeys (only when replay buffer is enabled) ---
-    if (isReplayBufferEnabled(settings)) {
-        auto saveReplayName = QString("SaveReplayBuffer.%1").arg(uuid);
-        auto saveReplayDescription = QString(obs_module_text("SaveReplayBufferHotkey")).arg(name);
-        saveReplayBufferHotkeyId = obs_hotkey_register_source(
-            parent, qUtf8Printable(saveReplayName), qUtf8Printable(saveReplayDescription),
-            onSaveReplayBufferHotkeyPressed, this
-        );
+    struct SyncContext {
+        BranchOutputFilter *filter;
+        obs_source_t *parent;
+        obs_data_t *settings;
+    };
+    SyncContext context{this, parent, settings};
 
-        // Enable/disable replay buffer hotkey
-        auto enableReplayName = QString("EnableReplayBufferIndividual.%1").arg(uuid);
-        auto enableReplayDesc = QString(obs_module_text("EnableReplayBufferIndividualHotkey")).arg(name);
-        auto disableReplayName = QString("DisableReplayBufferIndividual.%1").arg(uuid);
-        auto disableReplayDesc = QString(obs_module_text("DisableReplayBufferIndividualHotkey")).arg(name);
+    obs_hotkey_update_atomic(
+        [](void *param) {
+            auto ctx = static_cast<SyncContext *>(param);
+            auto filter = ctx->filter;
 
-        toggleReplayBufferHotkeyPairId = obs_hotkey_pair_register_source(
-            parent, qUtf8Printable(enableReplayName), qUtf8Printable(enableReplayDesc),
-            qUtf8Printable(disableReplayName), qUtf8Printable(disableReplayDesc), onEnableReplayBufferHotkeyPressed,
-            onDisableReplayBufferHotkeyPressed, this, this
-        );
-    }
+            if (filter->hotkeyHarvestPending) {
+                filter->syncHotkeyGroups(ctx->parent, ctx->settings, true);
+                filter->hotkeyHarvestPending = false;
+            }
+
+            filter->syncHotkeyGroups(ctx->parent, ctx->settings, false);
+        },
+        &context
+    );
+}
+
+void BranchOutputFilter::unregisterAllHotkeys()
+{
+    obs_hotkey_update_atomic(
+        [](void *param) {
+            auto filter = static_cast<BranchOutputFilter *>(param);
+
+            filter->syncFilterToggleHotkeys(nullptr, false);
+            filter->syncStreamingAllHotkeys(nullptr, false);
+            for (size_t i = 0; i < MAX_SERVICES; i++) {
+                filter->syncStreamingSlotHotkeys(nullptr, i, false);
+            }
+            filter->syncRecordingHotkeys(nullptr, false);
+            filter->syncReplayBufferHotkeys(nullptr, false);
+        },
+        this
+    );
+}
+
+// Renaming only refreshes the descriptions: unregistering and re-registering would be visible in
+// the OBS hotkey settings UI without changing anything the user configured.
+void BranchOutputFilter::updateHotkeyDescriptions(const QString &newName)
+{
+    struct RenameContext {
+        BranchOutputFilter *filter;
+        const QString &newName;
+    };
+    RenameContext context{this, newName};
+
+    obs_hotkey_update_atomic(
+        [](void *param) {
+            auto ctx = static_cast<RenameContext *>(param);
+            auto filter = ctx->filter;
+            filter->name = ctx->newName;
+
+            auto setSingle = [filter](obs_hotkey_id id, const char *textKey) {
+                if (id != OBS_INVALID_HOTKEY_ID) {
+                    obs_hotkey_set_description(id, qUtf8Printable(filter->buildHotkeyDescription(textKey)));
+                }
+            };
+            auto setPair = [filter](obs_hotkey_pair_id id, const char *textKey0, const char *textKey1) {
+                if (id != OBS_INVALID_HOTKEY_PAIR_ID) {
+                    obs_hotkey_pair_set_descriptions(
+                        id, qUtf8Printable(filter->buildHotkeyDescription(textKey0)),
+                        qUtf8Printable(filter->buildHotkeyDescription(textKey1))
+                    );
+                }
+            };
+
+            setPair(filter->toggleEnableHotkeyPairId, HK_ENABLE_FILTER.textKey, HK_DISABLE_FILTER.textKey);
+            setSingle(filter->enableAllStreamingHotkeyId, HK_ENABLE_ALL_STREAMING.textKey);
+            setSingle(filter->disableAllStreamingHotkeyId, HK_DISABLE_ALL_STREAMING.textKey);
+            for (size_t i = 0; i < MAX_SERVICES; i++) {
+                auto id = filter->toggleStreamingServiceHotkeyPairIds[i];
+                if (id == OBS_INVALID_HOTKEY_PAIR_ID) {
+                    continue;
+                }
+                auto enableDesc = filter->buildStreamingSlotHotkeyDescription(HK_ENABLE_STREAMING_SERVICE.textKey, i);
+                auto disableDesc = filter->buildStreamingSlotHotkeyDescription(HK_DISABLE_STREAMING_SERVICE.textKey, i);
+                obs_hotkey_pair_set_descriptions(id, qUtf8Printable(enableDesc), qUtf8Printable(disableDesc));
+            }
+            setSingle(filter->splitRecordingHotkeyId, HK_SPLIT_RECORDING.textKey);
+            setPair(filter->togglePauseRecordingHotkeyPairId, HK_PAUSE_RECORDING.textKey, HK_UNPAUSE_RECORDING.textKey);
+            setSingle(filter->addChapterToRecordingHotkeyId, HK_ADD_CHAPTER_TO_RECORDING.textKey);
+            setPair(filter->toggleRecordingHotkeyPairId, HK_ENABLE_RECORDING.textKey, HK_DISABLE_RECORDING.textKey);
+            setSingle(filter->saveReplayBufferHotkeyId, HK_SAVE_REPLAY_BUFFER.textKey);
+            setPair(
+                filter->toggleReplayBufferHotkeyPairId, HK_ENABLE_REPLAY_BUFFER.textKey,
+                HK_DISABLE_REPLAY_BUFFER.textKey
+            );
+        },
+        &context
+    );
+}
+
+void BranchOutputFilter::snapshotHotkeyBindings(obs_data_t *settings)
+{
+    struct SnapshotContext {
+        BranchOutputFilter *filter;
+        obs_data_t *settings;
+    };
+    SnapshotContext context{this, settings};
+
+    obs_hotkey_update_atomic(
+        [](void *param) {
+            auto ctx = static_cast<SnapshotContext *>(param);
+            auto filter = ctx->filter;
+
+            filter->captureRegisteredHotkeyBindings();
+            filter->pruneHotkeyBindingsCache();
+
+            // obs_data_set_obj() shares the object, so the settings must not alias the cache.
+            OBSDataAutoRelease snapshot = obs_data_create();
+            obs_data_apply(snapshot, filter->hotkeyBindingsCache);
+            // Written even when empty: hotkeyHarvestPending is decided by whether this key exists.
+            obs_data_set_obj(ctx->settings, HOTKEY_BINDINGS_KEY, snapshot);
+        },
+        &context
+    );
 }
 
 // Caller must hold outputMutex.
@@ -825,6 +1225,8 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
         obs_data_erase(recently_settings, "custom_height");
         obs_data_erase(recently_settings, "downscale_filter");
         obs_data_erase(recently_settings, "fps_divider");
+        // Hotkey bindings are keyed by the owning filter's UUID and must not be inherited.
+        obs_data_erase(recently_settings, HOTKEY_BINDINGS_KEY);
         obs_data_apply(settings, recently_settings);
     }
 
@@ -952,6 +1354,8 @@ void BranchOutputFilter::saveCallback(obs_data_t *settings)
     }
     obs_data_set_bool(settings, "recording_output_enabled", isRecordingUserEnabled());
     obs_data_set_bool(settings, "replay_buffer_output_enabled", isReplayBufferUserEnabled());
+
+    snapshotHotkeyBindings(settings);
 }
 
 void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_source_t *parent)
@@ -1608,15 +2012,14 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
         QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
     }
 
-    // Register hotkeys
-    registerHotkey();
+    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+    syncHotkeys(settings);
     // Track filter renames for name and hotkey settings
     filterRenamedSignal.Connect(
         obs_source_get_signal_handler(filterSource), "rename",
         [](void *_data, calldata_t *cd) {
             auto _filter = static_cast<BranchOutputFilter *>(_data);
-            _filter->name = calldata_string(cd, "new_name");
-            _filter->registerHotkey();
+            _filter->updateHotkeyDescriptions(calldata_string(cd, "new_name"));
         },
         this
     );
@@ -1649,8 +2052,8 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
     OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
     obs_data_save_json_safe(settings, path, "tmp", "bak");
 
-    // Re-register hotkeys (they depend on which outputs are enabled in settings).
-    registerHotkey();
+    // The registered hotkey set depends on which outputs are enabled in settings.
+    syncHotkeys(settings);
 
     // Update status dock
     if (statusDock) {

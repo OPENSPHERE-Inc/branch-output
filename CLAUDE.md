@@ -174,7 +174,7 @@ The main class is `BranchOutputFilter` (declared in `plugin-main.hpp`), which is
 | **Audio** | Manages up to `MAX_AUDIO_MIXES` audio contexts via `AudioCapture` class. Supports filter audio, per-source audio, and audio track selection. |
 | **Video** | Creates an OBS view (`obs_view_t`) with a private video output for per-filter encoding and resolution control. Supports **filter input mode** via `FilterVideoCapture` class, which captures the filter's input using GPU `gs_texrender` and provides a private proxy source for the `obs_view`, avoiding CPU roundtrips and enabling GPU encoder compatibility (NVENC, QSV, AMF, etc.). |
 | **UI** | Properties panel built via OBS properties API (`plugin-ui.cpp`). Status dock (`BranchOutputStatusDock`) shows live statistics for all filters, including replay buffer save buttons. |
-| **Hotkeys** | Registers hotkey pairs for enable/disable, split recording, pause/unpause, chapter markers, save replay buffer, and per-output enable/disable (streaming per-slot, recording, replay buffer). |
+| **Hotkeys** | Registers hotkey pairs for enable/disable, split recording, pause/unpause, chapter markers, save replay buffer, and per-output enable/disable (streaming per-slot, recording, replay buffer). `syncHotkeys()` registers/unregisters only the difference between the desired set (derived from settings) and the currently registered set. Bindings are captured into `hotkeyBindingsCache` before unregistering and persisted to the `hotkey_bindings` settings key; on registration they are restored from the cache when libobs restored nothing. Renaming updates descriptions only. |
 | **Interlock** | Can link filter activation to OBS streaming, recording, virtual camera, replay buffer, or individual (per-output-type) states. The "Individual" mode maps each Branch Output type to its OBS counterpart independently. |
 | **Individual Start/Stop** | Allows streaming, recording, and replay buffer to be started/stopped independently via `ensureInfrastructure()` / `releaseInfrastructureIfIdle()` to separate shared resource lifecycle from individual output lifecycle. Per-output user intent is tracked via atomic flags (`streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`). |
 | **Cropping** | Supports relative (margin) and absolute (region) video cropping with `CropRect` struct. Live preview via `CropRectPreviewRenderer`. |
@@ -277,6 +277,10 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - Verify that per-output hotkeys toggle the correct output and that the Status Dock checkboxes sync immediately.
 - Verify that video cropping (both relative and absolute modes) produces the correct output resolution and content.
 - Verify that the crop preview rectangle displays correctly and is hidden when the properties dialog closes.
+- Verify that turning an output type off, applying, and turning it back on keeps its hotkey assignments, and that they survive an OBS restart.
+- Verify that renaming the filter keeps its hotkey assignments and renders the new name in the hotkey descriptions.
+- Verify that deleting the filter and undoing the deletion restores its hotkey assignments.
+- Verify that hotkey assignments are restored in normal mode after OBS has been started and shut down in safe mode.
 
 ---
 
@@ -361,6 +365,13 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - Supports individual start/stop via `startRecordingIndividual()` / `stopRecordingIndividual()`.
 - Proc handlers for file name format override are registered here (`override_recording_file_name_format`, `clear_recording_file_name_format_override`).
 
+### Modifying Hotkeys
+
+- Add the new hotkey's base name and locale key as a `HotkeyText` constant at the top of `plugin-main.cpp`, and its ID member to `BranchOutputFilter` (`plugin-main.hpp`).
+- Wire it into the sync function of the group it belongs to (`syncFilterToggleHotkeys()` / `syncStreamingAllHotkeys()` / `syncStreamingSlotHotkeys()` / `syncRecordingHotkeys()` / `syncReplayBufferHotkeys()`), plus `captureRegisteredHotkeyBindings()` and `updateHotkeyDescriptions()`.
+- A group is registered and unregistered as a unit, and its registration state is decided by one representative ID. Register the representative first and abort the group when it fails.
+- When adding a new group, wire it into both `syncHotkeyGroups()` and `unregisterAllHotkeys()`.
+
 ---
 
 ## Important Warnings
@@ -372,6 +383,10 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - **Memory management** — Use OBS RAII wrappers. Raw `bfree()` / `obs_data_release()` calls are error-prone.
 - **`.gitignore` uses allowlist pattern** — New top-level files/directories must be explicitly un-ignored with `!` prefix.
 - **FilterVideoCapture proxy source** — The proxy source type (`osi_branch_output_proxy`) must be registered at module load via `FilterVideoCapture::createProxySourceInfo()`. The proxy source is private and intentionally not visible in the OBS frontend.
+- **Hotkey name strings** (`EnableFilter.<uuid>` etc.) must not be changed. Existing user assignments are matched by name.
+- **Never call a libobs hotkey API (including `obs_hotkey_update_atomic()`) while holding `pluginMutex` / `outputMutex` / `audioMutex`.** libobs invokes hotkey callbacks while holding the hotkey mutex, and some of them take `outputMutex`. Lock order: hotkey mutex → `pluginMutex` → `outputMutex` → `audioMutex`.
+- **Hotkey register/unregister/save/load/description updates and every access to `hotkeyBindingsCache` must run inside an `obs_hotkey_update_atomic()` callback.** `obs_hotkey_set_description()` and `obs_hotkey_pair_set_descriptions()` take no lock of their own.
+- **`syncHotkeys()` registers hotkeys only against a public parent source.** Do not remove its `sourceIsPrivate()` early return: `obs_hotkey_register_source()` rejects a private parent while `obs_hotkey_pair_register_source()` accepts one, which would break the representative-ID registration check.
 
 ---
 
