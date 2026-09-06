@@ -204,13 +204,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     );
 
     loadSettings();
-    loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
-    loadHotkey(disableAllHotkey, "DisableAllBranchOutputsHotkey");
-    loadHotkey(splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
-    loadHotkey(pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
-    loadHotkey(unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
-    loadHotkey(addChapterToRecordingAllHotkey, "AddChapterToRecordingAllBranchOutputsHotkey");
-    loadHotkey(saveReplayBufferAllHotkey, "SaveReplayBufferAllBranchOutputsHotkey");
+    loadHotkeys();
 
     sort();
 
@@ -241,6 +235,23 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
     obs_hotkey_unregister(saveReplayBufferAllHotkey);
 
     obs_log(LOG_DEBUG, "BranchOutputStatusDock destroyed");
+}
+
+void BranchOutputStatusDock::loadHotkeys()
+{
+    obs_hotkey_update_atomic(
+        [](void *context) {
+            auto *dock = static_cast<BranchOutputStatusDock *>(context);
+            loadHotkey(dock->enableAllHotkey, "EnableAllBranchOutputsHotkey");
+            loadHotkey(dock->disableAllHotkey, "DisableAllBranchOutputsHotkey");
+            loadHotkey(dock->splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->addChapterToRecordingAllHotkey, "AddChapterToRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->saveReplayBufferAllHotkey, "SaveReplayBufferAllBranchOutputsHotkey");
+        },
+        this
+    );
 }
 
 void BranchOutputStatusDock::loadSettings()
@@ -341,6 +352,8 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
         dock->saveSettings();
         break;
     case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
+        dock->loadHotkeys();
+
         // Defer to ensure Qt event loop has finished processing the profile change
         QMetaObject::invokeMethod(
             dock,
