@@ -28,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <atomic>
 
 #include <QObject>
+#include <QSet>
 
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
@@ -166,6 +167,10 @@ class BranchOutputFilter : public QObject {
     // OBS drops the bindings of hotkeys that are not registered at save time, so they are kept
     // here and persisted under HOTKEY_BINDINGS_KEY instead.
     OBSDataAutoRelease hotkeyBindingsCache;
+    // Full names this instance captured on its own unregister. libobs restores a hotkey from the
+    // parent's saved hotkey data on registration, and that data lags behind these entries until
+    // the parent is saved.
+    QSet<QString> hotkeyCacheOwnedNames;
     // Set when the settings carried no HOTKEY_BINDINGS_KEY: the first sync registers every group
     // once so that bindings still held by the scene collection are harvested into the cache.
     bool hotkeyHarvestPending;

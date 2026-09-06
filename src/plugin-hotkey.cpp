@@ -113,19 +113,24 @@ obs_hotkey_id BranchOutputFilter::registerHotkeyWithRestore(
     }
 
     // obs_hotkey_save() reports what libobs restored from the scene collection on registration.
+    // The parent's saved data is only refreshed when the parent is saved, so it can be older
+    // than the cache.
+    bool owned = hotkeyCacheOwnedNames.contains(fullName);
     OBSDataArrayAutoRelease live = obs_hotkey_save(id);
-    if (obs_data_array_count(live) > 0) {
+    if (!owned && obs_data_array_count(live) > 0) {
         return id;
     }
 
     OBSDataArrayAutoRelease cached = obs_data_get_array(hotkeyBindingsCache, qUtf8Printable(fullName));
-    if (obs_data_array_count(cached) > 0) {
-        obs_hotkey_load(id, cached);
-        obs_log(
-            LOG_DEBUG, "%s: Restored hotkey bindings for '%s' from cache", qUtf8Printable(name),
-            qUtf8Printable(fullName)
-        );
+    if (!owned && obs_data_array_count(cached) == 0) {
+        return id;
     }
+
+    // An owned name loads even an empty cache, which clears the bindings the user unassigned.
+    obs_hotkey_load(id, cached);
+    obs_log(
+        LOG_DEBUG, "%s: Restored hotkey bindings for '%s' from cache", qUtf8Printable(name), qUtf8Printable(fullName)
+    );
 
     return id;
 }
@@ -152,8 +157,19 @@ obs_hotkey_pair_id BranchOutputFilter::registerHotkeyPairWithRestore(
 
     OBSDataArrayAutoRelease cached0 = obs_data_get_array(hotkeyBindingsCache, qUtf8Printable(fullName0));
     OBSDataArrayAutoRelease cached1 = obs_data_get_array(hotkeyBindingsCache, qUtf8Printable(fullName1));
-    bool restore0 = obs_data_array_count(live0) == 0 && obs_data_array_count(cached0) > 0;
-    bool restore1 = obs_data_array_count(live1) == 0 && obs_data_array_count(cached1) > 0;
+    // obs_hotkey_pair_load() ignores the call when both arrays are null.
+    if (!cached0) {
+        cached0 = obs_data_array_create();
+    }
+    if (!cached1) {
+        cached1 = obs_data_array_create();
+    }
+
+    // An owned name restores even an empty cache, which clears the bindings the user unassigned.
+    bool restore0 = hotkeyCacheOwnedNames.contains(fullName0) ||
+                    (obs_data_array_count(live0) == 0 && obs_data_array_count(cached0) > 0);
+    bool restore1 = hotkeyCacheOwnedNames.contains(fullName1) ||
+                    (obs_data_array_count(live1) == 0 && obs_data_array_count(cached1) > 0);
     if (!restore0 && !restore1) {
         return id;
     }
@@ -188,6 +204,7 @@ void BranchOutputFilter::unregisterHotkeyWithCapture(obs_hotkey_id &id, const QS
     }
 
     captureHotkeyBindings(hotkeyBindingsCache, id, fullName);
+    hotkeyCacheOwnedNames.insert(fullName);
     obs_hotkey_unregister(id);
     id = OBS_INVALID_HOTKEY_ID;
 }
@@ -202,6 +219,8 @@ void BranchOutputFilter::unregisterHotkeyPairWithCapture(
     }
 
     captureHotkeyPairBindings(hotkeyBindingsCache, id, fullName0, fullName1);
+    hotkeyCacheOwnedNames.insert(fullName0);
+    hotkeyCacheOwnedNames.insert(fullName1);
     obs_hotkey_pair_unregister(id);
     id = OBS_INVALID_HOTKEY_PAIR_ID;
 }
