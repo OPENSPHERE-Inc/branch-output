@@ -28,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <optional>
 
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 #include <QVariant>
 
@@ -149,15 +150,115 @@ inline obs_data_t *loadHotkeyData(const char *name)
 inline void loadHotkey(obs_hotkey_id id, const char *name)
 {
     OBSDataAutoRelease data = loadHotkeyData(name);
+    OBSDataArrayAutoRelease array;
     if (data) {
-        OBSDataArrayAutoRelease array = obs_data_get_array(data, "bindings");
-        obs_hotkey_load(id, array);
+        array = obs_data_get_array(data, "bindings");
     }
+
+    if (!array || obs_data_array_count(array) == 0) {
+        obs_hotkey_load_bindings(id, nullptr, 0);
+        return;
+    }
+
+    obs_hotkey_load(id, array);
 }
 
 inline QString getIndexedPropNameFormat(size_t index, size_t base = 0)
 {
     return index == base ? QString("%1") : QString("%%1_%1").arg(index);
+}
+
+// Default SRT listener accept timeout in microseconds (matches the unit of the
+// SRT URL "listen_timeout" query parameter consumed by OBS's ffmpeg mpegts muxer).
+#define DEFAULT_SRT_LISTEN_TIMEOUT_US 5000000
+
+// True when OBS's libsrt derives a strictly positive listen_timeout from this raw
+// query value; only a positive value bounds the srt_accept() wait. Mirrors
+// av_find_info_tag (which decodes '+' to space) followed by strtoll prefix
+// parsing, which yields 0 for empty, non-numeric and leading-garbage values.
+inline bool isPositiveSrtTimeoutValue(const QString &value)
+{
+    auto decoded = QString(value).replace('+', ' ');
+
+    auto pos = 0;
+    while (pos < decoded.size() && QString(" \t\n\v\f\r").contains(decoded.at(pos))) {
+        pos++;
+    }
+    if (pos < decoded.size() && decoded.at(pos) == '-') {
+        return false;
+    }
+
+    for (; pos < decoded.size(); pos++) {
+        const auto digit = decoded.at(pos);
+        if (digit < '0' || digit > '9') {
+            break;
+        }
+        if (digit != '0') {
+            // Digits beyond this point can only increase the magnitude, and strtoll
+            // saturates at INT64_MAX instead of wrapping.
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// An SRT listener URL that yields no positive "listen_timeout" makes OBS's libsrt
+// block in srt_accept() until a peer connects; a peerless stop then deadlocks the
+// caller in ffmpeg_mpegts_stop_internal()'s pthread_join(). Inject or repair the
+// parameter so a stop can complete; an explicit positive value is left as-is.
+//
+// Matching is case-sensitive to mirror OBS's libsrt parsing (strncmp scheme,
+// av_find_info_tag keys); a case-insensitive match could treat a key OBS ignores
+// as present and wrongly skip injection.
+inline QString applyDefaultSrtListenTimeout(const QString &url)
+{
+    if (!url.startsWith("srt://")) {
+        return url;
+    }
+
+    auto queryPos = url.indexOf('?');
+    if (queryPos < 0) {
+        return url;
+    }
+
+    // av_find_info_tag returns the first occurrence of a key, so only the first
+    // "mode" / "listen_timeout" in the query is the one OBS acts on.
+    auto params = url.mid(queryPos + 1).split('&');
+    auto modeIndex = -1;
+    auto timeoutIndex = -1;
+    for (auto i = 0; i < params.size(); i++) {
+        const auto key = params.at(i).section('=', 0, 0);
+        if (key == "mode" && modeIndex < 0) {
+            modeIndex = i;
+        } else if (key == "listen_timeout" && timeoutIndex < 0) {
+            timeoutIndex = i;
+        }
+    }
+
+    if (modeIndex < 0 || params.at(modeIndex).section('=', 1) != "listener") {
+        return url;
+    }
+
+    const auto defaultParam = QString("listen_timeout=%1").arg(DEFAULT_SRT_LISTEN_TIMEOUT_US);
+
+    if (timeoutIndex >= 0) {
+        if (isPositiveSrtTimeoutValue(params.at(timeoutIndex).section('=', 1))) {
+            return url;
+        }
+
+        // Appending would be ignored because the existing occurrence comes first.
+        params[timeoutIndex] = defaultParam;
+        return url.left(queryPos + 1) + params.join('&');
+    }
+
+    // Trim trailing '&' so a user query ending in '&' does not yield "&&".
+    QString base = url;
+    while (base.endsWith('&')) {
+        base.chop(1);
+    }
+
+    return QString("%1&%2").arg(base).arg(defaultParam);
 }
 
 inline bool encoderAvailable(const char *encoder)

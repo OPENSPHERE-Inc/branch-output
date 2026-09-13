@@ -28,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <atomic>
 
 #include <QObject>
+#include <QSet>
 
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
@@ -36,6 +37,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "utils.hpp"
 
 #define MAX_SERVICES 8
+#define HOTKEY_BINDINGS_KEY "hotkey_bindings"
 
 // Defined in plugin-main.cpp. Guards plugin-wide state shared across filter instances:
 // - Serializes OBS global API calls (obs_view, obs_encoder, obs_output creation/destruction)
@@ -161,6 +163,18 @@ class BranchOutputFilter : public QObject {
     obs_hotkey_pair_id toggleRecordingHotkeyPairId;
     obs_hotkey_pair_id toggleReplayBufferHotkeyPairId;
 
+    // Last known key bindings of this filter's hotkeys, keyed by hotkey full name.
+    // OBS drops the bindings of hotkeys that are not registered at save time, so they are kept
+    // here and persisted under HOTKEY_BINDINGS_KEY instead.
+    OBSDataAutoRelease hotkeyBindingsCache;
+    // Full names this instance captured on its own unregister. libobs restores a hotkey from the
+    // parent's saved hotkey data on registration, and that data lags behind these entries until
+    // the parent is saved.
+    QSet<QString> hotkeyCacheOwnedNames;
+    // Set when the settings carried no HOTKEY_BINDINGS_KEY: the first sync registers every group
+    // once so that bindings still held by the scene collection are harvested into the cache.
+    bool hotkeyHarvestPending;
+
     OBSSignal filterRenamedSignal;
 
     void startOutput(obs_data_t *settings);
@@ -189,8 +203,39 @@ class BranchOutputFilter : public QObject {
     void loadRecently(obs_data_t *settings);
     void restartOutput();
     void stopOutputGracefully();
-    void registerHotkey();
+
+    // Hotkey synchronization. After construction, every libobs hotkey call and every access to
+    // hotkeyBindingsCache happens inside an obs_hotkey_update_atomic() callback.
+    void syncHotkeys(obs_data_t *settings);
     void unregisterAllHotkeys();
+    void updateHotkeyDescriptions(const QString &newName);
+    void snapshotHotkeyBindings(obs_data_t *settings);
+
+    // Hotkey helpers. Caller must hold the libobs hotkey mutex.
+    void syncHotkeyGroups(obs_source_t *parent, obs_data_t *settings, bool registerAll);
+    void syncFilterToggleHotkeys(obs_source_t *parent, bool desired);
+    void syncStreamingAllHotkeys(obs_source_t *parent, bool desired);
+    void syncStreamingSlotHotkeys(obs_source_t *parent, size_t index, bool desired);
+    void syncRecordingHotkeys(obs_source_t *parent, bool desired);
+    void syncReplayBufferHotkeys(obs_source_t *parent, bool desired);
+    void captureRegisteredHotkeyBindings();
+    void pruneHotkeyBindingsCache();
+    obs_hotkey_id registerHotkeyWithRestore(
+        obs_source_t *parent, const QString &fullName, const QString &description, obs_hotkey_func func
+    );
+    obs_hotkey_pair_id registerHotkeyPairWithRestore(
+        obs_source_t *parent, const QString &fullName0, const QString &description0, const QString &fullName1,
+        const QString &description1, obs_hotkey_active_func func0, obs_hotkey_active_func func1
+    );
+    void unregisterHotkeyWithCapture(obs_hotkey_id &id, const QString &fullName);
+    void unregisterHotkeyPairWithCapture(obs_hotkey_pair_id &id, const QString &fullName0, const QString &fullName1);
+
+    // Hotkey name / description builders
+    QString buildHotkeyName(const char *base) const;
+    QString buildStreamingSlotHotkeyName(const char *base, size_t index) const;
+    QString buildHotkeyDescription(const char *textKey) const;
+    QString buildStreamingSlotHotkeyDescription(const char *textKey, size_t index) const;
+
     size_t findStreamingSlotByHotkeyPairId(obs_hotkey_pair_id id) const;
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
     void setAudioCapturesActive(bool active);

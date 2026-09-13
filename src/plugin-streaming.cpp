@@ -58,6 +58,13 @@ obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, si
         );
     }
 
+    QString server = obs_data_get_string(streamingSettings, "server");
+    QString adjustedServer = applyDefaultSrtListenTimeout(server);
+    if (adjustedServer != server) {
+        obs_log(LOG_INFO, "%s (%zu): Applied default SRT listen_timeout to listener URL", qUtf8Printable(name), index);
+        obs_data_set_string(streamingSettings, "server", qUtf8Printable(adjustedServer));
+    }
+
     return streamingSettings;
 }
 

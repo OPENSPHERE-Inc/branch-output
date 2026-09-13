@@ -1,0 +1,3 @@
+*.local.*
+agents/local/
+tmp/
