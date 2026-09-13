@@ -30,6 +30,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define OUTPUT_MAX_RETRIES 7
 #define OUTPUT_RETRY_DELAY_SECS 1
 #define RECONNECT_ATTEMPTING_TIMEOUT_NS 2000000000ULL
+// RECONNECT_STALL_TIMEOUT_NS must exceed RECONNECT_ATTEMPTING_TIMEOUT_NS:
+// stall detection guarantees the graceful-stop timeout has already elapsed.
+#define RECONNECT_STALL_TIMEOUT_NS 30000000000ULL
 
 obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, size_t index)
 {
@@ -166,6 +169,9 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
         [](void *_data, calldata_t *) {
             auto context = static_cast<BranchOutputStreamingContext *>(_data);
             context->outputStarting = false;
+            // Clear any stale reconnect timestamp so a later reconnect episode is not
+            // misjudged as stalled by reconnectStallDetected() / reconnectAttemptingTimedOut().
+            context->reconnectAttemptingAt = 0;
             obs_log(LOG_DEBUG, "%s: Streaming output has activated", obs_output_get_name(context->output));
         },
         &streamings[index]
@@ -178,6 +184,17 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
             auto context = static_cast<BranchOutputStreamingContext *>(_data);
             context->reconnectAttemptingAt = os_gettime_ns();
             obs_log(LOG_DEBUG, "%s: Streaming output is reconnecting", obs_output_get_name(context->output));
+        },
+        &streamings[index]
+    );
+
+    // Track reconnect_success signal (delayed-capture reconnect path emits this without "activate")
+    streamings[index].outputReconnectSuccessSignal.Connect(
+        obs_output_get_signal_handler(streamings[index].output), "reconnect_success",
+        [](void *_data, calldata_t *) {
+            auto context = static_cast<BranchOutputStreamingContext *>(_data);
+            context->reconnectAttemptingAt = 0;
+            obs_log(LOG_DEBUG, "%s: Streaming output reconnected", obs_output_get_name(context->output));
         },
         &streamings[index]
     );
@@ -224,6 +241,7 @@ void BranchOutputFilter::stopStreamingOutput(size_t index)
     streamings[index].outputStartingSignal.Disconnect();
     streamings[index].outputActivateSignal.Disconnect();
     streamings[index].outputReconnectSignal.Disconnect();
+    streamings[index].outputReconnectSuccessSignal.Disconnect();
     streamings[index].outputStopSignal.Disconnect();
 
     streamings[index].output = nullptr;
@@ -254,6 +272,12 @@ bool BranchOutputFilter::reconnectAttemptingTimedOut(size_t index)
 {
     auto attemptingAt = streamings[index].reconnectAttemptingAt.load();
     return attemptingAt && os_gettime_ns() - attemptingAt > RECONNECT_ATTEMPTING_TIMEOUT_NS;
+}
+
+bool BranchOutputFilter::reconnectStallDetected(size_t index)
+{
+    auto attemptingAt = streamings[index].reconnectAttemptingAt.load();
+    return attemptingAt && os_gettime_ns() - attemptingAt > RECONNECT_STALL_TIMEOUT_NS;
 }
 
 void BranchOutputFilter::setStreamingUserEnabled(size_t index, bool enabled)
@@ -525,7 +549,10 @@ bool BranchOutputFilter::stopSingleStreamingOutputGracefully(size_t index)
 
     if (streamings[index].output && streamings[index].active) {
         if (streamings[index].stopping) {
-            if (reconnectAttemptingTimedOut(index)) {
+            // A reconnect that succeeds clears reconnectAttemptingAt, so the timeout gate alone
+            // would never open once "stopping" is latched. Leaving the reconnecting state is
+            // itself sufficient grounds to stop.
+            if (!obs_output_reconnecting(streamings[index].output) || reconnectAttemptingTimedOut(index)) {
                 stopStreamingOutput(index);
             } else {
                 return false;
