@@ -1290,13 +1290,17 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                             // with no progress). obs_output_stop() must not be called directly while
                             // reconnecting (crashes OBS), so route recovery through the crash-safe
                             // graceful stop path. This only stops the slot; restart is performed by
-                            // a later tick's startEligibleStreamings() (INDIVIDUAL: L1176,
-                            // non-INDIVIDUAL: L1236). Limit to one slot per tick to avoid rapid
-                            // state transitions.
+                            // a later tick's startEligibleStreamings(). Limit to one slot per tick
+                            // to avoid rapid state transitions.
                             obs_log(
                                 LOG_WARNING, "%s (%zu): Reconnect stalled, forcing graceful restart",
                                 qUtf8Printable(name), i
                             );
+                            // Latch "stopping" first so the graceful stop path evaluates its
+                            // reconnect-timeout gate in this tick instead of only latching. A
+                            // detected stall implies reconnectAttemptingTimedOut(), so the gate is
+                            // open.
+                            streamings[i].stopping = true;
                             // FIXME: obs_output_stop() on a reconnecting output reaches the output
                             // implementation's stop callback, which joins the in-flight connect
                             // thread (rtmp_stream_stop() -> pthread_join(connect_thread)) with no
@@ -1306,6 +1310,17 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                             // releases it. Root-cause fix (bounded / non-joining stop) needs a
                             // separate PR.
                             stopSingleStreamingIndividual(i);
+                            if (streamings[i].active) {
+                                // The gate stayed closed: reconnectAttemptingAt changed after
+                                // detection, because the attempt moved on to the next retry or the
+                                // reconnect is succeeding. Nothing retries this stop, so do not
+                                // leave the latch behind.
+                                streamings[i].stopping = false;
+                                obs_log(
+                                    LOG_DEBUG, "%s (%zu): Reconnect moved on, stall stop canceled",
+                                    qUtf8Printable(name), i
+                                );
+                            }
                             return;
                         }
                     }
