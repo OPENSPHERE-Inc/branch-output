@@ -22,6 +22,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-frontend-api.h>
 #include <obs.hpp>
 
+#include <atomic>
+
 #include <QFrame>
 #include <QPointer>
 #include <QList>
@@ -226,6 +228,10 @@ class BranchOutputStatusDock : public QFrame {
 
     QTimer timer;
     QTableWidget *outputTable = nullptr;
+    // Invariant: touched only from the Qt UI thread; no mutex is needed.
+    // Cross-thread callers use QMetaObject::invokeMethod with QueuedConnection.
+    // Same-thread calls (e.g. removeFilter from the update() timer slot) also
+    // exist and are intentional.
     QList<OutputTableRow *> outputTableRows;
     QLabel *applyToAllLabel = nullptr;
     QToolButton *enableAllButton = nullptr;
@@ -237,6 +243,11 @@ class BranchOutputStatusDock : public QFrame {
     QToolButton *saveReplayBufferAllButton = nullptr;
     QLabel *interlockLabel = nullptr;
     QComboBox *interlockComboBox = nullptr;
+    // QComboBox mirror so getInterlockType() can be called from non-UI threads
+    // (e.g. the BranchOutputFilter interval timer slot, whose thread affinity
+    // follows addCallback's caller). Updated on the UI thread whenever the
+    // combo selection changes or settings are applied.
+    std::atomic<int> interlockTypeAtomic;
     OBSSignal sourceAddedSignal;
     obs_hotkey_id enableAllHotkey;
     obs_hotkey_id disableAllHotkey;
@@ -251,6 +262,8 @@ class BranchOutputStatusDock : public QFrame {
 
     void update();
     void updateOutputToggles(BranchOutputFilter *filter);
+    QList<BranchOutputFilterInfo> buildFilterListSnapshot() const;
+    void publishFilterListSnapshot();
     void applyEnableAllButtonEnabled();
     void applyDisableAllButtonEnabled();
     void applySplitRecordingAllButtonEnabled();
@@ -297,8 +310,7 @@ public slots:
     void resetStatsAll();
     void sort();
 
-    inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
-    QList<BranchOutputFilterInfo> getFilterList() const;
+    inline int getInterlockType() const { return interlockTypeAtomic.load(std::memory_order_relaxed); };
 };
 
 class OutputTableRow : public QObject {
