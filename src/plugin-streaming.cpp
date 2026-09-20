@@ -32,7 +32,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define RECONNECT_ATTEMPTING_TIMEOUT_NS 2000000000ULL
 // RECONNECT_STALL_TIMEOUT_NS must exceed RECONNECT_ATTEMPTING_TIMEOUT_NS:
 // stall detection guarantees the graceful-stop timeout has already elapsed.
-#define RECONNECT_STALL_TIMEOUT_NS 30000000000ULL
+// It must also exceed the longest interval between "reconnect" signals that an attempt
+// ending in a single OBS timeout can produce (about 44 s: retry wait up to ~13.9 s with
+// OUTPUT_MAX_RETRIES / OUTPUT_RETRY_DELAY_SECS, plus the 30 s librtmp receive timeout),
+// or stall recovery would preempt a retry OBS is about to make.
+#define RECONNECT_STALL_TIMEOUT_NS 45000000000ULL
 
 obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, size_t index)
 {
