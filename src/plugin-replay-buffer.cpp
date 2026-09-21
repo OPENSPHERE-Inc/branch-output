@@ -125,7 +125,7 @@ void BranchOutputFilter::createAndStartReplayBuffer(obs_data_t *settings)
 
     // Connect "saved" signal
     auto handler = obs_output_get_signal_handler(replayBufferOutput);
-    replayBufferSavedSignal.Connect(handler, "saved", onReplayBufferSaved, this);
+    replayBufferSavedSignal.Connect(handler, "saved", onReplayBufferSaved, toCallbackData());
 
     // Start replay buffer output
     if (obs_output_start(replayBufferOutput)) {
@@ -194,13 +194,13 @@ bool BranchOutputFilter::saveReplayBuffer()
 
 void BranchOutputFilter::onReplayBufferSaved(void *data, calldata_t *)
 {
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     obs_log(LOG_INFO, "%s: Replay buffer saved", qUtf8Printable(filter->name));
 }
 
 void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd)
 {
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
 
     const char *format = calldata_string(cd, "format");
     OBSOutputAutoRelease replayBufferOutputRef;
@@ -258,7 +258,7 @@ void BranchOutputFilter::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_
         return;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     filter->saveReplayBuffer();
 }
 
@@ -330,7 +330,7 @@ bool BranchOutputFilter::onEnableReplayBufferHotkeyPressed(void *data, obs_hotke
         return false;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
@@ -351,7 +351,7 @@ bool BranchOutputFilter::onDisableReplayBufferHotkeyPressed(void *data, obs_hotk
         return false;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }

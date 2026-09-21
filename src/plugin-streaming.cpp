@@ -578,7 +578,7 @@ void BranchOutputFilter::onEnableAllStreamingHotkeyPressed(void *data, obs_hotke
         return;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     if (!obs_source_enabled(filter->contextSource)) {
         return;
     }
@@ -597,7 +597,7 @@ void BranchOutputFilter::onDisableAllStreamingHotkeyPressed(void *data, obs_hotk
         return;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     if (!obs_source_enabled(filter->contextSource)) {
         return;
     }
@@ -618,7 +618,7 @@ bool BranchOutputFilter::onEnableStreamingServiceHotkeyPressed(
         return false;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
@@ -646,7 +646,7 @@ bool BranchOutputFilter::onDisableStreamingServiceHotkeyPressed(
         return false;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }

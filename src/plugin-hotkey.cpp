@@ -136,7 +136,7 @@ BranchOutputFilter::registerHotkey(const QString &fullName, const QString &descr
     }
 
     return obs_hotkey_register_source(
-        hotkeyRegistrationTarget, qUtf8Printable(fullName), qUtf8Printable(description), func, this
+        hotkeyRegistrationTarget, qUtf8Printable(fullName), qUtf8Printable(description), func, toCallbackData()
     );
 }
 
@@ -152,7 +152,7 @@ obs_hotkey_pair_id BranchOutputFilter::registerHotkeyPair(
 
     return obs_hotkey_pair_register_source(
         hotkeyRegistrationTarget, qUtf8Printable(fullName0), qUtf8Printable(description0), qUtf8Printable(fullName1),
-        qUtf8Printable(description1), func0, func1, this, this
+        qUtf8Printable(description1), func0, func1, toCallbackData(), toCallbackData()
     );
 }
 
@@ -570,7 +570,7 @@ void BranchOutputFilter::unregisterAllHotkeys()
 {
     obs_hotkey_update_atomic(
         [](void *param) {
-            auto filter = static_cast<BranchOutputFilter *>(param);
+            auto filter = fromCallbackData(param);
 
             filter->syncFilterToggleHotkeys(false);
             filter->syncStreamingAllHotkeys(false);
@@ -580,7 +580,7 @@ void BranchOutputFilter::unregisterAllHotkeys()
             filter->syncRecordingHotkeys(false);
             filter->syncReplayBufferHotkeys(false);
         },
-        this
+        toCallbackData()
     );
 }
 
@@ -672,7 +672,7 @@ bool BranchOutputFilter::onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair
         return false;
     }
 
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    BranchOutputFilter *filter = fromCallbackData(data);
     if (obs_source_enabled(filter->contextSource)) {
         // Already enabled
         return false;
@@ -688,7 +688,7 @@ bool BranchOutputFilter::onDisableFilterHotkeyPressed(void *data, obs_hotkey_pai
         return false;
     }
 
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    BranchOutputFilter *filter = fromCallbackData(data);
     if (!obs_source_enabled(filter->contextSource)) {
         // Already disabled
         return false;

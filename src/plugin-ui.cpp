@@ -193,7 +193,7 @@ void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char *pro
     obs_properties_add_button2(
         props, propName, obs_module_text("Apply"),
         [](obs_properties_t *, obs_property_t *, void *param) {
-            auto filter = static_cast<BranchOutputFilter *>(param);
+            auto filter = fromCallbackData(param);
 
             // Force filter activation
             filter->initialized = true;
@@ -203,7 +203,7 @@ void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char *pro
 
             return true;
         },
-        this
+        toCallbackData()
     );
 }
 
@@ -853,7 +853,7 @@ void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
     obs_property_set_modified_callback2(
         audioEncoderList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto filter = static_cast<BranchOutputFilter *>(param);
+            auto filter = fromCallbackData(param);
             obs_log(LOG_DEBUG, "%s: Audio encoder chainging.", qUtf8Printable(filter->name));
 
             const auto encoder_id = obs_data_get_string(settings, "audio_encoder");
@@ -912,7 +912,7 @@ void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
             obs_log(LOG_INFO, "%s: Audio encoder changed.", qUtf8Printable(filter->name));
             return result;
         },
-        this
+        toCallbackData()
     );
 }
 
@@ -940,7 +940,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_set_modified_callback2(
         croppingList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto filter = static_cast<BranchOutputFilter *>(param);
+            auto filter = fromCallbackData(param);
             auto cropType = obs_data_get_string(settings, "crop_type");
             bool isRelative = cropType && !strcmp(cropType, "relative");
             bool isAbsolute = cropType && !strcmp(cropType, "absolute");
@@ -966,12 +966,12 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 
             return true;
         },
-        this
+        toCallbackData()
     );
 
     // Crop value modified callback: updates preview rectangle in real-time
     auto cropValueModified = [](void *param, obs_properties_t *, obs_property_t *, obs_data_t *settings) {
-        auto filter = static_cast<BranchOutputFilter *>(param);
+        auto filter = fromCallbackData(param);
         // Check the preview checkbox for the active crop type (not isVisible, which may be false
         // due to previous invalid crop values)
         auto cropType = obs_data_get_string(settings, "crop_type");
@@ -993,7 +993,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 
     // Crop preview checkbox callback
     auto previewCropModified = [](void *param, obs_properties_t *, obs_property_t *prop, obs_data_t *settings) {
-        auto filter = static_cast<BranchOutputFilter *>(param);
+        auto filter = fromCallbackData(param);
         bool checked = obs_data_get_bool(settings, obs_property_name(prop));
 
         // Sync both checkboxes so the preview state persists across crop type switches
@@ -1018,12 +1018,12 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     const char *relLabels[] = {"CropRelative.Top", "CropRelative.Right", "CropRelative.Bottom", "CropRelative.Left"};
     for (int i = 0; i < 4; i++) {
         auto prop = obs_properties_add_int(cropRelativeGroup, relProps[i], obs_module_text(relLabels[i]), 0, 8192, 2);
-        obs_property_set_modified_callback2(prop, cropValueModified, this);
+        obs_property_set_modified_callback2(prop, cropValueModified, toCallbackData());
     }
     auto previewCropRel =
         obs_properties_add_bool(cropRelativeGroup, "preview_crop_rect_rel", obs_module_text("PreviewCropRect"));
     obs_property_set_long_description(previewCropRel, obs_module_text("PreviewCropRect.LongDescription"));
-    obs_property_set_modified_callback2(previewCropRel, previewCropModified, this);
+    obs_property_set_modified_callback2(previewCropRel, previewCropModified, toCallbackData());
 
     obs_properties_add_group(
         videoEncoderGroup, "crop_relative_group", obs_module_text("CropRelative"), OBS_GROUP_NORMAL, cropRelativeGroup
@@ -1035,12 +1035,12 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     const char *absLabels[] = {"CropAbsolute.X", "CropAbsolute.Y", "CropAbsolute.Width", "CropAbsolute.Height"};
     for (int i = 0; i < 4; i++) {
         auto prop = obs_properties_add_int(cropAbsoluteGroup, absProps[i], obs_module_text(absLabels[i]), 0, 8192, 2);
-        obs_property_set_modified_callback2(prop, cropValueModified, this);
+        obs_property_set_modified_callback2(prop, cropValueModified, toCallbackData());
     }
     auto previewCropAbs =
         obs_properties_add_bool(cropAbsoluteGroup, "preview_crop_rect_abs", obs_module_text("PreviewCropRect"));
     obs_property_set_long_description(previewCropAbs, obs_module_text("PreviewCropRect.LongDescription"));
-    obs_property_set_modified_callback2(previewCropAbs, previewCropModified, this);
+    obs_property_set_modified_callback2(previewCropAbs, previewCropModified, toCallbackData());
 
     obs_properties_add_group(
         videoEncoderGroup, "crop_absolute_group", obs_module_text("CropAbsolute"), OBS_GROUP_NORMAL, cropAbsoluteGroup
@@ -1132,7 +1132,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_set_modified_callback2(
         videoEncoderList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto filter = static_cast<BranchOutputFilter *>(param);
+            auto filter = fromCallbackData(param);
             obs_log(LOG_DEBUG, "%s: Video encoder chainging.", qUtf8Printable(filter->name));
 
             auto _videoEncoderGroup = obs_property_group_content(obs_properties_get(_props, "video_encoder_group"));
@@ -1158,7 +1158,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
             obs_log(LOG_INFO, "%s: Video encoder changed.", qUtf8Printable(filter->name));
             return true;
         },
-        this
+        toCallbackData()
     );
 
     //--- "Video Encoder Settings" group (Initially empty) ---//
@@ -1185,8 +1185,8 @@ obs_properties_t *BranchOutputFilter::getProperties()
     obs_data_set_bool(settings, "replay_buffer_estimate", false);
 
     // Reset crop preview when properties dialog is closed
-    obs_properties_set_param(props, this, [](void *param) {
-        auto filter = static_cast<BranchOutputFilter *>(param);
+    obs_properties_set_param(props, toCallbackData(), [](void *param) {
+        auto filter = fromCallbackData(param);
         filter->cropPreview.hide();
     });
 

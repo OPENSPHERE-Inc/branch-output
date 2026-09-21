@@ -407,7 +407,7 @@ bool BranchOutputFilter::addChapterToRecording(QString chapterName)
 
 void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_t *cd)
 {
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
 
     const char *format = calldata_string(cd, "format");
     OBSOutputAutoRelease recordingOutputRef;
@@ -537,7 +537,7 @@ void BranchOutputFilter::onSplitRecordingFileHotkeyPressed(void *data, obs_hotke
         return;
     }
 
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    BranchOutputFilter *filter = fromCallbackData(data);
     filter->splitRecording();
 }
 
@@ -547,7 +547,7 @@ bool BranchOutputFilter::onPauseRecordingHotkeyPressed(void *data, obs_hotkey_pa
         return false;
     }
 
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    BranchOutputFilter *filter = fromCallbackData(data);
     return filter->pauseRecording();
 }
 
@@ -557,7 +557,7 @@ bool BranchOutputFilter::onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_
         return false;
     }
 
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    BranchOutputFilter *filter = fromCallbackData(data);
 
     if (filter->recordingPending) {
         // Block unpausing when recording is pending
@@ -573,7 +573,7 @@ void BranchOutputFilter::onAddChapterToRecordingFileHotkeyPressed(void *data, ob
         return;
     }
 
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
+    BranchOutputFilter *filter = fromCallbackData(data);
     filter->addChapterToRecording();
 }
 
@@ -583,7 +583,7 @@ bool BranchOutputFilter::onEnableRecordingHotkeyPressed(void *data, obs_hotkey_p
         return false;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
@@ -604,7 +604,7 @@ bool BranchOutputFilter::onDisableRecordingHotkeyPressed(void *data, obs_hotkey_
         return false;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }

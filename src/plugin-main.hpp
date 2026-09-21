@@ -405,6 +405,10 @@ class BranchOutputFilter : public QObject {
     obs_properties_t *getProperties();
 
     static obs_audio_data *audioFilterCallback(void *param, obs_audio_data *audioData);
+
+    // The only conversion between an instance and the data pointer handed to OBS callbacks
+    void *toCallbackData() { return this; }
+    static BranchOutputFilter *fromCallbackData(void *data) { return static_cast<BranchOutputFilter *>(data); }
     static void getDefaults(obs_data_t *settings);
 
 signals:

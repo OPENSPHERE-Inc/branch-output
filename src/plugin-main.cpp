@@ -202,10 +202,12 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     // unregistration with ~BranchOutputFilter().
     proc_handler_t *ph = obs_source_get_proc_handler(contextSource);
     proc_handler_add(
-        ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat, this
+        ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat,
+        toCallbackData()
     );
     proc_handler_add(
-        ph, "void override_recording_filename_format(in string format)", onOverrideRecordingFilenameFormat, this
+        ph, "void override_recording_filename_format(in string format)", onOverrideRecordingFilenameFormat,
+        toCallbackData()
     );
 
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
@@ -1752,10 +1754,10 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
     filterRenamedSignal.Connect(
         obs_source_get_signal_handler(contextSource), "rename",
         [](void *_data, calldata_t *cd) {
-            auto _filter = static_cast<BranchOutputFilter *>(_data);
+            auto _filter = fromCallbackData(_data);
             _filter->updateHotkeyDescriptions(calldata_string(cd, "new_name"));
         },
-        this
+        toCallbackData()
     );
 
     obs_log(LOG_INFO, "%s: Filter added to '%s'", qUtf8Printable(name), obs_source_get_name(source));
@@ -1884,7 +1886,7 @@ void BranchOutputFilter::destroyCallback()
 // Callback from filter audio
 obs_audio_data *BranchOutputFilter::audioFilterCallback(void *param, obs_audio_data *audioData)
 {
-    auto filter = static_cast<BranchOutputFilter *>(param);
+    auto filter = fromCallbackData(param);
 
     pthread_mutex_lock(&filter->audioMutex);
     {
@@ -1914,39 +1916,40 @@ obs_source_info BranchOutputFilter::createFilterInfo()
     };
 
     info.create = [](obs_data_t *settings, obs_source_t *source) -> void * {
-        return new BranchOutputFilter(settings, source);
+        auto filter = new BranchOutputFilter(settings, source);
+        return filter->toCallbackData();
     };
     info.filter_add = [](void *data, obs_source_t *source) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromCallbackData(data);
         filter->addCallback(source);
     };
     info.update = [](void *data, obs_data_t *settings) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromCallbackData(data);
         filter->updateCallback(settings);
     };
     info.video_render = [](void *data, gs_effect_t *effect) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromCallbackData(data);
         filter->videoRenderCallback(effect);
     };
     info.video_tick = [](void *data, float seconds) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromCallbackData(data);
         filter->videoTickCallback(seconds);
     };
     info.filter_remove = [](void *data, obs_source_t *) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromCallbackData(data);
         filter->removeCallback();
     };
     info.destroy = [](void *data) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromCallbackData(data);
         filter->destroyCallback();
     };
 
     info.save = [](void *data, obs_data_t *settings) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromCallbackData(data);
         filter->saveCallback(settings);
     };
     info.get_properties = [](void *data) -> obs_properties_t * {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromCallbackData(data);
         return filter->getProperties();
     };
     info.get_defaults = BranchOutputFilter::getDefaults;
