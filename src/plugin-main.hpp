@@ -235,6 +235,11 @@ class BranchOutputFilter : public QObject {
     void restartOutput(int interlockType);
     void stopOutputGracefully();
 
+    // Input: the parent source this filter is attached to
+    bool validateInput();
+    bool isInputAvailable() const;
+    QString getInputName() const;
+
     // Hotkey synchronization. After construction, every libobs hotkey call and every access to
     // hotkeyBindingsCache happens inside an obs_hotkey_update_atomic() callback.
     void syncHotkeys(obs_data_t *settings);

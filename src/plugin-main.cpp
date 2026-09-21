@@ -247,6 +247,35 @@ OBSDataAutoRelease BranchOutputFilter::AppliedSettings::get()
     return OBSDataAutoRelease(data.Get());
 }
 
+bool BranchOutputFilter::validateInput()
+{
+    // Retrieve filter source
+    auto parent = obs_filter_get_parent(contextSource);
+    if (!parent) {
+        obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
+        return false;
+    }
+
+    // Ignore private sources
+    if (sourceIsPrivate(parent)) {
+        obs_log(LOG_ERROR, "%s: Ignore private source", qUtf8Printable(name));
+        return false;
+    }
+
+    return true;
+}
+
+bool BranchOutputFilter::isInputAvailable() const
+{
+    auto parent = obs_filter_get_parent(contextSource);
+    return parent && sourceInFrontend(parent);
+}
+
+QString BranchOutputFilter::getInputName() const
+{
+    return obs_source_get_name(obs_filter_get_parent(contextSource));
+}
+
 // Caller must hold outputMutex.
 // Idempotent: if infrastructure already exists, return true.
 // On failure after partial resource creation, all resources are cleaned up
@@ -263,16 +292,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
         return false;
     }
 
-    // Retrieve filter source
-    auto parent = obs_filter_get_parent(contextSource);
-    if (!parent) {
-        obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
-        return false;
-    }
-
-    // Ignore private sources
-    if (sourceIsPrivate(parent)) {
-        obs_log(LOG_ERROR, "%s: Ignore private source", qUtf8Printable(name));
+    if (!validateInput()) {
         return false;
     }
 
@@ -333,6 +353,12 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
     activeSettings = settings;
 
     //--- Open video output ---//
+    auto parent = obs_filter_get_parent(contextSource);
+    if (!parent) {
+        obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
+        return false;
+    }
+
     if (useFilterInput) {
         // Filter input mode: capture via texrender + proxy source + obs_view.
         // The proxy source renders the captured texrender texture on the GPU.
@@ -951,8 +977,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
     if (!streamingActive && !recordingActive && !recordingPending && !replayBufferActive) {
         // Evaluate start condition
-        auto parent = obs_filter_get_parent(contextSource);
-        if (!parent || !sourceInFrontend(parent)) {
+        if (!isInputAvailable()) {
             // Ignore when source in no longer exists in frontend
             return;
         }
@@ -1202,7 +1227,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 uint32_t sourceHeight;
                 getSourceResolution(sourceWidth, sourceHeight);
 
-                if (!sourceInFrontend(parent)) {
+                if (!isInputAvailable()) {
                     // Stop output when source had been removed
                     stopOutputGracefully();
                     return;
@@ -1601,7 +1626,7 @@ void BranchOutputFilter::determineOutputResolution(obs_data_t *settings, obs_vid
 
 QString BranchOutputFilter::applyFilenameFormatArgs(const QString &format, bool noSpace)
 {
-    QString sourceName = obs_source_get_name(obs_filter_get_parent(contextSource));
+    QString sourceName = getInputName();
     QString filterName = qUtf8Printable(name);
     auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
     return QString(format).arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
