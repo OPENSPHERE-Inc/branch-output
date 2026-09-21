@@ -292,6 +292,85 @@ void BranchOutputFilter::releaseInputShowing()
     }
 }
 
+void BranchOutputFilter::selectVideoInputMode(obs_data_t *settings)
+{
+    auto videoSourceType = obs_data_get_string(settings, "video_source_type");
+    useFilterInput = videoSourceType && !strcmp(videoSourceType, "filter_input");
+}
+
+// Caller must hold outputMutex.
+// On failure, everything created here has already been cleaned up.
+bool BranchOutputFilter::setupVideoInput(obs_data_t *, obs_video_info *ovi, const CropRect &crop)
+{
+    auto parent = obs_filter_get_parent(contextSource);
+    if (!parent) {
+        obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
+        return false;
+    }
+
+    if (useFilterInput) {
+        // Filter input mode: capture via texrender + proxy source + obs_view.
+        // The proxy source renders the captured texrender texture on the GPU.
+        // obs_view creates a video_t* registered in OBS's mix list, allowing
+        // GPU encoders (NVENC, QSV, AMF, etc.) to work directly.
+        filterVideoCapture = new FilterVideoCapture(contextSource, parent, width, height);
+        if (!filterVideoCapture->getProxySource()) {
+            obs_log(LOG_ERROR, "%s: Filter video capture creation failed", qUtf8Printable(name));
+            delete filterVideoCapture;
+            filterVideoCapture = nullptr;
+            return false;
+        }
+
+        if (crop.width != width || crop.height != height) {
+            filterVideoCapture->setCrop(crop);
+        }
+
+        view = obs_view_create();
+        obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
+
+        videoOutput = obs_view_add2(view, ovi);
+        if (!videoOutput) {
+            obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
+            // releaseInfrastructureIfIdle() safely handles partially-initialized state:
+            // - OBS RAII wrappers accept nullptr assignment
+            // - AudioCapture/filterVideoCapture pointers are nullptr-checked before delete
+            // - FilterVideoCapture::setActive(false) on a never-activated instance is safe
+            //   (simply stores false to atomic bool)
+            releaseInfrastructureIfIdle();
+            return false;
+        }
+        filterVideoCapture->setActive(true);
+    } else {
+        // Source output mode (default): use obs_view for the parent source
+        view = obs_view_create();
+
+        if (crop.width != width || crop.height != height) {
+            cropScene = obs_scene_create_private("branch_output_crop");
+            obs_sceneitem_t *item = obs_scene_add(cropScene, parent);
+
+            struct obs_sceneitem_crop itemCrop;
+            itemCrop.left = (int)crop.left;
+            itemCrop.top = (int)crop.top;
+            itemCrop.right = (int)(width - crop.left - crop.width);
+            itemCrop.bottom = (int)(height - crop.top - crop.height);
+            obs_sceneitem_set_crop(item, &itemCrop);
+
+            obs_view_set_source(view, 0, obs_scene_get_source(cropScene));
+        } else {
+            obs_view_set_source(view, 0, parent);
+        }
+
+        videoOutput = obs_view_add2(view, ovi);
+        if (!videoOutput) {
+            obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
+            releaseInfrastructureIfIdle();
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // Caller must hold outputMutex.
 // Idempotent: if infrastructure already exists, return true.
 // On failure after partial resource creation, all resources are cleaned up
@@ -329,8 +408,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
     }
 
     // Determine video source type first to choose correct resolution source
-    auto videoSourceType = obs_data_get_string(settings, "video_source_type");
-    useFilterInput = videoSourceType && !strcmp(videoSourceType, "filter_input");
+    selectVideoInputMode(settings);
 
     // Resolve input resolution based on video source type
     // sourceWidth/sourceHeight represent the actual input resolution for this filter,
@@ -369,70 +447,8 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
     activeSettings = settings;
 
     //--- Open video output ---//
-    auto parent = obs_filter_get_parent(contextSource);
-    if (!parent) {
-        obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
+    if (!setupVideoInput(settings, &ovi, *crop)) {
         return false;
-    }
-
-    if (useFilterInput) {
-        // Filter input mode: capture via texrender + proxy source + obs_view.
-        // The proxy source renders the captured texrender texture on the GPU.
-        // obs_view creates a video_t* registered in OBS's mix list, allowing
-        // GPU encoders (NVENC, QSV, AMF, etc.) to work directly.
-        filterVideoCapture = new FilterVideoCapture(contextSource, parent, width, height);
-        if (!filterVideoCapture->getProxySource()) {
-            obs_log(LOG_ERROR, "%s: Filter video capture creation failed", qUtf8Printable(name));
-            delete filterVideoCapture;
-            filterVideoCapture = nullptr;
-            return false;
-        }
-
-        if (crop->width != width || crop->height != height) {
-            filterVideoCapture->setCrop(*crop);
-        }
-
-        view = obs_view_create();
-        obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
-
-        videoOutput = obs_view_add2(view, &ovi);
-        if (!videoOutput) {
-            obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
-            // releaseInfrastructureIfIdle() safely handles partially-initialized state:
-            // - OBS RAII wrappers accept nullptr assignment
-            // - AudioCapture/filterVideoCapture pointers are nullptr-checked before delete
-            // - FilterVideoCapture::setActive(false) on a never-activated instance is safe
-            //   (simply stores false to atomic bool)
-            releaseInfrastructureIfIdle();
-            return false;
-        }
-        filterVideoCapture->setActive(true);
-    } else {
-        // Source output mode (default): use obs_view for the parent source
-        view = obs_view_create();
-
-        if (crop->width != width || crop->height != height) {
-            cropScene = obs_scene_create_private("branch_output_crop");
-            obs_sceneitem_t *item = obs_scene_add(cropScene, parent);
-
-            struct obs_sceneitem_crop itemCrop;
-            itemCrop.left = (int)crop->left;
-            itemCrop.top = (int)crop->top;
-            itemCrop.right = (int)(width - crop->left - crop->width);
-            itemCrop.bottom = (int)(height - crop->top - crop->height);
-            obs_sceneitem_set_crop(item, &itemCrop);
-
-            obs_view_set_source(view, 0, obs_scene_get_source(cropScene));
-        } else {
-            obs_view_set_source(view, 0, parent);
-        }
-
-        videoOutput = obs_view_add2(view, &ovi);
-        if (!videoOutput) {
-            obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
-            releaseInfrastructureIfIdle();
-            return false;
-        }
     }
 
     //--- Open audio output(s) ---//
@@ -643,6 +659,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
     }
 
     if (blankWhenHidden) {
+        auto parent = obs_filter_get_parent(contextSource);
         bool visibleInProgram = sourceVisibleInProgram(parent);
         setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
     }
@@ -792,6 +809,22 @@ void BranchOutputFilter::loadRecently(obs_data_t *settings)
     obs_log(LOG_INFO, "Recently settings loaded");
 }
 
+// Caller must hold outputMutex. Safe to call on a partially built video input.
+void BranchOutputFilter::teardownVideoInput()
+{
+    if (filterVideoCapture) {
+        filterVideoCapture->setActive(false);
+        delete filterVideoCapture;
+        filterVideoCapture = nullptr;
+    }
+
+    cropScene = nullptr;
+
+    useFilterInput = false;
+    blankingOutputActive = false;
+    blankingAudioMuted = false;
+}
+
 // Caller must hold outputMutex.
 // Releases shared infrastructure (view, encoders, audio) if all outputs are idle.
 void BranchOutputFilter::releaseInfrastructureIfIdle()
@@ -836,13 +869,7 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
 
     videoEncoder = nullptr;
 
-    if (filterVideoCapture) {
-        filterVideoCapture->setActive(false);
-        delete filterVideoCapture;
-        filterVideoCapture = nullptr;
-    }
-
-    cropScene = nullptr;
+    teardownVideoInput();
 
     if (view) {
         obs_view_set_source(view, 0, nullptr);
@@ -851,9 +878,6 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
 
     view = nullptr;
     videoOutput = nullptr;
-    useFilterInput = false;
-    blankingOutputActive = false;
-    blankingAudioMuted = false;
 }
 
 void BranchOutputFilter::stopOutput()

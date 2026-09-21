@@ -242,6 +242,11 @@ class BranchOutputFilter : public QObject {
     void acquireInputShowing();
     void releaseInputShowing();
 
+    // Infrastructure parts built from the input (caller must hold outputMutex)
+    void selectVideoInputMode(obs_data_t *settings);
+    bool setupVideoInput(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop);
+    void teardownVideoInput();
+
     // Hotkey synchronization. After construction, every libobs hotkey call and every access to
     // hotkeyBindingsCache happens inside an obs_hotkey_update_atomic() callback.
     void syncHotkeys(obs_data_t *settings);
