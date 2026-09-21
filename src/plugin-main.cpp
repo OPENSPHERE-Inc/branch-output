@@ -669,11 +669,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
         obs_encoder_set_audio(audioContext->encoder, audioContext->audio);
     }
 
-    if (blankWhenHidden) {
-        auto parent = obs_filter_get_parent(contextSource);
-        bool visibleInProgram = sourceVisibleInProgram(parent);
-        setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
-    }
+    evaluateBlanking(settings);
 
     return true;
 }
@@ -1006,6 +1002,27 @@ void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_sour
     }
 }
 
+// Returns true while the input is hidden from Program and the output is blanked.
+bool BranchOutputFilter::evaluateBlanking(obs_data_t *settings)
+{
+    bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
+    if (!blankWhenHidden) {
+        return false;
+    }
+
+    bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
+    auto parent = obs_filter_get_parent(contextSource);
+    bool visibleInProgram = sourceVisibleInProgram(parent);
+
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock outputLocked(&outputMutex);
+        setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
+    }
+
+    return !visibleInProgram;
+}
+
 // Controlling output status here.
 // Start / Stop should only heppen in this function as possible because rapid manipulation caused crash easily.
 // NOTE: Becareful this function is called so offen.
@@ -1123,8 +1140,6 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 }
                 return anyStarted;
             };
-            bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
-            bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
 
             // Decide the restart before any start below: an individual start reuses the running
             // infrastructure, which leaves activeSettings at the snapshot it was built from.
@@ -1271,8 +1286,6 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
             if (streamingAlive || recordingAlive || recordingPending || replayBufferActive) {
                 // Monitoring source
-                auto parent = obs_filter_get_parent(contextSource);
-
                 // Resolve input resolution based on video source type
                 uint32_t sourceWidth;
                 uint32_t sourceHeight;
@@ -1284,19 +1297,11 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     return;
                 }
 
-                bool visibleInProgram = true;
-                if (blankWhenHidden) {
-                    visibleInProgram = sourceVisibleInProgram(parent);
-                    pthread_mutex_lock(&outputMutex);
-                    {
-                        OBSMutexAutoUnlock outputLocked(&outputMutex);
-                        setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
-                    }
-                }
+                bool inputHidden = evaluateBlanking(settings);
 
                 // When blanking because the source is not visible, some sources report unstable base sizes.
                 // Avoid restart storms while hidden; resolution will be re-evaluated when visible again.
-                bool skipResolutionRestart = blankWhenHidden && !visibleInProgram;
+                bool skipResolutionRestart = inputHidden;
 
                 if (!skipResolutionRestart && (width != sourceWidth || height != sourceHeight)) {
                     // Source resolution was changed
