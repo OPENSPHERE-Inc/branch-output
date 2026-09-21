@@ -1793,8 +1793,13 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
     OBSString config_dir_path = obs_module_get_config_path(obs_current_module(), "");
     os_mkdirs(config_dir_path);
 
+    // Serializing swaps the JSON buffer of the serialized object without a lock, and this callback
+    // runs on both the graphics thread and the UI thread for the same settings object.
+    OBSDataAutoRelease snapshot = obs_data_create();
+    obs_data_apply(snapshot, settings);
+
     OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
-    obs_data_save_json_safe(settings, path, "tmp", "bak");
+    obs_data_save_json_safe(snapshot, path, "tmp", "bak");
 
     // The registered hotkey set depends on which outputs are enabled in settings.
     syncHotkeys(settings);
