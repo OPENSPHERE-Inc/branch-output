@@ -276,6 +276,22 @@ QString BranchOutputFilter::getInputName() const
     return obs_source_get_name(obs_filter_get_parent(contextSource));
 }
 
+void BranchOutputFilter::acquireInputShowing()
+{
+    auto parent = obs_filter_get_parent(contextSource);
+    if (parent) {
+        obs_source_inc_showing(parent);
+    }
+}
+
+void BranchOutputFilter::releaseInputShowing()
+{
+    auto parent = obs_filter_get_parent(contextSource);
+    if (parent) {
+        obs_source_dec_showing(parent);
+    }
+}
+
 // Caller must hold outputMutex.
 // Idempotent: if infrastructure already exists, return true.
 // On failure after partial resource creation, all resources are cleaned up

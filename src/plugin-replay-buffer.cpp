@@ -130,10 +130,7 @@ void BranchOutputFilter::createAndStartReplayBuffer(obs_data_t *settings)
     // Start replay buffer output
     if (obs_output_start(replayBufferOutput)) {
         replayBufferActive = true;
-        auto parent = obs_filter_get_parent(contextSource);
-        if (parent) {
-            obs_source_inc_showing(parent);
-        }
+        acquireInputShowing();
         obs_log(LOG_INFO, "%s: Starting replay buffer succeeded", qUtf8Printable(name));
     } else {
         obs_log(LOG_ERROR, "%s: Starting replay buffer failed", qUtf8Printable(name));
@@ -148,10 +145,7 @@ void BranchOutputFilter::stopReplayBufferOutput()
 
         if (replayBufferOutput) {
             if (replayBufferActive) {
-                obs_source_t *parent = obs_filter_get_parent(contextSource);
-                if (parent) {
-                    obs_source_dec_showing(parent);
-                }
+                releaseInputShowing();
                 obs_output_stop(replayBufferOutput);
             }
         }

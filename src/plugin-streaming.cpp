@@ -220,10 +220,7 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
     // Start streaming output
     if (obs_output_start(streamings[index].output)) {
         streamings[index].active = true;
-        auto parent = obs_filter_get_parent(contextSource);
-        if (parent) {
-            obs_source_inc_showing(parent);
-        }
+        acquireInputShowing();
         obs_log(LOG_INFO, "%s (%zu): Starting streaming output succeeded", qUtf8Printable(name), index);
     } else {
         obs_log(LOG_ERROR, "%s (%zu): Starting streaming output failed", qUtf8Printable(name), index);
@@ -233,10 +230,7 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
 void BranchOutputFilter::stopStreamingOutput(size_t index)
 {
     if (streamings[index].output && streamings[index].active) {
-        obs_source_t *parent = obs_filter_get_parent(contextSource);
-        if (parent) {
-            obs_source_dec_showing(parent);
-        }
+        releaseInputShowing();
         obs_output_stop(streamings[index].output);
         obs_log(LOG_INFO, "%s (%zu): Stopping streaming output succeeded", qUtf8Printable(name), index);
     }

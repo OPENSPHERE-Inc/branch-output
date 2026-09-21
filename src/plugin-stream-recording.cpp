@@ -166,10 +166,7 @@ void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
     if (obs_output_start(recordingOutput)) {
         recordingActive = true;
         recordingPending = false;
-        auto parent = obs_filter_get_parent(contextSource);
-        if (parent) {
-            obs_source_inc_showing(parent);
-        }
+        acquireInputShowing();
         obs_log(LOG_INFO, "%s: Starting recording output succeeded", qUtf8Printable(name));
     } else {
         obs_log(LOG_ERROR, "%s: Starting recording output failed", qUtf8Printable(name));
@@ -184,10 +181,7 @@ void BranchOutputFilter::stopRecordingOutput(bool pending)
 
         if (recordingOutput) {
             if (recordingActive) {
-                obs_source_t *parent = obs_filter_get_parent(contextSource);
-                if (parent) {
-                    obs_source_dec_showing(parent);
-                }
+                releaseInputShowing();
                 obs_output_stop(recordingOutput);
             }
         }

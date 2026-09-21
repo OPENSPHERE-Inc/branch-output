@@ -239,6 +239,8 @@ class BranchOutputFilter : public QObject {
     bool validateInput();
     bool isInputAvailable() const;
     QString getInputName() const;
+    void acquireInputShowing();
+    void releaseInputShowing();
 
     // Hotkey synchronization. After construction, every libobs hotkey call and every access to
     // hotkeyBindingsCache happens inside an obs_hotkey_update_atomic() callback.
