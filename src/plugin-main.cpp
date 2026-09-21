@@ -130,6 +130,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
 {
     // DO NOT use obs_filter_get_parent() in this function (It'll return nullptr)
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", qUtf8Printable(name));
+    // obs_data_get_last_json() below reads the buffer that this obs_data_get_json() call fills.
     obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
 
     // Per-stream user-enabled flags and hotkey IDs
@@ -876,15 +877,19 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
     // Stop the private video_t (joins its worker thread) before releasing the encoder, for
     // the same reason as the audio_t above. obs_view_remove() only flags the mix for removal
     // on the graphics thread, so it is not a synchronization point.
-    // FIXME: A GPU video encoder is driven from libobs' GPU encode thread via the mix's
-    // gpu_encoders array, which only obs_encoder_stop() detaches. Closing that path needs the
-    // output's start to be resolved before infrastructure is released.
+    // FIXME: This covers the raw video worker only. A GPU video encoder is driven from libobs'
+    // GPU encode thread via the mix's gpu_encoders array, which only obs_encoder_stop() detaches.
+    // Waiting for obs_output_active() to turn false is no boundary either: an output whose start
+    // is still unresolved already reports false. Resolve every output's start before releasing
+    // infrastructure (issue #161).
     if (videoOutput && videoOutputOwned) {
         video_output_stop(videoOutput);
     }
 
     videoEncoder = nullptr;
 
+    // FIXME: The view keeps rendering the proxy source until its source is cleared below, after
+    // FilterVideoCapture is destroyed here. Clear the view's source before this call.
     teardownVideoInput();
 
     if (view && videoOutputOwned) {
@@ -1873,6 +1878,10 @@ void BranchOutputFilter::removeCallback()
 void BranchOutputFilter::destroyCallback()
 {
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter destroying", qUtf8Printable(name));
+
+    // FIXME: Hotkeys are unregistered only in removeCallback(). A sync pass that races the
+    // removal registers them again and they outlive this instance. Serialize hotkey sync with
+    // filter removal.
 
     // Release all handles
     stopOutput();
