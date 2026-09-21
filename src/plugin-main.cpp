@@ -123,7 +123,8 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       enableAllStreamingHotkeyId(OBS_INVALID_HOTKEY_ID),
       disableAllStreamingHotkeyId(OBS_INVALID_HOTKEY_ID),
       toggleRecordingHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
-      toggleReplayBufferHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID)
+      toggleReplayBufferHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
+      hotkeyRegistrationTarget(nullptr)
 {
     // DO NOT use obs_filter_get_parent() in this function (It'll return nullptr)
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", qUtf8Printable(name));
