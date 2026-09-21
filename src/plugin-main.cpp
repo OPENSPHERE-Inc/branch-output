@@ -879,9 +879,8 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
     // on the graphics thread, so it is not a synchronization point.
     // FIXME: This covers the raw video worker only. A GPU video encoder is driven from libobs'
     // GPU encode thread via the mix's gpu_encoders array, which only obs_encoder_stop() detaches.
-    // Waiting for obs_output_active() to turn false is no boundary either: an output whose start
-    // is still unresolved already reports false. Resolve every output's start before releasing
-    // infrastructure (issue #161).
+    // obs_output_active() turning false is no boundary: an output whose start is unresolved already
+    // reports false. Resolve every output's start before releasing infrastructure (issue #161).
     if (videoOutput && videoOutputOwned) {
         video_output_stop(videoOutput);
     }
@@ -1884,9 +1883,8 @@ void BranchOutputFilter::destroyCallback()
 {
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter destroying", qUtf8Printable(name));
 
-    // FIXME: Hotkeys are unregistered only in removeCallback(). A sync pass that races the
-    // removal registers them again and they outlive this instance. Serialize hotkey sync with
-    // filter removal.
+    // FIXME: Hotkeys are unregistered only in removeCallback(); a sync pass racing the removal
+    // re-registers them and they outlive this instance. Serialize hotkey sync with filter removal.
 
     // Release all handles
     stopOutput();
