@@ -372,6 +372,30 @@ bool BranchOutputFilter::setupVideoInput(obs_data_t *, obs_video_info *ovi, cons
 }
 
 // Caller must hold outputMutex.
+// On failure, everything created here has already been cleaned up.
+bool BranchOutputFilter::setupDefaultAudio(const obs_audio_info &ai)
+{
+    // Filter pipeline's audio
+    obs_log(LOG_INFO, "%s: Use filter audio for track 1", qUtf8Printable(name));
+    auto audioContext = &audios[0];
+    audioContext->capture = new FilterAudioCapture(qUtf8Printable(name), ai.samples_per_sec, ai.speakers, this);
+    audioContext->audio = audioContext->capture->getAudio();
+    audioContext->streaming = true;
+    audioContext->recording = true;
+    audioContext->name = audioContext->capture->getName();
+
+    if (!audioContext->audio) {
+        obs_log(LOG_ERROR, "%s: Audio creation failed", qUtf8Printable(name));
+        delete audioContext->capture;
+        audioContext->capture = nullptr;
+        releaseInfrastructureIfIdle();
+        return false;
+    }
+
+    return true;
+}
+
+// Caller must hold outputMutex.
 // Idempotent: if infrastructure already exists, return true.
 // On failure after partial resource creation, all resources are cleaned up
 // so that the next call can retry from a clean state.
@@ -568,20 +592,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
             }
         }
     } else {
-        // Filter pipeline's audio
-        obs_log(LOG_INFO, "%s: Use filter audio for track 1", qUtf8Printable(name));
-        auto audioContext = &audios[0];
-        audioContext->capture = new FilterAudioCapture(qUtf8Printable(name), ai.samples_per_sec, ai.speakers, this);
-        audioContext->audio = audioContext->capture->getAudio();
-        audioContext->streaming = true;
-        audioContext->recording = true;
-        audioContext->name = audioContext->capture->getName();
-
-        if (!audioContext->audio) {
-            obs_log(LOG_ERROR, "%s: Audio creation failed", qUtf8Printable(name));
-            delete audioContext->capture;
-            audioContext->capture = nullptr;
-            releaseInfrastructureIfIdle();
+        if (!setupDefaultAudio(ai)) {
             return false;
         }
     }
