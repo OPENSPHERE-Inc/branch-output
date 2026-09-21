@@ -220,7 +220,7 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
     // Start streaming output
     if (obs_output_start(streamings[index].output)) {
         streamings[index].active = true;
-        auto parent = obs_filter_get_parent(filterSource);
+        auto parent = obs_filter_get_parent(contextSource);
         if (parent) {
             obs_source_inc_showing(parent);
         }
@@ -233,7 +233,7 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
 void BranchOutputFilter::stopStreamingOutput(size_t index)
 {
     if (streamings[index].output && streamings[index].active) {
-        obs_source_t *parent = obs_filter_get_parent(filterSource);
+        obs_source_t *parent = obs_filter_get_parent(contextSource);
         if (parent) {
             obs_source_dec_showing(parent);
         }
@@ -585,7 +585,7 @@ void BranchOutputFilter::onEnableAllStreamingHotkeyPressed(void *data, obs_hotke
     }
 
     auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    if (!obs_source_enabled(filter->contextSource)) {
         return;
     }
 
@@ -604,7 +604,7 @@ void BranchOutputFilter::onDisableAllStreamingHotkeyPressed(void *data, obs_hotk
     }
 
     auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    if (!obs_source_enabled(filter->contextSource)) {
         return;
     }
 
@@ -625,7 +625,7 @@ bool BranchOutputFilter::onEnableStreamingServiceHotkeyPressed(
     }
 
     auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
 
@@ -653,7 +653,7 @@ bool BranchOutputFilter::onDisableStreamingServiceHotkeyPressed(
     }
 
     auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
 

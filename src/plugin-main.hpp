@@ -134,7 +134,7 @@ class BranchOutputFilter : public QObject {
     std::atomic<bool> replayBufferUserEnabled;
 
     // Filter source (Do not use OBSSourceAutoRelease)
-    obs_source_t *filterSource;
+    obs_source_t *contextSource;
 
     // User choosed encoder
     OBSEncoderAutoRelease videoEncoder;

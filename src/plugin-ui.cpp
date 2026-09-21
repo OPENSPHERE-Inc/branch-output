@@ -198,7 +198,7 @@ void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char *pro
             // Force filter activation
             filter->initialized = true;
 
-            OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+            OBSDataAutoRelease settings = obs_source_get_settings(filter->contextSource);
             filter->updateCallback(settings);
 
             return true;
@@ -1179,7 +1179,7 @@ obs_properties_t *BranchOutputFilter::getProperties()
     obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
 
     // Ensure transient checkboxes start unchecked
-    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+    OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
     obs_data_set_bool(settings, "preview_crop_rect_rel", false);
     obs_data_set_bool(settings, "preview_crop_rect_abs", false);
     obs_data_set_bool(settings, "replay_buffer_estimate", false);

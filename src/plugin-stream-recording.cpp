@@ -166,7 +166,7 @@ void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
     if (obs_output_start(recordingOutput)) {
         recordingActive = true;
         recordingPending = false;
-        auto parent = obs_filter_get_parent(filterSource);
+        auto parent = obs_filter_get_parent(contextSource);
         if (parent) {
             obs_source_inc_showing(parent);
         }
@@ -184,7 +184,7 @@ void BranchOutputFilter::stopRecordingOutput(bool pending)
 
         if (recordingOutput) {
             if (recordingActive) {
-                obs_source_t *parent = obs_filter_get_parent(filterSource);
+                obs_source_t *parent = obs_filter_get_parent(contextSource);
                 if (parent) {
                     obs_source_dec_showing(parent);
                 }
@@ -590,7 +590,7 @@ bool BranchOutputFilter::onEnableRecordingHotkeyPressed(void *data, obs_hotkey_p
     }
 
     auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
 
@@ -611,7 +611,7 @@ bool BranchOutputFilter::onDisableRecordingHotkeyPressed(void *data, obs_hotkey_
     }
 
     auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
 

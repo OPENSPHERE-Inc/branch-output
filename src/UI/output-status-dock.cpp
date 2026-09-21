@@ -788,17 +788,17 @@ OutputTableRow::OutputTableRow(
       outputType(_outputType),
       groupIndex(_groupIndex)
 {
-    auto source = obs_filter_get_parent(filter->filterSource);
+    auto source = obs_filter_get_parent(filter->contextSource);
     filterInfo.sourceName = QString(obs_source_get_name(source));
     filterInfo.sourceUuid = QString(obs_source_get_uuid(source));
-    filterInfo.filterName = QString(obs_source_get_name(filter->filterSource));
-    filterInfo.filterUuid = QString(obs_source_get_uuid(filter->filterSource));
+    filterInfo.filterName = QString(obs_source_get_name(filter->contextSource));
+    filterInfo.filterUuid = QString(obs_source_get_uuid(filter->contextSource));
     parentWeak = obs_source_get_weak_source(source);
-    filterWeak = obs_source_get_weak_source(filter->filterSource);
+    filterWeak = obs_source_get_weak_source(filter->contextSource);
 
     auto rowId = QString("%1_%2_%3").arg(obs_source_get_name(source)).arg(filter->name).arg(groupIndex);
 
-    filterCell = new FilterCell(rowId, filter->name, filter->filterSource, parent);
+    filterCell = new FilterCell(rowId, filter->name, filter->contextSource, parent);
     parentCell = new ParentCell(rowId, obs_source_get_name(source), source, parent);
     status = new StatusCell(rowId, QTStr("Status.Inactive"), parent);
 
@@ -812,7 +812,7 @@ OutputTableRow::OutputTableRow(
         break;
     case ROW_OUTPUT_RECORDING:
         outputName = new OutputCell(
-            rowId, QTStr("Recording"), filter->isRecordingUserEnabled(), ROW_OUTPUT_RECORDING, filter->filterSource,
+            rowId, QTStr("Recording"), filter->isRecordingUserEnabled(), ROW_OUTPUT_RECORDING, filter->contextSource,
             parent
         );
         outputName->setToolTip(QTStr("RecordingToggleTooltip"));
@@ -820,7 +820,7 @@ OutputTableRow::OutputTableRow(
     case ROW_OUTPUT_REPLAY_BUFFER:
         outputName = new OutputCell(
             rowId, QTStr("ReplayBuffer"), filter->isReplayBufferUserEnabled(), ROW_OUTPUT_REPLAY_BUFFER,
-            filter->filterSource, parent
+            filter->contextSource, parent
         );
         outputName->setToolTip(QTStr("ReplayBufferToggleTooltip"));
         break;

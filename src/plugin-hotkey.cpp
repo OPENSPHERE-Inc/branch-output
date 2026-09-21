@@ -84,12 +84,12 @@ captureHotkeyPairBindings(obs_data_t *cache, obs_hotkey_pair_id id, const QStrin
 
 QString BranchOutputFilter::buildHotkeyName(const char *base) const
 {
-    return QString("%1.%2").arg(base).arg(obs_source_get_uuid(filterSource));
+    return QString("%1.%2").arg(base).arg(obs_source_get_uuid(contextSource));
 }
 
 QString BranchOutputFilter::buildStreamingSlotHotkeyName(const char *base, size_t index) const
 {
-    return QString("%1%2.%3").arg(base).arg(index).arg(obs_source_get_uuid(filterSource));
+    return QString("%1%2.%3").arg(base).arg(index).arg(obs_source_get_uuid(contextSource));
 }
 
 QString BranchOutputFilter::buildHotkeyDescription(const char *textKey) const
@@ -459,7 +459,7 @@ void BranchOutputFilter::captureRegisteredHotkeyBindings()
 // An empty binding array and a missing key mean the same thing on restore.
 void BranchOutputFilter::pruneHotkeyBindingsCache()
 {
-    auto suffix = QString(".%1").arg(obs_source_get_uuid(filterSource));
+    auto suffix = QString(".%1").arg(obs_source_get_uuid(contextSource));
     QStringList staleKeys;
 
     for (auto item = obs_data_first(hotkeyBindingsCache); item; obs_data_item_next(&item)) {
@@ -486,7 +486,7 @@ void BranchOutputFilter::pruneHotkeyBindingsCache()
 // setters take no lock of their own, and the callers run on several threads.
 void BranchOutputFilter::syncHotkeys(obs_data_t *settings)
 {
-    auto parent = obs_filter_get_parent(filterSource);
+    auto parent = obs_filter_get_parent(contextSource);
     // sourceIsPrivate() enumerates sources and must not run under the hotkey mutex.
     // Registering against a private parent is not allowed: obs_hotkey_pair_register_source()
     // accepts one while obs_hotkey_register_source() rejects it, which would leave a group
@@ -625,12 +625,12 @@ bool BranchOutputFilter::onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair
     }
 
     BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
-    if (obs_source_enabled(filter->filterSource)) {
+    if (obs_source_enabled(filter->contextSource)) {
         // Already enabled
         return false;
     }
 
-    obs_source_set_enabled(filter->filterSource, true);
+    obs_source_set_enabled(filter->contextSource, true);
     return true;
 }
 
@@ -641,11 +641,11 @@ bool BranchOutputFilter::onDisableFilterHotkeyPressed(void *data, obs_hotkey_pai
     }
 
     BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    if (!obs_source_enabled(filter->contextSource)) {
         // Already disabled
         return false;
     }
 
-    obs_source_set_enabled(filter->filterSource, false);
+    obs_source_set_enabled(filter->contextSource, false);
     return true;
 }

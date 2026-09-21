@@ -130,7 +130,7 @@ void BranchOutputFilter::createAndStartReplayBuffer(obs_data_t *settings)
     // Start replay buffer output
     if (obs_output_start(replayBufferOutput)) {
         replayBufferActive = true;
-        auto parent = obs_filter_get_parent(filterSource);
+        auto parent = obs_filter_get_parent(contextSource);
         if (parent) {
             obs_source_inc_showing(parent);
         }
@@ -148,7 +148,7 @@ void BranchOutputFilter::stopReplayBufferOutput()
 
         if (replayBufferOutput) {
             if (replayBufferActive) {
-                obs_source_t *parent = obs_filter_get_parent(filterSource);
+                obs_source_t *parent = obs_filter_get_parent(contextSource);
                 if (parent) {
                     obs_source_dec_showing(parent);
                 }
@@ -337,7 +337,7 @@ bool BranchOutputFilter::onEnableReplayBufferHotkeyPressed(void *data, obs_hotke
     }
 
     auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
 
@@ -358,7 +358,7 @@ bool BranchOutputFilter::onDisableReplayBufferHotkeyPressed(void *data, obs_hotk
     }
 
     auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
 

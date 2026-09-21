@@ -91,7 +91,7 @@ pthread_mutex_t pluginMutex;
 BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent)
     : QObject(parent),
       name(obs_source_get_name(source)),
-      filterSource(source),
+      contextSource(source),
       initialized(false),
       recordingActive(false),
       recordingPending(false),
@@ -188,7 +188,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
                   obs_data_get_bool(settings, "replay_buffer");
 
     // Register proc handlers for external script access. These handlers
-    // live on filterSource and die with it. A well-behaved script acquires a
+    // live on contextSource and die with it. A well-behaved script acquires a
     // strong ref via obs_get_source_by_uuid() before calling; the weak-ref CAS
     // refuses to bump a count of 0, so the filter cannot be destroyed mid-call.
     // A misbehaving script that caches a proc_handler_t * past source release
@@ -197,7 +197,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     //
     // FIXME: libobs has no proc_handler_remove(). If it gains one, pair
     // unregistration with ~BranchOutputFilter().
-    proc_handler_t *ph = obs_source_get_proc_handler(filterSource);
+    proc_handler_t *ph = obs_source_get_proc_handler(contextSource);
     proc_handler_add(
         ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat, this
     );
@@ -258,13 +258,13 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
     }
 
     // Abort when obs initializing or filter disabled.
-    if (!obs_initialized() || !obs_source_enabled(filterSource)) {
+    if (!obs_initialized() || !obs_source_enabled(contextSource)) {
         obs_log(LOG_ERROR, "%s: Ignore unavailable filter", qUtf8Printable(name));
         return false;
     }
 
     // Retrieve filter source
-    auto parent = obs_filter_get_parent(filterSource);
+    auto parent = obs_filter_get_parent(contextSource);
     if (!parent) {
         obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
         return false;
@@ -338,7 +338,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
         // The proxy source renders the captured texrender texture on the GPU.
         // obs_view creates a video_t* registered in OBS's mix list, allowing
         // GPU encoders (NVENC, QSV, AMF, etc.) to work directly.
-        filterVideoCapture = new FilterVideoCapture(filterSource, parent, width, height);
+        filterVideoCapture = new FilterVideoCapture(contextSource, parent, width, height);
         if (!filterVideoCapture->getProxySource()) {
             obs_log(LOG_ERROR, "%s: Filter video capture creation failed", qUtf8Printable(name));
             delete filterVideoCapture;
@@ -878,7 +878,7 @@ void BranchOutputFilter::saveCallback(obs_data_t *settings)
 void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_source_t *parent)
 {
     if (!parent) {
-        parent = obs_filter_get_parent(filterSource);
+        parent = obs_filter_get_parent(contextSource);
     }
 
     if (!view) {
@@ -946,12 +946,12 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
     auto *dock = statusDock.load();
     auto interlockType = dock ? dock->getInterlockType() : INTERLOCK_TYPE_ALWAYS_ON;
-    auto sourceEnabled = obs_source_enabled(filterSource);
+    auto sourceEnabled = obs_source_enabled(contextSource);
     auto streamingActive = countActiveStreamings() > 0;
 
     if (!streamingActive && !recordingActive && !recordingPending && !replayBufferActive) {
         // Evaluate start condition
-        auto parent = obs_filter_get_parent(filterSource);
+        auto parent = obs_filter_get_parent(contextSource);
         if (!parent || !sourceInFrontend(parent)) {
             // Ignore when source in no longer exists in frontend
             return;
@@ -1195,7 +1195,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
             if (streamingAlive || recordingAlive || recordingPending || replayBufferActive) {
                 // Monitoring source
-                auto parent = obs_filter_get_parent(filterSource);
+                auto parent = obs_filter_get_parent(contextSource);
 
                 // Resolve input resolution based on video source type
                 uint32_t sourceWidth;
@@ -1521,7 +1521,7 @@ std::optional<CropRect> BranchOutputFilter::calculateCrop(uint32_t srcWidth, uin
 void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHeight)
 {
     if (useFilterInput) {
-        obs_source_t *target = obs_filter_get_target(filterSource);
+        obs_source_t *target = obs_filter_get_target(contextSource);
         if (target) {
             outWidth = obs_source_get_base_width(target);
             outHeight = obs_source_get_base_height(target);
@@ -1530,7 +1530,7 @@ void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHe
             outHeight = 0;
         }
     } else {
-        obs_source_t *parent = obs_filter_get_parent(filterSource);
+        obs_source_t *parent = obs_filter_get_parent(contextSource);
         outWidth = obs_source_get_width(parent);
         outHeight = obs_source_get_height(parent);
     }
@@ -1601,7 +1601,7 @@ void BranchOutputFilter::determineOutputResolution(obs_data_t *settings, obs_vid
 
 QString BranchOutputFilter::applyFilenameFormatArgs(const QString &format, bool noSpace)
 {
-    QString sourceName = obs_source_get_name(obs_filter_get_parent(filterSource));
+    QString sourceName = obs_source_get_name(obs_filter_get_parent(contextSource));
     QString filterName = qUtf8Printable(name);
     auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
     return QString(format).arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
@@ -1656,11 +1656,11 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
         QMetaObject::invokeMethod(dock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
     }
 
-    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+    OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
     syncHotkeys(settings);
     // Track filter renames for name and hotkey settings
     filterRenamedSignal.Connect(
-        obs_source_get_signal_handler(filterSource), "rename",
+        obs_source_get_signal_handler(contextSource), "rename",
         [](void *_data, calldata_t *cd) {
             auto _filter = static_cast<BranchOutputFilter *>(_data);
             _filter->updateHotkeyDescriptions(calldata_string(cd, "new_name"));
@@ -1680,7 +1680,7 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
     // below walk the object unsynchronized. Confine live-settings traversal to the UI thread.
     appliedSettings.replace(settings);
 
-    auto source = obs_filter_get_parent(filterSource);
+    auto source = obs_filter_get_parent(contextSource);
 
     // Do not save settings for private sources
     if (sourceIsPrivate(source)) {
@@ -1726,7 +1726,7 @@ void BranchOutputFilter::videoTickCallback(float)
         uint32_t curW, curH;
         getSourceResolution(curW, curH);
         if (curW > 0 && curH > 0 && cropPreview.resolutionChanged(curW, curH)) {
-            OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+            OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
             cropPreview.updateResolution(curW, curH, calculateCrop(curW, curH, settings));
         }
     }
@@ -1744,11 +1744,11 @@ void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
             filterVideoCapture->drawCapturedTexture();
         } else {
             // Fallback: capture failed, pass through normally
-            obs_source_skip_video_filter(filterSource);
+            obs_source_skip_video_filter(contextSource);
         }
     } else {
         // Source output mode: pass through the filter chain as usual
-        obs_source_skip_video_filter(filterSource);
+        obs_source_skip_video_filter(contextSource);
     }
 
     // Draw crop preview rectangle overlay (main mix only, not encoded in branch output)
