@@ -142,6 +142,12 @@ class BranchOutputFilter : public QObject {
     // Video context
     OBSView view;
     video_t *videoOutput;
+    // Set once ensureInfrastructure() has completed: videoOutput, videoEncoder and the audio
+    // contexts are usable by the outputs. Guarded by outputMutex.
+    bool infrastructureReady;
+    // Set while this instance owns view and the video_t obtained from it. A video_t that is not
+    // owned must be neither stopped nor removed by this instance. Guarded by outputMutex.
+    bool videoOutputOwned;
     uint32_t width;
     uint32_t height;
 

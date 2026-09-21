@@ -106,6 +106,8 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       videoEncoder(nullptr),
       videoOutput(nullptr),
       view(nullptr),
+      infrastructureReady(false),
+      videoOutputOwned(false),
       useFilterInput(false),
       filterVideoCapture(nullptr),
       width(0),
@@ -327,6 +329,7 @@ bool BranchOutputFilter::setupVideoInput(obs_data_t *, obs_video_info *ovi, cons
         }
 
         view = obs_view_create();
+        videoOutputOwned = true;
         obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
 
         videoOutput = obs_view_add2(view, ovi);
@@ -344,6 +347,7 @@ bool BranchOutputFilter::setupVideoInput(obs_data_t *, obs_video_info *ovi, cons
     } else {
         // Source output mode (default): use obs_view for the parent source
         view = obs_view_create();
+        videoOutputOwned = true;
 
         if (crop.width != width || crop.height != height) {
             cropScene = obs_scene_create_private("branch_output_crop");
@@ -402,7 +406,7 @@ bool BranchOutputFilter::setupDefaultAudio(const obs_audio_info &ai)
 // so that the next call can retry from a clean state.
 bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
 {
-    if (view) {
+    if (infrastructureReady) {
         return true;
     }
 
@@ -670,6 +674,8 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
         obs_encoder_set_audio(audioContext->encoder, audioContext->audio);
     }
 
+    infrastructureReady = true;
+
     evaluateBlanking(settings);
 
     return true;
@@ -871,7 +877,7 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
     // FIXME: A GPU video encoder is driven from libobs' GPU encode thread via the mix's
     // gpu_encoders array, which only obs_encoder_stop() detaches. Closing that path needs the
     // output's start to be resolved before infrastructure is released.
-    if (videoOutput) {
+    if (videoOutput && videoOutputOwned) {
         video_output_stop(videoOutput);
     }
 
@@ -879,13 +885,15 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
 
     teardownVideoInput();
 
-    if (view) {
+    if (view && videoOutputOwned) {
         obs_view_set_source(view, 0, nullptr);
         obs_view_remove(view);
     }
 
     view = nullptr;
     videoOutput = nullptr;
+    videoOutputOwned = false;
+    infrastructureReady = false;
 }
 
 void BranchOutputFilter::stopOutput()
@@ -955,7 +963,7 @@ void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_sour
         parent = obs_filter_get_parent(contextSource);
     }
 
-    if (!view) {
+    if (!infrastructureReady) {
         blankingOutputActive = false;
         if (blankingAudioMuted) {
             setAudioCapturesActive(true);
