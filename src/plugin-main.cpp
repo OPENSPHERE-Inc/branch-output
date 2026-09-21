@@ -282,6 +282,9 @@ QString BranchOutputFilter::getInputName() const
     return obs_source_get_name(obs_filter_get_parent(contextSource));
 }
 
+// FIXME: releaseInputShowing() re-resolves the parent, which libobs has already cleared by the
+// time destroyCallback() stops the outputs, so the reference taken here leaks until the parent is
+// destroyed. Keep a weak reference to the parent at acquire time and release against it.
 void BranchOutputFilter::acquireInputShowing()
 {
     auto parent = obs_filter_get_parent(contextSource);
