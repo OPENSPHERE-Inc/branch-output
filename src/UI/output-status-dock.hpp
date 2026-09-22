@@ -326,6 +326,7 @@ class OutputTableRow : public QObject {
     BranchOutputFilter *filter;
     BranchOutputFilterInfo filterInfo;
     OBSWeakSourceAutoRelease parentWeak;
+    OBSWeakSourceAutoRelease filterWeak;
     FilterCell *filterCell;
     ParentCell *parentCell;
     OutputCell *outputName;

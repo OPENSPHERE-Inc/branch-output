@@ -387,7 +387,8 @@ void BranchOutputStatusDock::addRow(
 void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 {
     // FIXME: `filter` is a raw pointer queued from addCallback() / updateCallback() and may already
-    // be deleted, leaving no destroyed hook. Post an OBSWeakSource and resolve it via obs_obj_get_data().
+    // be deleted, leaving no destroyed hook. Post an OBSWeakSource instead, resolve it with
+    // obs_weak_source_get_source(), then get the filter via obs_obj_get_data() on that source.
 
     // Ensure filter removed
     removeFilter(filter);
@@ -463,12 +464,15 @@ void BranchOutputStatusDock::onFilterDestroyed(QObject *obj)
 void BranchOutputStatusDock::update()
 {
     foreach (auto row, outputTableRows) {
+        OBSSourceAutoRelease filterSource = obs_weak_source_get_source(row->filterWeak);
         OBSSourceAutoRelease parent = obs_weak_source_get_source(row->parentWeak);
-        if (!sourceInFrontend(parent)) {
-            // Remove filter that no longer exists in the frontend
+        bool attached = filterSource && obs_filter_get_parent(filterSource) == parent.Get();
+        if (!attached || !sourceInFrontend(parent)) {
+            // Remove filter that is detached or no longer exists in the frontend
             removeFilter(row->filter);
             continue;
         }
+        // The strong ref defers the filter's destroy (stopOutput()) past row->update()
         row->update();
     }
 
@@ -588,12 +592,13 @@ void BranchOutputStatusDock::hideEvent(QHideEvent *)
 
 void BranchOutputStatusDock::setEabnleAll(bool enabled)
 {
-    // FIXME: row->filter->filterSource may already be released by libobs while the row is still
-    // listed. Hold an OBSWeakSource per row and resolve it before use, as OutputCell::weakSource does.
     foreach (auto row, outputTableRows) {
         if (row->groupIndex == 0) {
             // Do only once for each filters
-            obs_source_set_enabled(row->filter->filterSource, enabled);
+            OBSSourceAutoRelease filterSource = obs_weak_source_get_source(row->filterWeak);
+            if (filterSource) {
+                obs_source_set_enabled(filterSource, enabled);
+            }
         }
     }
 
@@ -789,6 +794,7 @@ OutputTableRow::OutputTableRow(
     filterInfo.filterName = QString(obs_source_get_name(filter->filterSource));
     filterInfo.filterUuid = QString(obs_source_get_uuid(filter->filterSource));
     parentWeak = obs_source_get_weak_source(source);
+    filterWeak = obs_source_get_weak_source(filter->filterSource);
 
     auto rowId = QString("%1_%2_%3").arg(obs_source_get_name(source)).arg(filter->name).arg(groupIndex);
 
