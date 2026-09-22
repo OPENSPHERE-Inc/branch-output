@@ -168,6 +168,45 @@ inline QString getIndexedPropNameFormat(size_t index, size_t base = 0)
     return index == base ? QString("%1") : QString("%%1_%1").arg(index);
 }
 
+// Set every user value of src as the default value of the same key in dest.
+inline void applyDefaults(obs_data_t *dest, obs_data_t *src)
+{
+    for (auto item = obs_data_first(src); item; obs_data_item_next(&item)) {
+        auto name = obs_data_item_get_name(item);
+        auto type = obs_data_item_gettype(item);
+
+        switch (type) {
+        case OBS_DATA_STRING:
+            obs_data_set_default_string(dest, name, obs_data_item_get_string(item));
+            break;
+        case OBS_DATA_NUMBER: {
+            auto numtype = obs_data_item_numtype(item);
+            if (numtype == OBS_DATA_NUM_DOUBLE) {
+                obs_data_set_default_double(dest, name, obs_data_item_get_double(item));
+            } else if (numtype == OBS_DATA_NUM_INT) {
+                obs_data_set_default_int(dest, name, obs_data_item_get_int(item));
+            }
+            break;
+        }
+        case OBS_DATA_BOOLEAN:
+            obs_data_set_default_bool(dest, name, obs_data_item_get_bool(item));
+            break;
+        case OBS_DATA_OBJECT: {
+            OBSDataAutoRelease value = obs_data_item_get_obj(item);
+            obs_data_set_default_obj(dest, name, value);
+            break;
+        }
+        case OBS_DATA_ARRAY: {
+            OBSDataArrayAutoRelease value = obs_data_item_get_array(item);
+            obs_data_set_default_array(dest, name, value);
+            break;
+        }
+        case OBS_DATA_NULL:
+            break;
+        }
+    }
+}
+
 // Default SRT listener accept timeout in microseconds (matches the unit of the
 // SRT URL "listen_timeout" query parameter consumed by OBS's ffmpeg mpegts muxer).
 #define DEFAULT_SRT_LISTEN_TIMEOUT_US 5000000

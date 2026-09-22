@@ -262,22 +262,20 @@ void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, callda
     }
 
     if (needsFormatUpdate) {
-        // filterSource is immutable after construction so the settings read
-        // does not need outputMutex protection.
-        OBSDataAutoRelease filterSettings = obs_source_get_settings(filter->filterSource);
+        auto applied = filter->getAppliedSettings();
 
         QString effectiveFormat;
         if (!resolvedOverride.isEmpty()) {
             effectiveFormat = resolvedOverride;
         } else {
-            effectiveFormat = obs_data_get_string(filterSettings, "replay_buffer_filename_formatting");
+            effectiveFormat = obs_data_get_string(applied.data, "replay_buffer_filename_formatting");
             if (effectiveFormat.isEmpty()) {
                 auto config = obs_frontend_get_profile_config();
                 effectiveFormat = config_get_string(config, "Output", "FilenameFormatting");
             }
         }
 
-        bool noSpace = obs_data_get_bool(filterSettings, "replay_buffer_no_space_filename");
+        bool noSpace = obs_data_get_bool(applied.data, "replay_buffer_no_space_filename");
         QString appliedFormat = filter->applyFilenameFormatArgs(effectiveFormat, noSpace);
 
         OBSDataAutoRelease settings = obs_data_create();
@@ -320,7 +318,7 @@ bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
 
 bool BranchOutputFilter::startReplayBufferIndividual()
 {
-    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+    auto applied = getAppliedSettings();
 
     pthread_mutex_lock(&pluginMutex);
     {
@@ -330,11 +328,11 @@ bool BranchOutputFilter::startReplayBufferIndividual()
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-            if (!ensureInfrastructure(settings)) {
+            if (!ensureInfrastructure(applied.data, applied.rev)) {
                 return false;
             }
 
-            bool started = createAndStartReplayBufferChecked(settings);
+            bool started = createAndStartReplayBufferChecked(applied.data);
             if (!started) {
                 releaseInfrastructureIfIdle();
             }

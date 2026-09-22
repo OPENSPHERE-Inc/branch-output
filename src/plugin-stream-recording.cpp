@@ -234,8 +234,8 @@ void BranchOutputFilter::restartRecordingOutput()
 
         if (recordingActive && recordingOutput) {
             // Re-create recording settings with current override values
-            OBSDataAutoRelease filterSettings = obs_source_get_settings(filterSource);
-            OBSDataAutoRelease newSettings = createRecordingSettings(filterSettings);
+            auto applied = getAppliedSettings();
+            OBSDataAutoRelease newSettings = createRecordingSettings(applied.data);
             if (newSettings) {
                 obs_output_update(recordingOutput, newSettings);
             }
@@ -440,12 +440,10 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
     }
 
     if (needsFormatUpdate) {
-        // filterSource is immutable after construction so the settings read
-        // does not need outputMutex protection.
-        OBSDataAutoRelease filterSettings = obs_source_get_settings(filter->filterSource);
-        bool noSpace = obs_data_get_bool(filterSettings, "no_space_filename");
+        auto applied = filter->getAppliedSettings();
+        bool noSpace = obs_data_get_bool(applied.data, "no_space_filename");
         QString appliedFormat = filter->applyFilenameFormatArgs(
-            resolvedOverride.isEmpty() ? QString(obs_data_get_string(filterSettings, "filename_formatting"))
+            resolvedOverride.isEmpty() ? QString(obs_data_get_string(applied.data, "filename_formatting"))
                                        : resolvedOverride,
             noSpace
         );
@@ -495,7 +493,7 @@ bool BranchOutputFilter::createAndStartRecordingOutputChecked(obs_data_t *settin
 
 bool BranchOutputFilter::startRecordingIndividual()
 {
-    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+    auto applied = getAppliedSettings();
 
     pthread_mutex_lock(&pluginMutex);
     {
@@ -508,11 +506,11 @@ bool BranchOutputFilter::startRecordingIndividual()
             // ensureInfrastructure() may fail gracefully if the source is collapsed
             // (calculateCrop returns nullopt). This is acceptable — the interval timer
             // will retry on the next tick when the source becomes available.
-            if (!ensureInfrastructure(settings)) {
+            if (!ensureInfrastructure(applied.data, applied.rev)) {
                 return false;
             }
 
-            bool started = createAndStartRecordingOutputChecked(settings);
+            bool started = createAndStartRecordingOutputChecked(applied.data);
             if (!started) {
                 releaseInfrastructureIfIdle();
             }
