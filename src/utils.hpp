@@ -207,9 +207,10 @@ inline void applyDefaults(obs_data_t *dest, obs_data_t *src)
     }
 }
 
-// Duplicate src into a new obs_data: user values stay user values and defaults stay defaults.
-// obs_data_apply() alone copies user values only, and promoting the defaults to user values
-// would leak every default key into settings built by obs_data_apply() from the copy.
+// Copy src into a new obs_data with user values and defaults kept apart, so obs_data_apply()
+// from the copy carries user values only. Only top-level scalar defaults are preserved:
+// object / array defaults are rebuilt from the defaults of their elements (usually zero-valued),
+// nested defaults are dropped, and keys without a default gain a zero-value one.
 inline OBSDataAutoRelease duplicateSettings(obs_data_t *src)
 {
     OBSDataAutoRelease copy = obs_data_create();

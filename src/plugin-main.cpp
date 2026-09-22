@@ -177,8 +177,9 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     }
 
     // FIXME: obs_save_source() / obs_source_duplicate() persist the live settings, so edits never
-    // applied in the properties dialog arrive here and get published as applied. Sync the live
-    // settings back to the snapshot on dialog close, or persist the snapshot in saveCallback().
+    // applied in the properties dialog arrive here and get published as applied. Store the
+    // snapshot under a dedicated settings key in replaceAppliedSettings() and prefer it here; the
+    // live object is shared with the properties view, so saveCallback() must not rewrite its keys.
     replaceAppliedSettings(settings);
 
     // Fiter activate immediately when "server" or "stream_recording" or "replay_buffer" is exists.
