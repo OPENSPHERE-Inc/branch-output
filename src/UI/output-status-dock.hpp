@@ -288,6 +288,7 @@ class BranchOutputStatusDock : public QFrame {
 private slots:
     void onHeaderPressed(int index);
     void onOutputUserEnabledChanged();
+    void onFilterDestroyed(QObject *obj);
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
@@ -318,7 +319,14 @@ class OutputTableRow : public QObject {
 
     friend class BranchOutputStatusDock;
 
+    // Invariant: while a row is listed in outputTableRows, its filter QObject is
+    // alive (addFilter() removes the rows on QObject::destroyed). The filter's
+    // obs_source_t may already be released, so rows keep their own copies of the
+    // identifying data below. Touched only from the Qt UI thread.
     BranchOutputFilter *filter;
+    BranchOutputFilterInfo filterInfo;
+    OBSWeakSourceAutoRelease parentWeak;
+    OBSWeakSourceAutoRelease filterWeak;
     FilterCell *filterCell;
     ParentCell *parentCell;
     OutputCell *outputName;

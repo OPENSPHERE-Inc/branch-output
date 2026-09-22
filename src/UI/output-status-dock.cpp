@@ -31,7 +31,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHBoxLayout>
 #include <QMouseEvent>
 #include <QDesktopServices>
-#include <QSet>
 
 #include "../plugin-main.hpp"
 #include "output-status-dock.hpp"
@@ -387,6 +386,10 @@ void BranchOutputStatusDock::addRow(
 
 void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 {
+    // FIXME: `filter` is a raw pointer queued from addCallback() / updateCallback() and may already
+    // be deleted, leaving no destroyed hook. Post an OBSWeakSource instead, resolve it with
+    // obs_weak_source_get_source(), then get the filter via obs_obj_get_data() on that source.
+
     // Ensure filter removed
     removeFilter(filter);
 
@@ -396,6 +399,10 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
         &BranchOutputStatusDock::onOutputUserEnabledChanged,
         static_cast<Qt::ConnectionType>(Qt::UniqueConnection | Qt::QueuedConnection)
     );
+
+    // Drop the rows synchronously when the filter QObject is deleted, so no row outlives its filter
+    // even when the queued removeFilter() from removeCallback() runs after the deferred delete.
+    connect(filter, &QObject::destroyed, this, &BranchOutputStatusDock::onFilterDestroyed, Qt::UniqueConnection);
 
     OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
 
@@ -431,9 +438,14 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
 
 void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
 {
-    // DO NOT access filter resources at this time (It may be already deleted)
+    // `filter` is a comparison key only: it may already be deleted (queued from removeCallback(),
+    // or called from ~QObject via onFilterDestroyed()). Neither this function nor its callees
+    // (sort() / publishFilterListSnapshot()) may dereference any row->filter.
     foreach (auto row, outputTableRows) {
         if (row->filter == filter) {
+            // FIXME: removeRow() deletes the QTableWidgetItems at once while the cells only get
+            // deleteLater(), so an already posted rename metacall can write a freed item. Take the
+            // items over with takeItem() and let OutputTableRow own them.
             outputTable->removeRow(outputTable->row(row->filterCell->item()));
             outputTableRows.removeOne(row);
             row->deleteLater();
@@ -444,14 +456,23 @@ void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
     publishFilterListSnapshot();
 }
 
+void BranchOutputStatusDock::onFilterDestroyed(QObject *obj)
+{
+    removeFilter(static_cast<BranchOutputFilter *>(obj));
+}
+
 void BranchOutputStatusDock::update()
 {
     foreach (auto row, outputTableRows) {
-        if (!sourceInFrontend(obs_filter_get_parent(row->filter->filterSource))) {
-            // Remove filter that no longer exists in the frontend
+        OBSSourceAutoRelease filterSource = obs_weak_source_get_source(row->filterWeak);
+        OBSSourceAutoRelease parent = obs_weak_source_get_source(row->parentWeak);
+        bool attached = filterSource && obs_filter_get_parent(filterSource) == parent.Get();
+        if (!attached || !sourceInFrontend(parent)) {
+            // Remove filter that is detached or no longer exists in the frontend
             removeFilter(row->filter);
             continue;
         }
+        // The strong ref defers the filter's destroy (stopOutput()) past row->update()
         row->update();
     }
 
@@ -574,7 +595,10 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
     foreach (auto row, outputTableRows) {
         if (row->groupIndex == 0) {
             // Do only once for each filters
-            obs_source_set_enabled(row->filter->filterSource, enabled);
+            OBSSourceAutoRelease filterSource = obs_weak_source_get_source(row->filterWeak);
+            if (filterSource) {
+                obs_source_set_enabled(filterSource, enabled);
+            }
         }
     }
 
@@ -765,6 +789,13 @@ OutputTableRow::OutputTableRow(
       groupIndex(_groupIndex)
 {
     auto source = obs_filter_get_parent(filter->filterSource);
+    filterInfo.sourceName = QString(obs_source_get_name(source));
+    filterInfo.sourceUuid = QString(obs_source_get_uuid(source));
+    filterInfo.filterName = QString(obs_source_get_name(filter->filterSource));
+    filterInfo.filterUuid = QString(obs_source_get_uuid(filter->filterSource));
+    parentWeak = obs_source_get_weak_source(source);
+    filterWeak = obs_source_get_weak_source(filter->filterSource);
+
     auto rowId = QString("%1_%2_%3").arg(obs_source_get_name(source)).arg(filter->name).arg(groupIndex);
 
     filterCell = new FilterCell(rowId, filter->name, filter->filterSource, parent);
@@ -860,12 +891,14 @@ OutputTableRow::OutputTableRow(
     connect(status, &StatusCell::saveReplayBufferButtonClicked, this, [this]() { filter->saveReplayBuffer(); });
 
     // Setup rename event
-    connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &) {
+    connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &newName) {
+        filterInfo.filterName = newName;
         updateRowId(); // Update row ID with new filter name
         parent->sort();
         parent->publishFilterListSnapshot();
     });
-    connect(parentCell, &ParentCell::renamed, this, [this, parent](const QString &) {
+    connect(parentCell, &ParentCell::renamed, this, [this, parent](const QString &newName) {
+        filterInfo.sourceName = newName;
         updateRowId(); // Update row ID with new source name
         parent->sort();
         parent->publishFilterListSnapshot();
@@ -1258,6 +1291,8 @@ FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_sourc
     visibilityCheckbox->setChecked(obs_source_enabled(source));
     visibilityCheckbox->setCursor(Qt::PointingHandCursor);
 
+    // FIXME: the captured `source` (and ParentCell::source) is a raw pointer that libobs may release
+    // before the row is removed. Hold an OBSWeakSource and resolve it before use, as OutputCell does.
     connect(visibilityCheckbox, &QCheckBox::clicked, this, [source](bool visible) {
         obs_source_set_enabled(source, visible);
     });
@@ -1594,29 +1629,25 @@ void StatusCell::setTextValue(const QString &textValue)
 
 // Snapshot reflects the last state seen by the UI thread; it may lag live OBS
 // state until the next rename signal or add/remove event is processed.
+// Built from the rows' own copies only: this runs from removeFilter(), where the
+// filter QObject and its obs_source_t may already be freed, so it must not
+// dereference row->filter or call libobs.
 QList<BranchOutputFilterInfo> BranchOutputStatusDock::buildFilterListSnapshot() const
 {
     QList<BranchOutputFilterInfo> list;
-    QSet<obs_source_t *> seen;
 
     foreach (auto row, outputTableRows) {
-        auto filter = row->filter;
-        if (seen.contains(filter->filterSource)) {
-            continue;
-        }
-        seen.insert(filter->filterSource);
-
-        auto parent = obs_filter_get_parent(filter->filterSource);
-        if (!parent) {
+        // addFilter() creates exactly one row with groupIndex 0 per filter
+        if (row->groupIndex != 0) {
             continue;
         }
 
-        list.append({
-            QString(obs_source_get_name(parent)),
-            QString(obs_source_get_uuid(parent)),
-            QString(obs_source_get_name(filter->filterSource)),
-            QString(obs_source_get_uuid(filter->filterSource)),
-        });
+        // Row was created after the filter had already left its parent
+        if (row->filterInfo.sourceUuid.isEmpty()) {
+            continue;
+        }
+
+        list.append(row->filterInfo);
     }
 
     return list;
