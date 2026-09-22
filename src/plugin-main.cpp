@@ -176,6 +176,9 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
         obs_data_set_bool(settings, "streaming_enabled", hasAnyServer);
     }
 
+    // FIXME: obs_save_source() / obs_source_duplicate() persist the live settings, so edits never
+    // applied in the properties dialog arrive here and get published as applied. Sync the live
+    // settings back to the snapshot on dialog close, or persist the snapshot in saveCallback().
     replaceAppliedSettings(settings);
 
     // Fiter activate immediately when "server" or "stream_recording" or "replay_buffer" is exists.
@@ -214,14 +217,7 @@ BranchOutputFilter::~BranchOutputFilter()
 // Apply, so output start and configuration must read this copy instead.
 void BranchOutputFilter::replaceAppliedSettings(obs_data_t *settings)
 {
-    OBSDataAutoRelease copy = obs_data_create();
-
-    // obs_data_apply() copies user values only, so carry the defaults over as defaults:
-    // promoting them to user values would leak every default key into the output settings
-    // built by obs_data_apply() from this copy.
-    OBSDataAutoRelease defaults = obs_data_get_defaults(settings);
-    applyDefaults(copy, defaults);
-    obs_data_apply(copy, settings);
+    OBSDataAutoRelease copy = duplicateSettings(settings);
 
     {
         std::lock_guard<std::mutex> lock(appliedSettingsMutex);
@@ -522,7 +518,9 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings, uint32_t set
     //--- Setup video encoder ---//
     auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
 
-    videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), settings, nullptr);
+    // The encoder shares the passed settings object and writes into it (get_defaults, migrations).
+    OBSDataAutoRelease encoderSettings = duplicateSettings(settings);
+    videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), encoderSettings, nullptr);
     if (!videoEncoder) {
         obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));
         releaseInfrastructureIfIdle();

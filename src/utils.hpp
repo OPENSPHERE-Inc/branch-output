@@ -207,6 +207,18 @@ inline void applyDefaults(obs_data_t *dest, obs_data_t *src)
     }
 }
 
+// Duplicate src into a new obs_data: user values stay user values and defaults stay defaults.
+// obs_data_apply() alone copies user values only, and promoting the defaults to user values
+// would leak every default key into settings built by obs_data_apply() from the copy.
+inline OBSDataAutoRelease duplicateSettings(obs_data_t *src)
+{
+    OBSDataAutoRelease copy = obs_data_create();
+    OBSDataAutoRelease defaults = obs_data_get_defaults(src);
+    applyDefaults(copy, defaults);
+    obs_data_apply(copy, src);
+    return copy;
+}
+
 // Default SRT listener accept timeout in microseconds (matches the unit of the
 // SRT URL "listen_timeout" query parameter consumed by OBS's ffmpeg mpegts muxer).
 #define DEFAULT_SRT_LISTEN_TIMEOUT_US 5000000
