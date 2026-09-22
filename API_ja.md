@@ -57,7 +57,7 @@ if bo_filter:
     cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "MyShow %CCYY-%MM-%DD %hh-%mm-%ss")
     obs.proc_handler_call(ph, "override_recording_filename_format", cd)
-    obs.calldata_free(cd)
+    obs.calldata_destroy(cd)
     obs.obs_source_release(bo_filter)
 ```
 
@@ -73,7 +73,7 @@ if bo_filter ~= nil then
     local cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "MyShow %CCYY-%MM-%DD %hh-%mm-%ss")
     obs.proc_handler_call(ph, "override_recording_filename_format", cd)
-    obs.calldata_free(cd)
+    obs.calldata_destroy(cd)
     obs.obs_source_release(bo_filter)
 end
 ```
@@ -104,7 +104,7 @@ if bo_filter:
     cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "Replay %CCYY-%MM-%DD %hh-%mm-%ss")
     obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
-    obs.calldata_free(cd)
+    obs.calldata_destroy(cd)
     obs.obs_source_release(bo_filter)
 ```
 
@@ -120,7 +120,7 @@ if bo_filter ~= nil then
     local cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", "Replay %CCYY-%MM-%DD %hh-%mm-%ss")
     obs.proc_handler_call(ph, "override_replay_buffer_filename_format", cd)
-    obs.calldata_free(cd)
+    obs.calldata_destroy(cd)
     obs.obs_source_release(bo_filter)
 end
 ```
@@ -186,7 +186,7 @@ def get_branch_output_filters():
             except json.JSONDecodeError:
                 obs.script_log(obs.LOG_WARNING, "Failed to parse filter list JSON")
 
-    obs.calldata_free(cd)
+    obs.calldata_destroy(cd)
     return filters
 ```
 
@@ -223,7 +223,7 @@ function get_branch_output_filters()
         end
     end
 
-    obs.calldata_free(cd)
+    obs.calldata_destroy(cd)
     return filters
 end
 ```
