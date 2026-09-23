@@ -207,7 +207,7 @@ class BranchOutputFilter : public QObject {
 
     OBSSignal filterRenamedSignal;
 
-    void startOutput(obs_data_t *settings);
+    void startOutput(obs_data_t *settings, int interlockType);
     void stopOutput();
     bool ensureInfrastructure(obs_data_t *settings);
     void releaseInfrastructureIfIdle();
@@ -232,7 +232,7 @@ class BranchOutputFilter : public QObject {
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop);
     void loadProfile(obs_data_t *settings);
     void loadRecently(obs_data_t *settings);
-    void restartOutput();
+    void restartOutput(int interlockType);
     void stopOutputGracefully();
 
     // Hotkey synchronization. After construction, every libobs hotkey call and every access to

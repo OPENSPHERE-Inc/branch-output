@@ -608,11 +608,9 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
     return true;
 }
 
-// Start all enabled outputs. User intent flags (streamingUserEnabled, etc.)
-// are intentionally respected: if the user has disabled a specific output type
-// via the status dock checkbox, it stays disabled even after a restartOutput()
-// triggered by settings changes.
-void BranchOutputFilter::startOutput(obs_data_t *settings)
+// Start every output type that is enabled in settings and toggled on in the status dock.
+// In Individual interlock mode, only the types whose OBS counterpart output is active are started.
+void BranchOutputFilter::startOutput(obs_data_t *settings, int interlockType)
 {
     // Force release references
     stopOutput();
@@ -627,13 +625,18 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
             return;
         }
 
-        // Skip infrastructure setup if the user has disabled all output types
-        // via the status dock checkboxes. Without this check, interlock modes like
-        // ALWAYS_ON would rebuild and immediately tear down infrastructure every tick.
-        // Note: isAnyStreamingUserEnabled(settings) only checks configured service
-        // slots (service_count), not all MAX_SERVICES, because unconfigured slots
-        // are not visible in the status dock and their checkboxes cannot be toggled.
-        if (!isAnyStreamingUserEnabled(settings) && !isRecordingUserEnabled() && !isReplayBufferUserEnabled()) {
+        bool streamingEligible = isStreamingGroupEnabled(settings) && isAnyStreamingUserEnabled(settings);
+        bool recordingEligible = isRecordingEnabled(settings) && isRecordingUserEnabled();
+        bool replayBufferEligible = isReplayBufferEnabled(settings) && isReplayBufferUserEnabled();
+        if (interlockType == INTERLOCK_TYPE_INDIVIDUAL) {
+            streamingEligible = streamingEligible && obs_frontend_streaming_active();
+            recordingEligible = recordingEligible && obs_frontend_recording_active();
+            replayBufferEligible = replayBufferEligible && obs_frontend_replay_buffer_active();
+        }
+
+        // Skip infrastructure setup when no output type is eligible, so that interlock modes
+        // like ALWAYS_ON do not rebuild and immediately tear down infrastructure every tick.
+        if (!streamingEligible && !recordingEligible && !replayBufferEligible) {
             return;
         }
 
@@ -642,13 +645,13 @@ void BranchOutputFilter::startOutput(obs_data_t *settings)
         }
 
         bool anyStarted = false;
-        if (isRecordingUserEnabled()) {
+        if (recordingEligible) {
             anyStarted |= createAndStartRecordingOutputChecked(settings);
         }
-        if (isReplayBufferUserEnabled()) {
+        if (replayBufferEligible) {
             anyStarted |= createAndStartReplayBufferChecked(settings);
         }
-        if (isAnyStreamingUserEnabled(settings)) {
+        if (streamingEligible) {
             anyStarted |= createAndStartStreamingOutputs(settings);
         }
 
@@ -833,7 +836,7 @@ void BranchOutputFilter::stopOutput()
     }
 }
 
-void BranchOutputFilter::restartOutput()
+void BranchOutputFilter::restartOutput(int interlockType)
 {
     if (countActiveStreamings() > 0 || recordingActive || replayBufferActive) {
         stopOutput();
@@ -841,7 +844,7 @@ void BranchOutputFilter::restartOutput()
 
     auto applied = appliedSettings.get();
     if (isStreamingGroupEnabled(applied) || isRecordingEnabled(applied) || isReplayBufferEnabled(applied)) {
-        startOutput(applied);
+        startOutput(applied, interlockType);
     }
 }
 
@@ -960,27 +963,27 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 // Never start output
             } else if (interlockType == INTERLOCK_TYPE_STREAMING) {
                 if (obs_frontend_streaming_active()) {
-                    restartOutput();
+                    restartOutput(interlockType);
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_RECORDING) {
                 if (obs_frontend_recording_active()) {
-                    restartOutput();
+                    restartOutput(interlockType);
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_STREAMING_RECORDING) {
                 if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
-                    restartOutput();
+                    restartOutput(interlockType);
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
                 if (obs_frontend_virtualcam_active()) {
-                    restartOutput();
+                    restartOutput(interlockType);
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_REPLAY_BUFFER) {
                 if (obs_frontend_replay_buffer_active()) {
-                    restartOutput();
+                    restartOutput(interlockType);
                     return;
                 }
             } else if (interlockType == INTERLOCK_TYPE_INDIVIDUAL) {
@@ -1005,7 +1008,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     return;
                 }
             } else {
-                restartOutput();
+                restartOutput(interlockType);
                 return;
             }
         }
@@ -1170,12 +1173,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 // "starting", so this restart reaches stopStreamingOutput() -> obs_output_stop() on a
                 // reconnecting output. Gate on obs_output_reconnecting() or route the stop through
                 // stopAllStreamingOutputsGracefully().
-                // FIXME: In Individual mode, restartOutput() starts every user-enabled
-                // output type regardless of its OBS counterpart's active state, so a
-                // streaming slot started this way can go live. Start with the per-type
-                // Individual start conditions instead; see
-                // https://github.com/OPENSPHERE-Inc/branch-output/issues/189.
-                restartOutput();
+                restartOutput(interlockType);
                 return;
             }
 
@@ -1233,7 +1231,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                         if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
                             // Restart output when source resolution was changed.
                             obs_log(LOG_INFO, "%s: Attempting restart the streaming output", qUtf8Printable(name));
-                            startOutput(settings);
+                            startOutput(settings, interlockType);
                             return;
                         }
                     } else {
