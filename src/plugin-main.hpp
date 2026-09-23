@@ -43,8 +43,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // - Serializes OBS global API calls (obs_view, obs_encoder, obs_output creation/destruction)
 // - Protects BranchOutputFilter instance lists and cross-instance coordination
 // - Prevents concurrent infrastructure setup/teardown across multiple filter instances
-// Lock ordering: pluginMutex -> outputMutex -> audioMutex
-// All three mutexes are recursive — safe to re-lock from the same thread.
+// Lock ordering: pluginMutex -> outputMutex -> audioMutex -> AppliedSettings::mutex (leaf)
+// All four mutexes are recursive — safe to re-lock from the same thread.
 extern pthread_mutex_t pluginMutex;
 
 // Publish a fresh filter-list snapshot consumed by the global proc handler.
@@ -116,9 +116,9 @@ class BranchOutputFilter : public QObject {
     QString name;
     bool initialized; // Activate after first "Apply" click
     AppliedSettings appliedSettings;
-    // Snapshot the current infrastructure was built from. Touched only from the interval timer
-    // thread (written by ensureInfrastructure()). The strong reference keeps its address from
-    // being reused, which the pointer comparison against appliedSettings.get() relies on.
+    // Snapshot the current infrastructure was built from; guarded by outputMutex. The strong
+    // reference keeps its address from being reused, which the pointer comparison against
+    // appliedSettings.get() relies on.
     OBSData activeSettings;
     QTimer *intervalTimer;
     bool outputGracefullyStopping;
@@ -156,7 +156,8 @@ class BranchOutputFilter : public QObject {
     FilterVideoCapture *filterVideoCapture;
 
     // Audio context
-    // Lock ordering: always acquire in order pluginMutex -> outputMutex -> audioMutex.
+    // Lock ordering: always acquire in order pluginMutex -> outputMutex -> audioMutex ->
+    // AppliedSettings::mutex.
     // Never acquire a higher-order lock while holding a lower-order one.
     pthread_mutex_t audioMutex; // Recursive mutex — protects audios[] capture pointers against audioFilterCallback
     BranchOutputAudioContext audios[MAX_AUDIO_MIXES];
@@ -218,13 +219,14 @@ class BranchOutputFilter : public QObject {
     bool createAndStartReplayBufferChecked(obs_data_t *settings);
     bool stopAllStreamingOutputsGracefully();
 
-    bool startStreamingIndividual();
+    // The start helpers take the caller's applied-settings snapshot so one tick uses one copy.
+    bool startStreamingIndividual(obs_data_t *applied);
     bool stopStreamingIndividual();
-    bool startSingleStreamingIndividual(size_t index);
+    bool startSingleStreamingIndividual(obs_data_t *applied, size_t index);
     bool stopSingleStreamingIndividual(size_t index);
-    bool startRecordingIndividual();
+    bool startRecordingIndividual(obs_data_t *applied);
     bool stopRecordingIndividual();
-    bool startReplayBufferIndividual();
+    bool startReplayBufferIndividual(obs_data_t *applied);
     bool stopReplayBufferIndividual();
     void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop);
@@ -380,6 +382,8 @@ private slots:
 public:
     explicit BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
     ~BranchOutputFilter();
+
+    OBSDataAutoRelease getAppliedSettings() { return appliedSettings.get(); }
 
     static obs_source_info createFilterInfo();
 

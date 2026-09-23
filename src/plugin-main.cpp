@@ -992,14 +992,14 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 bool anyStarted = false;
                 if (isAnyStreamingUserEnabled(applied) && obs_frontend_streaming_active() &&
                     isStreamingGroupEnabled(applied)) {
-                    anyStarted |= startStreamingIndividual();
+                    anyStarted |= startStreamingIndividual(applied);
                 }
                 if (isRecordingUserEnabled() && obs_frontend_recording_active() && isRecordingEnabled(applied)) {
-                    anyStarted |= startRecordingIndividual();
+                    anyStarted |= startRecordingIndividual(applied);
                 }
                 if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() &&
                     isReplayBufferEnabled(applied)) {
-                    anyStarted |= startReplayBufferIndividual();
+                    anyStarted |= startReplayBufferIndividual(applied);
                 }
                 if (anyStarted) {
                     return;
@@ -1020,8 +1020,8 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 return;
             }
 
-            // One snapshot per tick: every read below, the restart check and startOutput() use
-            // the same copy.
+            // One snapshot per tick: every read below, the restart check, the individual start
+            // helpers and startOutput() use the same copy.
             auto applied = appliedSettings.get();
             obs_data_t *settings = applied;
 
@@ -1037,7 +1037,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 for (size_t i = 0; i < MAX_SERVICES; i++) {
                     if (isStreamingUserEnabled(i) && !streamings[i].active && isStreamingEnabled(settings, i) &&
                         isStreamingGroupEnabled(settings)) {
-                        if (startSingleStreamingIndividual(i)) {
+                        if (startSingleStreamingIndividual(settings, i)) {
                             anyStarted = true;
                         }
                     }
@@ -1110,11 +1110,11 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     }
                     if (isRecordingUserEnabled() && obs_frontend_recording_active() && !recordingActive &&
                         !recordingPending && isRecordingEnabled(settings)) {
-                        anyStarted |= startRecordingIndividual();
+                        anyStarted |= startRecordingIndividual(settings);
                     }
                     if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() && !replayBufferActive &&
                         isReplayBufferEnabled(settings)) {
-                        anyStarted |= startReplayBufferIndividual();
+                        anyStarted |= startReplayBufferIndividual(settings);
                     }
                     if (anyStarted) {
                         return;
@@ -1168,17 +1168,24 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 bool anyStarted = false;
                 anyStarted |= startEligibleStreamings();
                 if (isRecordingUserEnabled() && !recordingActive && !recordingPending && isRecordingEnabled(settings)) {
-                    anyStarted |= startRecordingIndividual();
+                    anyStarted |= startRecordingIndividual(settings);
                 }
                 if (isReplayBufferUserEnabled() && !replayBufferActive && isReplayBufferEnabled(settings)) {
-                    anyStarted |= startReplayBufferIndividual();
+                    anyStarted |= startReplayBufferIndividual(settings);
                 }
                 if (anyStarted) {
                     return;
                 }
             }
 
-            if (activeSettings.Get() != applied.Get()) {
+            bool settingsChanged;
+            pthread_mutex_lock(&outputMutex);
+            {
+                OBSMutexAutoUnlock outputLocked(&outputMutex);
+                settingsChanged = activeSettings.Get() != applied.Get();
+            }
+
+            if (settingsChanged) {
                 // Settings has been changed
                 obs_log(LOG_INFO, "%s: Settings change detected, Attempting restart", qUtf8Printable(name));
                 restartOutput();
@@ -1605,6 +1612,9 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
 {
     // Restarting here could interrupt a connection attempt, so only the snapshot advances;
     // the interval timer restarts the output once it sees a newer snapshot.
+    // FIXME: the deferred update runs this on the graphics thread while the properties view edits
+    // the same live settings on the UI thread; obs_data has no lock, so replace() and the JSON save
+    // below walk the object unsynchronized. Confine live-settings traversal to the UI thread.
     appliedSettings.replace(settings);
 
     auto source = obs_filter_get_parent(filterSource);
