@@ -94,7 +94,7 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
         obs_data_set_string(recordingSettings, "directory", path);
         obs_data_set_string(recordingSettings, "format", qUtf8Printable(filenameFormat));
         obs_data_set_string(recordingSettings, "extension", qUtf8Printable(getFormatExt(recFormat)));
-        obs_data_set_bool(recordingSettings, "allow_spaces", false);
+        obs_data_set_bool(recordingSettings, "allow_spaces", !noSpace);
         obs_data_set_bool(recordingSettings, "allow_overwrite", false);
         obs_data_set_bool(recordingSettings, "split_file", true);
 
