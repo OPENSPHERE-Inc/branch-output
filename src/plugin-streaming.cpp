@@ -430,10 +430,8 @@ bool BranchOutputFilter::stopAllStreamingOutputsGracefully()
     return countActiveStreamings() == 0;
 }
 
-bool BranchOutputFilter::startStreamingIndividual()
+bool BranchOutputFilter::startStreamingIndividual(obs_data_t *applied)
 {
-    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);
@@ -442,11 +440,11 @@ bool BranchOutputFilter::startStreamingIndividual()
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-            if (!ensureInfrastructure(settings)) {
+            if (!ensureInfrastructure(applied)) {
                 return false;
             }
 
-            if (!createAndStartStreamingOutputs(settings)) {
+            if (!createAndStartStreamingOutputs(applied)) {
                 releaseInfrastructureIfIdle();
                 return false;
             }
@@ -479,10 +477,8 @@ bool BranchOutputFilter::stopStreamingIndividual()
     return true;
 }
 
-bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
+bool BranchOutputFilter::startSingleStreamingIndividual(obs_data_t *applied, size_t index)
 {
-    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);
@@ -491,11 +487,11 @@ bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-            if (!ensureInfrastructure(settings)) {
+            if (!ensureInfrastructure(applied)) {
                 return false;
             }
 
-            if (!isStreamingGroupEnabled(settings) || !isStreamingEnabled(settings, index)) {
+            if (!isStreamingGroupEnabled(applied) || !isStreamingEnabled(applied, index)) {
                 releaseInfrastructureIfIdle();
                 return false;
             }
@@ -505,7 +501,7 @@ bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
             }
 
             if (!streamings[index].output) {
-                createStreamingOutput(settings, index);
+                createStreamingOutput(applied, index);
             }
 
             startStreamingOutput(index);
@@ -593,9 +589,9 @@ void BranchOutputFilter::onEnableAllStreamingHotkeyPressed(void *data, obs_hotke
         return;
     }
 
-    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+    auto applied = filter->appliedSettings.get();
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (filter->isStreamingEnabled(settings, i)) {
+        if (filter->isStreamingEnabled(applied, i)) {
             filter->setStreamingUserEnabled(i, true);
         }
     }
@@ -612,9 +608,9 @@ void BranchOutputFilter::onDisableAllStreamingHotkeyPressed(void *data, obs_hotk
         return;
     }
 
-    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+    auto applied = filter->appliedSettings.get();
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (filter->isStreamingEnabled(settings, i)) {
+        if (filter->isStreamingEnabled(applied, i)) {
             filter->setStreamingUserEnabled(i, false);
         }
     }

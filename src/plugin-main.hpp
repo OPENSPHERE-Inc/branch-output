@@ -43,8 +43,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // - Serializes OBS global API calls (obs_view, obs_encoder, obs_output creation/destruction)
 // - Protects BranchOutputFilter instance lists and cross-instance coordination
 // - Prevents concurrent infrastructure setup/teardown across multiple filter instances
-// Lock ordering: pluginMutex -> outputMutex -> audioMutex
-// All three mutexes are recursive — safe to re-lock from the same thread.
+// Lock ordering: pluginMutex -> outputMutex -> audioMutex -> AppliedSettings::mutex (leaf)
+// All four mutexes are recursive — safe to re-lock from the same thread.
 extern pthread_mutex_t pluginMutex;
 
 // Publish a fresh filter-list snapshot consumed by the global proc handler.
@@ -92,10 +92,34 @@ class BranchOutputFilter : public QObject {
         OBSSignal outputStopSignal;
     };
 
+    // Copy of the settings as they were last applied: the settings passed to the constructor
+    // (after migration) or to the most recent updateCallback(). A published copy is never
+    // modified and replace() always publishes a new object, so two get() results with the same
+    // pointer are the same snapshot.
+    class AppliedSettings {
+        // Leaf lock: taken while holding any of the other mutexes, never the reverse.
+        pthread_mutex_t mutex;
+        OBSDataAutoRelease data;
+
+    public:
+        AppliedSettings();
+        ~AppliedSettings();
+        AppliedSettings(const AppliedSettings &) = delete;
+        AppliedSettings &operator=(const AppliedSettings &) = delete;
+
+        // Publish a copy of settings as the applied snapshot.
+        void replace(obs_data_t *settings);
+        // Strong reference to the current snapshot. Callers read it only.
+        OBSDataAutoRelease get();
+    };
+
     QString name;
     bool initialized; // Activate after first "Apply" click
-    uint32_t storedSettingsRev;
-    uint32_t activeSettingsRev;
+    AppliedSettings appliedSettings;
+    // Snapshot the current infrastructure was built from; guarded by outputMutex. The strong
+    // reference keeps its address from being reused, which the pointer comparison against
+    // appliedSettings.get() relies on.
+    OBSData activeSettings;
     QTimer *intervalTimer;
     bool outputGracefullyStopping;
     bool streamingIndividualStopping;
@@ -132,7 +156,8 @@ class BranchOutputFilter : public QObject {
     FilterVideoCapture *filterVideoCapture;
 
     // Audio context
-    // Lock ordering: always acquire in order pluginMutex -> outputMutex -> audioMutex.
+    // Lock ordering: always acquire in order pluginMutex -> outputMutex -> audioMutex ->
+    // AppliedSettings::mutex.
     // Never acquire a higher-order lock while holding a lower-order one.
     pthread_mutex_t audioMutex; // Recursive mutex — protects audios[] capture pointers against audioFilterCallback
     BranchOutputAudioContext audios[MAX_AUDIO_MIXES];
@@ -194,13 +219,14 @@ class BranchOutputFilter : public QObject {
     bool createAndStartReplayBufferChecked(obs_data_t *settings);
     bool stopAllStreamingOutputsGracefully();
 
-    bool startStreamingIndividual();
+    // The start helpers take the caller's applied-settings snapshot so one tick uses one copy.
+    bool startStreamingIndividual(obs_data_t *applied);
     bool stopStreamingIndividual();
-    bool startSingleStreamingIndividual(size_t index);
+    bool startSingleStreamingIndividual(obs_data_t *applied, size_t index);
     bool stopSingleStreamingIndividual(size_t index);
-    bool startRecordingIndividual();
+    bool startRecordingIndividual(obs_data_t *applied);
     bool stopRecordingIndividual();
-    bool startReplayBufferIndividual();
+    bool startReplayBufferIndividual(obs_data_t *applied);
     bool stopReplayBufferIndividual();
     void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight);
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop);
@@ -356,6 +382,8 @@ private slots:
 public:
     explicit BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
     ~BranchOutputFilter();
+
+    OBSDataAutoRelease getAppliedSettings() { return appliedSettings.get(); }
 
     static obs_source_info createFilterInfo();
 

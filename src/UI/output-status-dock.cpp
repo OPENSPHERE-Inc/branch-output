@@ -404,7 +404,7 @@ void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
     // even when the queued removeFilter() from removeCallback() runs after the deferred delete.
     connect(filter, &QObject::destroyed, this, &BranchOutputStatusDock::onFilterDestroyed, Qt::UniqueConnection);
 
-    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+    OBSDataAutoRelease settings = filter->getAppliedSettings();
 
     auto groupIndex = 0;
 
@@ -1475,7 +1475,12 @@ void OutputCell::openOutputFolder()
     if (!source) {
         return;
     }
-    OBSDataAutoRelease settings = obs_source_get_settings(source);
+    // The strong reference above keeps info.destroy from running, so the filter stays alive here.
+    auto *filter = static_cast<BranchOutputFilter *>(obs_obj_get_data(source));
+    if (!filter) {
+        return;
+    }
+    OBSDataAutoRelease settings = filter->getAppliedSettings();
     const char *path = nullptr;
 
     if (outputType == ROW_OUTPUT_RECORDING) {

@@ -79,7 +79,7 @@ def get_branch_output_filters():
                 except json.JSONDecodeError as e:
                     obs.script_log(obs.LOG_WARNING, f"Failed to parse filter list JSON: {e}")
     finally:
-        obs.calldata_free(cd)
+        obs.calldata_destroy(cd)
 
     return filters
 
@@ -240,7 +240,7 @@ def call_override_proc(filter_uuid, format_value):
             obs.calldata_set_string(cd, "format", format_value)
             result = obs.proc_handler_call(ph, OVERRIDE_PROC, cd)
         finally:
-            obs.calldata_free(cd)
+            obs.calldata_destroy(cd)
 
         if not result:
             obs.script_log(obs.LOG_WARNING,

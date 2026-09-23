@@ -100,7 +100,7 @@ local function get_branch_output_filters()
         end
     end
 
-    obs.calldata_free(cd)
+    obs.calldata_destroy(cd)
     return filters
 end
 
@@ -424,7 +424,7 @@ local function call_override_proc(filter_uuid, format_value)
     local cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", format_value)
     local result = obs.proc_handler_call(ph, OVERRIDE_PROC, cd)
-    obs.calldata_free(cd)
+    obs.calldata_destroy(cd)
     obs.obs_source_release(bo_filter)
 
     if not result then

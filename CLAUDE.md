@@ -184,12 +184,12 @@ The main class is `BranchOutputFilter` (declared in `plugin-main.hpp`), which is
 ### Threading Model
 
 - OBS callbacks (video render, audio filter, video tick) may run on **different threads** from the UI thread.
-- Three recursive mutexes (`pluginMutex`, `outputMutex`, `audioMutex`) initialized via `pthread_mutex_init_recursive()`. Lock ordering: `pluginMutex` → `outputMutex`.
+- Recursive mutexes (`pthread_mutex_init_recursive()`): `pluginMutex` (module scope) and `outputMutex` / `audioMutex` / `AppliedSettings::mutex` (per filter instance). `filterListSnapshotMutex` (module scope, `PTHREAD_MUTEX_INITIALIZER`, non-recursive, never destroyed) guards only the filter-list snapshot swap and is never nested with the others. Lock ordering: `pluginMutex` → `outputMutex` → `audioMutex` → `AppliedSettings::mutex` (leaf: nothing is acquired while it is held).
 - `audioMutex` protects audio capture pointers against concurrent release in `releaseInfrastructureIfIdle()`.
 - `QMutex` protects audio buffers in `AudioCapture`.
 - Atomic fields (`std::atomic<bool>` for `outputStarting`, `streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`; `std::atomic<uint64_t>` for `reconnectAttemptingAt`) eliminate data races from OBS signal callbacks.
 - UI updates use `QMetaObject::invokeMethod` with `Qt::QueuedConnection` for thread safety.
-- Settings changes are tracked via revision counters (`storedSettingsRev` / `activeSettingsRev`) to defer restarts.
+- `AppliedSettings` (`appliedSettings`) holds a copy of the settings as last applied, guarded by its own leaf mutex (taken last). `updateCallback()` only publishes a new copy; the interval timer restarts the output when the copy it reads is not the one the running infrastructure was built from (`activeSettings`).
 
 ### OBS API Usage
 
@@ -380,13 +380,13 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 
 - **Do NOT call `obs_filter_get_parent()` in the `BranchOutputFilter` constructor** — it returns `nullptr` at that point. Use `addCallback()` instead.
 - **Private sources** (not visible in frontend) are intentionally excluded from status dock and timer registration.
-- **Settings revisions** (`storedSettingsRev` / `activeSettingsRev`) exist to avoid stopping output during reconnect attempts. Do not bypass this mechanism.
+- **Applied settings snapshot** — `updateCallback()` must not restart outputs; it only calls `appliedSettings.replace()`, and the interval timer performs the restart once no streaming slot is in its initial start (`someStreamingsStarting()`, driven by the "starting" / "activate" signals). A libobs reconnect episode does not raise that gate, so the restart currently reaches `obs_output_stop()` on a reconnecting output (see the FIXME at the `restartOutput()` call in `onIntervalTimerTimeout()`). Output start and the output / encoder / service settings built for it read `appliedSettings.get()`, because the live settings hold unapplied edits of the properties dialog. `obs_source_get_settings()` remains correct where the live object itself is required: `getProperties()` (the properties view edits that object, so a copy would not be saved), the crop preview in `videoTickCallback()` (it must follow unapplied edits), and the settings that `addCallback()` / `updateCallback()` hand to `syncHotkeys()` (identical in content to the snapshot at that moment). The status dock (`addFilter()`, `openOutputFolder()`) reads the snapshot through `getAppliedSettings()`, so its rows and folder button follow the last applied settings (`appliedSettings`), not `activeSettings`, the snapshot the running outputs were built from (recorded by `ensureInfrastructure()`); the two differ while a restart is deferred.
 - **Encoder compatibility** — The plugin maps "simple" encoder names to actual encoder IDs, with version-specific fallbacks (OBS 30 vs OBS 31). See `getSimpleVideoEncoder()` in `utils.hpp`.
 - **Memory management** — Use OBS RAII wrappers. Raw `bfree()` / `obs_data_release()` calls are error-prone.
 - **`.gitignore` uses allowlist pattern** — New top-level files/directories must be explicitly un-ignored with `!` prefix.
 - **FilterVideoCapture proxy source** — The proxy source type (`osi_branch_output_proxy`) must be registered at module load via `FilterVideoCapture::createProxySourceInfo()`. The proxy source is private and intentionally not visible in the OBS frontend.
 - **Hotkey name strings** (`EnableFilter.<uuid>` etc.) must not be changed. Existing user assignments are matched by name.
-- **Never call a libobs hotkey API (including `obs_hotkey_update_atomic()`) while holding `pluginMutex` / `outputMutex` / `audioMutex`.** libobs invokes hotkey callbacks while holding the hotkey mutex, and some of them take `outputMutex`. Lock order: hotkey mutex → `pluginMutex` → `outputMutex` → `audioMutex`.
+- **Never call a libobs hotkey API (including `obs_hotkey_update_atomic()`) while holding `pluginMutex` / `outputMutex` / `audioMutex` / `AppliedSettings::mutex`.** libobs invokes hotkey callbacks while holding the hotkey mutex, and some of them take `outputMutex`. Lock order: hotkey mutex → `pluginMutex` → `outputMutex` → `audioMutex` → `AppliedSettings::mutex`. `AppliedSettings::replace()` / `get()` run under the hotkey mutex and under `outputMutex`, so they must not take any other mutex or call a libobs hotkey API.
 - **Hotkey register/unregister/save/load/description updates and every access to `hotkeyBindingsCache` must run inside an `obs_hotkey_update_atomic()` callback.** `obs_hotkey_set_description()` and `obs_hotkey_pair_set_descriptions()` take no lock of their own.
 - **`syncHotkeys()` registers hotkeys only against a public parent source.** Do not remove its `sourceIsPrivate()` early return: `obs_hotkey_register_source()` rejects a private parent while `obs_hotkey_pair_register_source()` accepts one, which would break the representative-ID registration check.
 
