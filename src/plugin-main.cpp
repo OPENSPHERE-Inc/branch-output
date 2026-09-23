@@ -1086,39 +1086,18 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 // Individual stop: follow OBS frontend state per output type.
                 // Only checks the OBS frontend state here; user toggle (per-output checkbox)
                 // is handled separately in the common per-output toggle block below.
-                {
-                    bool anyStopped = false;
-                    if (!obs_frontend_streaming_active() && streamingActive) {
-                        anyStopped |= stopStreamingIndividual();
-                    }
-                    if (!obs_frontend_recording_active() && (recordingActive || recordingPending)) {
-                        anyStopped |= stopRecordingIndividual();
-                    }
-                    if (!obs_frontend_replay_buffer_active() && replayBufferActive) {
-                        anyStopped |= stopReplayBufferIndividual();
-                    }
-                    if (anyStopped) {
-                        return;
-                    }
+                bool anyStopped = false;
+                if (!obs_frontend_streaming_active() && streamingActive) {
+                    anyStopped |= stopStreamingIndividual();
                 }
-
-                // Individual start for additional outputs while some are already active.
-                {
-                    bool anyStarted = false;
-                    if (obs_frontend_streaming_active()) {
-                        anyStarted |= startEligibleStreamings();
-                    }
-                    if (isRecordingUserEnabled() && obs_frontend_recording_active() && !recordingActive &&
-                        !recordingPending && isRecordingEnabled(settings)) {
-                        anyStarted |= startRecordingIndividual(settings);
-                    }
-                    if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() && !replayBufferActive &&
-                        isReplayBufferEnabled(settings)) {
-                        anyStarted |= startReplayBufferIndividual(settings);
-                    }
-                    if (anyStarted) {
-                        return;
-                    }
+                if (!obs_frontend_recording_active() && (recordingActive || recordingPending)) {
+                    anyStopped |= stopRecordingIndividual();
+                }
+                if (!obs_frontend_replay_buffer_active() && replayBufferActive) {
+                    anyStopped |= stopReplayBufferIndividual();
+                }
+                if (anyStopped) {
+                    return;
                 }
             }
 
@@ -1155,29 +1134,8 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 return;
             }
 
-            // Per-output toggle re-enable check.
-            // Only re-enable an output if the current interlock condition is met.
-            // For ALWAYS_OFF, we never reach here (returned above).
-            // For INDIVIDUAL, per-output start is handled in the Individual block above.
-            // For other modes, re-enable only when the interlock condition is currently satisfied.
-            // Note: No explicit interlock recheck is needed here because this code is only
-            // reachable within the "outputs active" block, which means the interlock condition
-            // was already satisfied when outputs were started and has not been violated (the
-            // interlock stop checks above would have returned before reaching this point).
-            if (interlockType != INTERLOCK_TYPE_INDIVIDUAL) {
-                bool anyStarted = false;
-                anyStarted |= startEligibleStreamings();
-                if (isRecordingUserEnabled() && !recordingActive && !recordingPending && isRecordingEnabled(settings)) {
-                    anyStarted |= startRecordingIndividual(settings);
-                }
-                if (isReplayBufferUserEnabled() && !replayBufferActive && isReplayBufferEnabled(settings)) {
-                    anyStarted |= startReplayBufferIndividual(settings);
-                }
-                if (anyStarted) {
-                    return;
-                }
-            }
-
+            // Decide the restart before any start below: an individual start reuses the running
+            // infrastructure, which leaves activeSettings at the snapshot it was built from.
             bool settingsChanged;
             pthread_mutex_lock(&outputMutex);
             {
@@ -1193,8 +1151,43 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 // "starting", so this restart reaches stopStreamingOutput() -> obs_output_stop() on a
                 // reconnecting output. Gate on obs_output_reconnecting() or route the stop through
                 // stopAllStreamingOutputsGracefully().
+                // FIXME: In Individual mode, startOutput() also starts outputs with an inactive OBS
+                // counterpart, which the next tick stops. Use the Individual start conditions instead.
                 restartOutput();
                 return;
+            }
+
+            if (interlockType == INTERLOCK_TYPE_INDIVIDUAL) {
+                // Individual start for additional outputs while some are already active.
+                bool anyStarted = false;
+                if (obs_frontend_streaming_active()) {
+                    anyStarted |= startEligibleStreamings();
+                }
+                if (isRecordingUserEnabled() && obs_frontend_recording_active() && !recordingActive &&
+                    !recordingPending && isRecordingEnabled(settings)) {
+                    anyStarted |= startRecordingIndividual(settings);
+                }
+                if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() && !replayBufferActive &&
+                    isReplayBufferEnabled(settings)) {
+                    anyStarted |= startReplayBufferIndividual(settings);
+                }
+                if (anyStarted) {
+                    return;
+                }
+            } else {
+                // Per-output toggle re-enable check. The interlock checks above have returned unless
+                // the interlock condition holds, so no recheck is needed here.
+                bool anyStarted = false;
+                anyStarted |= startEligibleStreamings();
+                if (isRecordingUserEnabled() && !recordingActive && !recordingPending && isRecordingEnabled(settings)) {
+                    anyStarted |= startRecordingIndividual(settings);
+                }
+                if (isReplayBufferUserEnabled() && !replayBufferActive && isReplayBufferEnabled(settings)) {
+                    anyStarted |= startReplayBufferIndividual(settings);
+                }
+                if (anyStarted) {
+                    return;
+                }
             }
 
             if (streamingAlive || recordingAlive || recordingPending || replayBufferActive) {
