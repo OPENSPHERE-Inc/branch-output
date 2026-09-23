@@ -26,7 +26,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <atomic>
 #include <memory>
-#include <mutex>
 #include <utility>
 
 #include <QRegularExpression>
@@ -63,21 +62,26 @@ static std::atomic<BranchOutputStatusDock *> statusDock{nullptr};
 static std::atomic<bool> moduleUnloading{false};
 
 // Filter list snapshot read by onGetFilterList without touching the dock QObject.
-// Mutex guards the shared_ptr swap; the published QList itself is immutable.
-static std::mutex filterListSnapshotMutex;
+// Mutex guards the shared_ptr swap; the published QList itself is immutable. Statically
+// initialized and never destroyed: the proc handler that reads it outlives obs_module_unload().
+static pthread_mutex_t filterListSnapshotMutex = PTHREAD_MUTEX_INITIALIZER;
 static std::shared_ptr<const QList<BranchOutputFilterInfo>> filterListSnapshot;
 
 static std::shared_ptr<const QList<BranchOutputFilterInfo>> loadFilterListSnapshot()
 {
-    std::lock_guard<std::mutex> lock(filterListSnapshotMutex);
+    pthread_mutex_lock(&filterListSnapshotMutex);
+    OBSMutexAutoUnlock locked(&filterListSnapshotMutex);
     return filterListSnapshot;
 }
 
 void publishFilterListSnapshot(QList<BranchOutputFilterInfo> snapshot)
 {
     auto shared = std::make_shared<const QList<BranchOutputFilterInfo>>(std::move(snapshot));
-    std::lock_guard<std::mutex> lock(filterListSnapshotMutex);
-    filterListSnapshot = std::move(shared);
+    pthread_mutex_lock(&filterListSnapshotMutex);
+    {
+        OBSMutexAutoUnlock locked(&filterListSnapshotMutex);
+        filterListSnapshot = std::move(shared);
+    }
 }
 
 pthread_mutex_t pluginMutex;
@@ -91,9 +95,6 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       initialized(false),
       recordingActive(false),
       recordingPending(false),
-      storedSettingsRev(0),
-      activeSettingsRev(0),
-      appliedSettingsRev(0),
       intervalTimer(nullptr),
       outputGracefullyStopping(false),
       streamingIndividualStopping(false),
@@ -178,9 +179,9 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
 
     // FIXME: obs_save_source() / obs_source_duplicate() persist the live settings, so edits never
     // applied in the properties dialog arrive here and get published as applied. Store the
-    // snapshot under a dedicated settings key in replaceAppliedSettings() and prefer it here; the
+    // snapshot under a dedicated settings key in AppliedSettings::replace() and prefer it here; the
     // live object is shared with the properties view, so saveCallback() must not rewrite its keys.
-    replaceAppliedSettings(settings);
+    appliedSettings.replace(settings);
 
     // Fiter activate immediately when "server" or "stream_recording" or "replay_buffer" is exists.
     initialized = isStreamingGroupEnabled(settings) || obs_data_get_bool(settings, "stream_recording") ||
@@ -213,33 +214,44 @@ BranchOutputFilter::~BranchOutputFilter()
     pthread_mutex_destroy(&audioMutex);
 }
 
-// Publish a copy of settings as the applied snapshot and advance the stored revision.
+BranchOutputFilter::AppliedSettings::AppliedSettings()
+{
+    pthread_mutex_init_recursive(&mutex);
+}
+
+BranchOutputFilter::AppliedSettings::~AppliedSettings()
+{
+    pthread_mutex_destroy(&mutex);
+}
+
 // The live settings object keeps edits of the (deferred-update) properties dialog before
 // Apply, so output start and configuration must read this copy instead.
-void BranchOutputFilter::replaceAppliedSettings(obs_data_t *settings)
+void BranchOutputFilter::AppliedSettings::replace(obs_data_t *settings)
 {
     OBSDataAutoRelease copy = duplicateSettings(settings);
 
+    pthread_mutex_lock(&mutex);
     {
-        std::lock_guard<std::mutex> lock(appliedSettingsMutex);
-        std::swap(appliedSettings, copy);
-        appliedSettingsRev = ++storedSettingsRev;
+        OBSMutexAutoUnlock locked(&mutex);
+        std::swap(data, copy);
     }
     // "copy" now holds the previous snapshot and is released outside the lock.
 }
 
-BranchOutputFilter::AppliedSettings BranchOutputFilter::getAppliedSettings()
+OBSDataAutoRelease BranchOutputFilter::AppliedSettings::get()
 {
-    std::lock_guard<std::mutex> lock(appliedSettingsMutex);
-    obs_data_addref(appliedSettings);
-    return AppliedSettings{OBSDataAutoRelease(appliedSettings.Get()), appliedSettingsRev};
+    pthread_mutex_lock(&mutex);
+    OBSMutexAutoUnlock locked(&mutex);
+
+    obs_data_addref(data);
+    return OBSDataAutoRelease(data.Get());
 }
 
 // Caller must hold outputMutex.
 // Idempotent: if infrastructure already exists, return true.
 // On failure after partial resource creation, all resources are cleaned up
 // so that the next call can retry from a clean state.
-bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings, uint32_t settingsRev)
+bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
 {
     if (view) {
         return true;
@@ -317,8 +329,8 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings, uint32_t set
         return false;
     }
 
-    // Record which settings revision this infrastructure is built from.
-    activeSettingsRev = settingsRev;
+    // Record which snapshot this infrastructure is built from.
+    activeSettings = settings;
 
     //--- Open video output ---//
     if (useFilterInput) {
@@ -600,7 +612,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings, uint32_t set
 // are intentionally respected: if the user has disabled a specific output type
 // via the status dock checkbox, it stays disabled even after a restartOutput()
 // triggered by settings changes.
-void BranchOutputFilter::startOutput(obs_data_t *settings, uint32_t settingsRev)
+void BranchOutputFilter::startOutput(obs_data_t *settings)
 {
     // Force release references
     stopOutput();
@@ -625,7 +637,7 @@ void BranchOutputFilter::startOutput(obs_data_t *settings, uint32_t settingsRev)
             return;
         }
 
-        if (!ensureInfrastructure(settings, settingsRev)) {
+        if (!ensureInfrastructure(settings)) {
             return;
         }
 
@@ -827,10 +839,9 @@ void BranchOutputFilter::restartOutput()
         stopOutput();
     }
 
-    auto applied = getAppliedSettings();
-    if (isStreamingGroupEnabled(applied.data) || isRecordingEnabled(applied.data) ||
-        isReplayBufferEnabled(applied.data)) {
-        startOutput(applied.data, applied.rev);
+    auto applied = appliedSettings.get();
+    if (isStreamingGroupEnabled(applied) || isRecordingEnabled(applied) || isReplayBufferEnabled(applied)) {
+        startOutput(applied);
     }
 }
 
@@ -977,17 +988,17 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 // Check both the user toggle (dock checkbox) and the filter setting
                 // (whether the output type is configured) to avoid blocking subsequent
                 // outputs when an unconfigured type matches first.
-                auto applied = getAppliedSettings();
+                auto applied = appliedSettings.get();
                 bool anyStarted = false;
-                if (isAnyStreamingUserEnabled(applied.data) && obs_frontend_streaming_active() &&
-                    isStreamingGroupEnabled(applied.data)) {
+                if (isAnyStreamingUserEnabled(applied) && obs_frontend_streaming_active() &&
+                    isStreamingGroupEnabled(applied)) {
                     anyStarted |= startStreamingIndividual();
                 }
-                if (isRecordingUserEnabled() && obs_frontend_recording_active() && isRecordingEnabled(applied.data)) {
+                if (isRecordingUserEnabled() && obs_frontend_recording_active() && isRecordingEnabled(applied)) {
                     anyStarted |= startRecordingIndividual();
                 }
                 if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() &&
-                    isReplayBufferEnabled(applied.data)) {
+                    isReplayBufferEnabled(applied)) {
                     anyStarted |= startReplayBufferIndividual();
                 }
                 if (anyStarted) {
@@ -1009,10 +1020,10 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 return;
             }
 
-            // One snapshot per tick: every read below and the revision passed to startOutput()
-            // come from the same copy.
-            auto applied = getAppliedSettings();
-            obs_data_t *settings = applied.data;
+            // One snapshot per tick: every read below, the restart check and startOutput() use
+            // the same copy.
+            auto applied = appliedSettings.get();
+            obs_data_t *settings = applied;
 
             // Start all eligible streaming slots as a single output group.
             // Returns true if any slot was started.
@@ -1167,7 +1178,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 }
             }
 
-            if (activeSettingsRev < applied.rev) {
+            if (activeSettings.Get() != applied.Get()) {
                 // Settings has been changed
                 obs_log(LOG_INFO, "%s: Settings change detected, Attempting restart", qUtf8Printable(name));
                 restartOutput();
@@ -1212,7 +1223,7 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                         if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
                             // Restart output when source resolution was changed.
                             obs_log(LOG_INFO, "%s: Attempting restart the streaming output", qUtf8Printable(name));
-                            startOutput(settings, applied.rev);
+                            startOutput(settings);
                             return;
                         }
                     } else {
@@ -1592,9 +1603,9 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
 
 void BranchOutputFilter::updateCallback(obs_data_t *settings)
 {
-    // Restarting here could interrupt a connection attempt, so only the snapshot and its
-    // revision advance; the interval timer restarts the output once it sees the newer revision.
-    replaceAppliedSettings(settings);
+    // Restarting here could interrupt a connection attempt, so only the snapshot advances;
+    // the interval timer restarts the output once it sees a newer snapshot.
+    appliedSettings.replace(settings);
 
     auto source = obs_filter_get_parent(filterSource);
 
@@ -1866,8 +1877,9 @@ void obs_module_unload()
 
     // Release the snapshot before destroying the dock so no dangling
     // references to FilterInfo objects remain once the dock rows are freed.
+    pthread_mutex_lock(&filterListSnapshotMutex);
     {
-        std::lock_guard<std::mutex> lock(filterListSnapshotMutex);
+        OBSMutexAutoUnlock locked(&filterListSnapshotMutex);
         filterListSnapshot.reset();
     }
 

@@ -234,8 +234,8 @@ void BranchOutputFilter::restartRecordingOutput()
 
         if (recordingActive && recordingOutput) {
             // Re-create recording settings with current override values
-            auto applied = getAppliedSettings();
-            OBSDataAutoRelease newSettings = createRecordingSettings(applied.data);
+            auto applied = appliedSettings.get();
+            OBSDataAutoRelease newSettings = createRecordingSettings(applied);
             if (newSettings) {
                 obs_output_update(recordingOutput, newSettings);
             }
@@ -440,10 +440,10 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
     }
 
     if (needsFormatUpdate) {
-        auto applied = filter->getAppliedSettings();
-        bool noSpace = obs_data_get_bool(applied.data, "no_space_filename");
+        auto applied = filter->appliedSettings.get();
+        bool noSpace = obs_data_get_bool(applied, "no_space_filename");
         QString appliedFormat = filter->applyFilenameFormatArgs(
-            resolvedOverride.isEmpty() ? QString(obs_data_get_string(applied.data, "filename_formatting"))
+            resolvedOverride.isEmpty() ? QString(obs_data_get_string(applied, "filename_formatting"))
                                        : resolvedOverride,
             noSpace
         );
@@ -493,7 +493,7 @@ bool BranchOutputFilter::createAndStartRecordingOutputChecked(obs_data_t *settin
 
 bool BranchOutputFilter::startRecordingIndividual()
 {
-    auto applied = getAppliedSettings();
+    auto applied = appliedSettings.get();
 
     pthread_mutex_lock(&pluginMutex);
     {
@@ -506,11 +506,11 @@ bool BranchOutputFilter::startRecordingIndividual()
             // ensureInfrastructure() may fail gracefully if the source is collapsed
             // (calculateCrop returns nullopt). This is acceptable — the interval timer
             // will retry on the next tick when the source becomes available.
-            if (!ensureInfrastructure(applied.data, applied.rev)) {
+            if (!ensureInfrastructure(applied)) {
                 return false;
             }
 
-            bool started = createAndStartRecordingOutputChecked(applied.data);
+            bool started = createAndStartRecordingOutputChecked(applied);
             if (!started) {
                 releaseInfrastructureIfIdle();
             }

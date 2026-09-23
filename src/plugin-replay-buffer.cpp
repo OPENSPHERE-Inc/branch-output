@@ -262,20 +262,20 @@ void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, callda
     }
 
     if (needsFormatUpdate) {
-        auto applied = filter->getAppliedSettings();
+        auto applied = filter->appliedSettings.get();
 
         QString effectiveFormat;
         if (!resolvedOverride.isEmpty()) {
             effectiveFormat = resolvedOverride;
         } else {
-            effectiveFormat = obs_data_get_string(applied.data, "replay_buffer_filename_formatting");
+            effectiveFormat = obs_data_get_string(applied, "replay_buffer_filename_formatting");
             if (effectiveFormat.isEmpty()) {
                 auto config = obs_frontend_get_profile_config();
                 effectiveFormat = config_get_string(config, "Output", "FilenameFormatting");
             }
         }
 
-        bool noSpace = obs_data_get_bool(applied.data, "replay_buffer_no_space_filename");
+        bool noSpace = obs_data_get_bool(applied, "replay_buffer_no_space_filename");
         QString appliedFormat = filter->applyFilenameFormatArgs(effectiveFormat, noSpace);
 
         OBSDataAutoRelease settings = obs_data_create();
@@ -318,7 +318,7 @@ bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
 
 bool BranchOutputFilter::startReplayBufferIndividual()
 {
-    auto applied = getAppliedSettings();
+    auto applied = appliedSettings.get();
 
     pthread_mutex_lock(&pluginMutex);
     {
@@ -328,11 +328,11 @@ bool BranchOutputFilter::startReplayBufferIndividual()
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-            if (!ensureInfrastructure(applied.data, applied.rev)) {
+            if (!ensureInfrastructure(applied)) {
                 return false;
             }
 
-            bool started = createAndStartReplayBufferChecked(applied.data);
+            bool started = createAndStartReplayBufferChecked(applied);
             if (!started) {
                 releaseInfrastructureIfIdle();
             }

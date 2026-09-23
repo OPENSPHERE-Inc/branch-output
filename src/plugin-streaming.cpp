@@ -432,7 +432,7 @@ bool BranchOutputFilter::stopAllStreamingOutputsGracefully()
 
 bool BranchOutputFilter::startStreamingIndividual()
 {
-    auto applied = getAppliedSettings();
+    auto applied = appliedSettings.get();
 
     pthread_mutex_lock(&pluginMutex);
     {
@@ -442,11 +442,11 @@ bool BranchOutputFilter::startStreamingIndividual()
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-            if (!ensureInfrastructure(applied.data, applied.rev)) {
+            if (!ensureInfrastructure(applied)) {
                 return false;
             }
 
-            if (!createAndStartStreamingOutputs(applied.data)) {
+            if (!createAndStartStreamingOutputs(applied)) {
                 releaseInfrastructureIfIdle();
                 return false;
             }
@@ -481,7 +481,7 @@ bool BranchOutputFilter::stopStreamingIndividual()
 
 bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
 {
-    auto applied = getAppliedSettings();
+    auto applied = appliedSettings.get();
 
     pthread_mutex_lock(&pluginMutex);
     {
@@ -491,11 +491,11 @@ bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-            if (!ensureInfrastructure(applied.data, applied.rev)) {
+            if (!ensureInfrastructure(applied)) {
                 return false;
             }
 
-            if (!isStreamingGroupEnabled(applied.data) || !isStreamingEnabled(applied.data, index)) {
+            if (!isStreamingGroupEnabled(applied) || !isStreamingEnabled(applied, index)) {
                 releaseInfrastructureIfIdle();
                 return false;
             }
@@ -505,7 +505,7 @@ bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
             }
 
             if (!streamings[index].output) {
-                createStreamingOutput(applied.data, index);
+                createStreamingOutput(applied, index);
             }
 
             startStreamingOutput(index);
@@ -593,9 +593,9 @@ void BranchOutputFilter::onEnableAllStreamingHotkeyPressed(void *data, obs_hotke
         return;
     }
 
-    auto applied = filter->getAppliedSettings();
+    auto applied = filter->appliedSettings.get();
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (filter->isStreamingEnabled(applied.data, i)) {
+        if (filter->isStreamingEnabled(applied, i)) {
             filter->setStreamingUserEnabled(i, true);
         }
     }
@@ -612,9 +612,9 @@ void BranchOutputFilter::onDisableAllStreamingHotkeyPressed(void *data, obs_hotk
         return;
     }
 
-    auto applied = filter->getAppliedSettings();
+    auto applied = filter->appliedSettings.get();
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (filter->isStreamingEnabled(applied.data, i)) {
+        if (filter->isStreamingEnabled(applied, i)) {
             filter->setStreamingUserEnabled(i, false);
         }
     }

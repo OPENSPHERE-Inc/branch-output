@@ -189,7 +189,7 @@ The main class is `BranchOutputFilter` (declared in `plugin-main.hpp`), which is
 - `QMutex` protects audio buffers in `AudioCapture`.
 - Atomic fields (`std::atomic<bool>` for `outputStarting`, `streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`; `std::atomic<uint64_t>` for `reconnectAttemptingAt`) eliminate data races from OBS signal callbacks.
 - UI updates use `QMetaObject::invokeMethod` with `Qt::QueuedConnection` for thread safety.
-- Settings changes are tracked via revision counters (`storedSettingsRev` / `activeSettingsRev`) to defer restarts.
+- `AppliedSettings` (`appliedSettings`) holds a copy of the settings as last applied, guarded by its own leaf mutex (taken last). `updateCallback()` only publishes a new copy; the interval timer restarts the output when the copy it reads is not the one the running infrastructure was built from (`activeSettings`).
 
 ### OBS API Usage
 
@@ -380,7 +380,7 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 
 - **Do NOT call `obs_filter_get_parent()` in the `BranchOutputFilter` constructor** — it returns `nullptr` at that point. Use `addCallback()` instead.
 - **Private sources** (not visible in frontend) are intentionally excluded from status dock and timer registration.
-- **Settings revisions** (`storedSettingsRev` / `activeSettingsRev`) exist to avoid stopping output during reconnect attempts. Do not bypass this mechanism.
+- **Applied settings snapshot** — `updateCallback()` must not restart outputs; it only calls `appliedSettings.replace()`, and the interval timer performs the restart once no connection attempt is in progress. Output start and configuration read `appliedSettings.get()`, never `obs_source_get_settings()`, because the live settings hold unapplied edits of the properties dialog.
 - **Encoder compatibility** — The plugin maps "simple" encoder names to actual encoder IDs, with version-specific fallbacks (OBS 30 vs OBS 31). See `getSimpleVideoEncoder()` in `utils.hpp`.
 - **Memory management** — Use OBS RAII wrappers. Raw `bfree()` / `obs_data_release()` calls are error-prone.
 - **`.gitignore` uses allowlist pattern** — New top-level files/directories must be explicitly un-ignored with `!` prefix.

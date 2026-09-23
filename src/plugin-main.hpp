@@ -26,7 +26,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/threading.h>
 
 #include <atomic>
-#include <mutex>
 
 #include <QObject>
 #include <QSet>
@@ -93,26 +92,34 @@ class BranchOutputFilter : public QObject {
         OBSSignal outputStopSignal;
     };
 
-    // A settings snapshot together with the revision it was published under.
-    struct AppliedSettings {
+    // Copy of the settings as they were last applied: the settings passed to the constructor
+    // (after migration) or to the most recent updateCallback(). A published copy is never
+    // modified and replace() always publishes a new object, so two get() results with the same
+    // pointer are the same snapshot.
+    class AppliedSettings {
+        // Leaf lock: taken while holding any of the other mutexes, never the reverse.
+        pthread_mutex_t mutex;
         OBSDataAutoRelease data;
-        uint32_t rev;
+
+    public:
+        AppliedSettings();
+        ~AppliedSettings();
+        AppliedSettings(const AppliedSettings &) = delete;
+        AppliedSettings &operator=(const AppliedSettings &) = delete;
+
+        // Publish a copy of settings as the applied snapshot.
+        void replace(obs_data_t *settings);
+        // Strong reference to the current snapshot. Callers read it only.
+        OBSDataAutoRelease get();
     };
 
     QString name;
     bool initialized; // Activate after first "Apply" click
-    // storedSettingsRev is read and written only under appliedSettingsMutex. activeSettingsRev is
-    // touched only from the interval timer thread (written by ensureInfrastructure()).
-    uint32_t storedSettingsRev;
-    uint32_t activeSettingsRev;
-    // Snapshot of the settings passed to the constructor (after migration) or to the most
-    // recent updateCallback(), and its revision. Immutable after publication; replaced as a pair.
-    OBSDataAutoRelease appliedSettings;
-    uint32_t appliedSettingsRev;
-    // Leaf lock guarding the appliedSettings / appliedSettingsRev / storedSettingsRev updates only.
-    // Never call any libobs / Qt API while holding it. May be taken while holding any of the other
-    // mutexes; never the reverse.
-    std::mutex appliedSettingsMutex;
+    AppliedSettings appliedSettings;
+    // Snapshot the current infrastructure was built from. Touched only from the interval timer
+    // thread (written by ensureInfrastructure()). The strong reference keeps its address from
+    // being reused, which the pointer comparison against appliedSettings.get() relies on.
+    OBSData activeSettings;
     QTimer *intervalTimer;
     bool outputGracefullyStopping;
     bool streamingIndividualStopping;
@@ -199,14 +206,10 @@ class BranchOutputFilter : public QObject {
 
     OBSSignal filterRenamedSignal;
 
-    void startOutput(obs_data_t *settings, uint32_t settingsRev);
+    void startOutput(obs_data_t *settings);
     void stopOutput();
-    bool ensureInfrastructure(obs_data_t *settings, uint32_t settingsRev);
+    bool ensureInfrastructure(obs_data_t *settings);
     void releaseInfrastructureIfIdle();
-
-    // Applied settings snapshot (see appliedSettings). Callers read the returned copy only.
-    void replaceAppliedSettings(obs_data_t *settings);
-    AppliedSettings getAppliedSettings();
 
     // Internal helpers (caller must hold outputMutex, and must call ensureInfrastructure() first)
     // Returns true if any output was actually started.
