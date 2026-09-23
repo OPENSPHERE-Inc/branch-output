@@ -1287,32 +1287,40 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 }
             }
 
-            if (recordingSettingsOverridden) {
-                if (recordingActive && recordingAlive && recordingOutput && obs_output_paused(recordingOutput)) {
-                    // Recording is paused and alive: keep flag, restart will be triggered on unpause
-                } else {
-                    recordingSettingsOverridden = false;
-                    if (recordingActive) {
-                        if (recordingPending) {
-                            // Recording is pending (source collapsed): stop output so it will be
-                            // re-created with new settings when the source is uncollapsed.
-                            obs_log(
-                                LOG_INFO, "%s: Stopping recording output for settings override (pending)",
-                                qUtf8Printable(name)
-                            );
-                            stopRecordingOutput(true);
-                        } else {
-                            obs_log(
-                                LOG_INFO, "%s: Restarting recording for filename format change", qUtf8Printable(name)
-                            );
-                            restartRecordingOutput();
+            pthread_mutex_lock(&outputMutex);
+            {
+                OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+                if (recordingSettingsOverridden) {
+                    if (recordingActive && recordingAlive && recordingOutput && obs_output_paused(recordingOutput)) {
+                        // Recording is paused and alive: keep flag, restart will be triggered on unpause
+                    } else if (recordingActive && recordingAlive && !hasRecordingWrittenSinceStart()) {
+                        // Restart once written: stopping before the first packet leaves an empty file
+                    } else {
+                        recordingSettingsOverridden = false;
+                        if (recordingActive) {
+                            if (recordingPending) {
+                                // Recording is pending (source collapsed): stop output so it will be
+                                // re-created with new settings when the source is uncollapsed.
+                                obs_log(
+                                    LOG_INFO, "%s: Stopping recording output for settings override (pending)",
+                                    qUtf8Printable(name)
+                                );
+                                stopRecordingOutput(true);
+                            } else {
+                                obs_log(
+                                    LOG_INFO, "%s: Restarting recording for filename format change",
+                                    qUtf8Printable(name)
+                                );
+                                restartRecordingOutput();
+                            }
                         }
                     }
+                } else if (recordingActive && !recordingAlive) {
+                    // Restart recording
+                    obs_log(LOG_INFO, "%s: Attempting reactivate the recording output", qUtf8Printable(name));
+                    restartRecordingOutput();
                 }
-            } else if (recordingActive && !recordingAlive) {
-                // Restart recording
-                obs_log(LOG_INFO, "%s: Attempting reactivate the recording output", qUtf8Printable(name));
-                restartRecordingOutput();
             }
 
             // Guard per-slot streamings[i].output access against concurrent nulling in

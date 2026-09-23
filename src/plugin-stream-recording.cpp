@@ -185,6 +185,7 @@ void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
 
     // Start recording output
     if (obs_output_start(recordingOutput)) {
+        recordingTotalBytesAtStart = obs_output_get_total_bytes(recordingOutput);
         recordingActive = true;
         recordingPending = false;
         auto parent = obs_filter_get_parent(filterSource);
@@ -228,6 +229,8 @@ void BranchOutputFilter::stopRecordingOutput(bool pending)
 
 void BranchOutputFilter::restartRecordingOutput()
 {
+    // FIXME: obs_output_start() waits for the previous run to stop under outputMutex; a script proc
+    // blocked on outputMutex on the graphics thread stalls that stop. Release it before starting.
     pthread_mutex_lock(&outputMutex);
     {
         OBSMutexAutoUnlock locked(&outputMutex);
@@ -240,9 +243,13 @@ void BranchOutputFilter::restartRecordingOutput()
                 obs_output_update(recordingOutput, newSettings);
             }
 
+            // FIXME: An unconsumed split request survives this stop / start and splits the new run
+            // before its first packet. Recreate the output object instead of restarting it.
             obs_output_stop(recordingOutput);
 
-            if (!obs_output_start(recordingOutput)) {
+            bool started = obs_output_start(recordingOutput);
+            recordingTotalBytesAtStart = obs_output_get_total_bytes(recordingOutput);
+            if (!started) {
                 obs_log(LOG_ERROR, "%s: Restart recording output failed", qUtf8Printable(name));
             }
         }
@@ -279,9 +286,22 @@ bool BranchOutputFilter::canAddChapterToRecording()
     return recordingActive && recordingOutput && addChapterToRecordingEnabled && !obs_output_paused(recordingOutput);
 }
 
+bool BranchOutputFilter::hasRecordingWrittenSinceStart()
+{
+    return recordingOutput && obs_output_get_total_bytes(recordingOutput) > recordingTotalBytesAtStart;
+}
+
 bool BranchOutputFilter::canSplitRecording()
 {
-    return recordingActive && recordingOutput && splitRecordingEnabled;
+    pthread_mutex_lock(&outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&outputMutex);
+
+        // A split requested before the first packet corrupts the file, and one left unconsumed by
+        // a stopped or restarting output carries over into its next run.
+        return splitRecordingEnabled && recordingActive && recordingOutput && !recordingPending &&
+               !recordingSettingsOverridden && obs_output_active(recordingOutput) && hasRecordingWrittenSinceStart();
+    }
 }
 
 bool BranchOutputFilter::splitRecording()
@@ -292,7 +312,7 @@ bool BranchOutputFilter::splitRecording()
     {
         OBSMutexAutoUnlock locked(&outputMutex);
 
-        if (!splitRecordingEnabled || !recordingActive || !recordingOutput) {
+        if (!canSplitRecording()) {
             return false;
         }
         recordingOutputRef = obs_output_get_ref(recordingOutput);
@@ -304,8 +324,8 @@ bool BranchOutputFilter::splitRecording()
     return splitRecording(recordingOutputRef.Get());
 }
 
-// Precondition: caller must verify splitRecordingEnabled, recordingActive, and
-// recordingPending under outputMutex before acquiring a strong ref to output.
+// Precondition: caller must verify canSplitRecording() under outputMutex before acquiring a
+// strong ref to output.
 bool BranchOutputFilter::splitRecording(obs_output_t *output)
 {
     if (!output) {
@@ -423,7 +443,7 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
         }
 
         // Recording is active
-        if (filter->splitRecordingEnabled && !filter->recordingPending) {
+        if (filter->canSplitRecording()) {
             // Called under outputMutex; obs_output_update() runs after release
             // to avoid mixing outputMutex with libobs's internal source mutex.
             // FIXME: if the output is stopped or replaced between mutex release
