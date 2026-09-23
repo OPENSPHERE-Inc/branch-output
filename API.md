@@ -44,7 +44,7 @@ Behavior by recording state:
 - Before recording starts: the overridden format is used when recording begins.
 - Recording in progress, file splitting enabled: a file split is triggered immediately on format
   change. If the recording has not written any data yet (for example, right after it starts), the
-  recording is restarted with the new format instead, once it has written data.
+  split is deferred until it has written data.
 - Recording in progress, file splitting disabled: recording is restarted with the new format.
 
 **Python sample code**
@@ -270,8 +270,9 @@ The following caveats apply to all procedures and sample scripts above.
 - **Callback safety**: Do not call from OBS signal callbacks (`obs_source_signal`, `obs_output_signal`, etc.) or frontend event callbacks (`obs_frontend_event_callback`) — deadlock may occur. Safe callers: script timers, hotkey handlers, UI event handlers. Ensure no Branch Output lock is held at the call site when calling from a hotkey callback.
 - **Latency**: Calls are not constant-time (a recording restart or file split may be triggered). Avoid latency-sensitive hot paths.
 - **Deferred application**: If recording is transitioning (just started, pending, split, or restart
-  in progress), the override is stored and applied later: typically within about 1 second, or,
-  right after recording starts, once the recording has written its first data. The proc call
+  in progress) or paused, the override is stored and applied later. It is typically applied within
+  about 1 second, but right after recording starts it waits until the recording has written its
+  first data, and while recording is paused it waits until recording is unpaused. The proc call
   returns immediately; there is no notification when the new format becomes active.
 - **Registration timing**: `osi_branch_output_get_filter_list` is registered during `obs_module_post_load()`. Earlier calls return `false` from `proc_handler_call()` and leave the `out` parameter unwritten — always check the return value before reading.
 - **Module unload**: Do not call any procedure after `obs_module_unload()` — behavior is undefined.

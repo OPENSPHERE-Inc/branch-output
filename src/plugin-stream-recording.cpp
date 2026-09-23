@@ -185,7 +185,6 @@ void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
 
     // Start recording output
     if (obs_output_start(recordingOutput)) {
-        recordingTotalBytesAtStart = obs_output_get_total_bytes(recordingOutput);
         recordingActive = true;
         recordingPending = false;
         auto parent = obs_filter_get_parent(filterSource);
@@ -231,7 +230,9 @@ void BranchOutputFilter::restartRecordingOutput()
 {
     // FIXME: Holding outputMutex across the stop / start below can deadlock with a script proc on
     // the graphics thread. Release it before stopping; see
-    // https://github.com/OPENSPHERE-Inc/branch-output/issues/195.
+    // https://github.com/OPENSPHERE-Inc/branch-output/issues/195. onIntervalTimerTimeout() already
+    // holds outputMutex (recursive) when calling this function, so unlocking only here leaves the
+    // caller's lock count nonzero and does not close the deadlock.
     pthread_mutex_lock(&outputMutex);
     {
         OBSMutexAutoUnlock locked(&outputMutex);
@@ -248,9 +249,7 @@ void BranchOutputFilter::restartRecordingOutput()
             // before its first packet. Recreate the output object instead of restarting it.
             obs_output_stop(recordingOutput);
 
-            bool started = obs_output_start(recordingOutput);
-            recordingTotalBytesAtStart = obs_output_get_total_bytes(recordingOutput);
-            if (!started) {
+            if (!obs_output_start(recordingOutput)) {
                 obs_log(LOG_ERROR, "%s: Restart recording output failed", qUtf8Printable(name));
             }
         }
@@ -289,7 +288,8 @@ bool BranchOutputFilter::canAddChapterToRecording()
 
 bool BranchOutputFilter::hasRecordingWrittenSinceStart()
 {
-    return recordingOutput && obs_output_get_total_bytes(recordingOutput) > recordingTotalBytesAtStart;
+    // libobs counts a video packet before muxing it; 2 ensures the first keyframe has been muxed.
+    return recordingOutput && obs_output_get_total_frames(recordingOutput) >= 2;
 }
 
 bool BranchOutputFilter::canSplitRecording()
@@ -340,6 +340,25 @@ bool BranchOutputFilter::splitRecording(obs_output_t *output)
     calldata_init_fixed(&cd, stack, sizeof(stack));
     proc_handler_call(ph, "split_file", &cd);
     return calldata_bool(&cd, "split_file_enabled");
+}
+
+void BranchOutputFilter::updateRecordingFormatAndSplit(obs_output_t *output, const QString &formatOverride)
+{
+    auto applied = appliedSettings.get();
+    QString format = formatOverride;
+    if (format.isEmpty()) {
+        format = obs_data_get_string(applied, "filename_formatting");
+    }
+    bool noSpace = obs_data_get_bool(applied, "no_space_filename");
+    QString appliedFormat = applyFilenameFormatArgs(format, noSpace);
+
+    OBSDataAutoRelease settings = obs_data_create();
+    obs_data_set_string(settings, "format", qUtf8Printable(appliedFormat));
+    obs_output_update(output, settings);
+
+    obs_log(LOG_INFO, "%s: Recording output format updated: %s", qUtf8Printable(name), qUtf8Printable(appliedFormat));
+
+    splitRecording(output);
 }
 
 bool BranchOutputFilter::pauseRecording()
@@ -422,8 +441,6 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
     const char *format = calldata_string(cd, "format");
     OBSOutputAutoRelease recordingOutputRef;
     QString resolvedOverride;
-    bool needsSplit = false;
-    bool needsFormatUpdate = false;
 
     pthread_mutex_lock(&filter->outputMutex);
     {
@@ -452,36 +469,14 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
             // is silently dropped.
             resolvedOverride = filter->recordingFilenameFormatOverride;
             recordingOutputRef = obs_output_get_ref(filter->recordingOutput);
-            needsFormatUpdate = (recordingOutputRef != nullptr);
-            needsSplit = needsFormatUpdate;
         } else {
-            // Delegate to intervalTimer: stop (if pending) or restart
+            // Delegate to intervalTimer: stop (if pending), split, or restart
             filter->recordingSettingsOverridden = true;
         }
     }
 
-    if (needsFormatUpdate) {
-        auto applied = filter->appliedSettings.get();
-        bool noSpace = obs_data_get_bool(applied, "no_space_filename");
-        QString appliedFormat = filter->applyFilenameFormatArgs(
-            resolvedOverride.isEmpty() ? QString(obs_data_get_string(applied, "filename_formatting"))
-                                       : resolvedOverride,
-            noSpace
-        );
-
-        OBSDataAutoRelease settings = obs_data_create();
-        obs_data_set_string(settings, "format", qUtf8Printable(appliedFormat));
-        obs_output_update(recordingOutputRef, settings);
-
-        obs_log(
-            LOG_INFO, "%s: Recording output format updated: %s", qUtf8Printable(filter->name),
-            qUtf8Printable(appliedFormat)
-        );
-    }
-
-    // Split can be called directly (safe from any thread)
-    if (needsSplit) {
-        filter->splitRecording(recordingOutputRef.Get());
+    if (recordingOutputRef) {
+        filter->updateRecordingFormatAndSplit(recordingOutputRef, resolvedOverride);
     }
 }
 
