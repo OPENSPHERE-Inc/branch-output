@@ -1281,38 +1281,76 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                         // If the output has not yet been created.
                         // Create and start recording when recording output was pending.
                         obs_log(LOG_INFO, "%s: Attempting resume the recording output", qUtf8Printable(name));
-                        createAndStartRecordingOutput(settings);
+                        pthread_mutex_lock(&outputMutex);
+                        {
+                            OBSMutexAutoUnlock outputLocked(&outputMutex);
+                            createAndStartRecordingOutput(settings);
+                        }
                         return;
                     }
                 }
             }
 
-            if (recordingSettingsOverridden) {
-                if (recordingActive && recordingAlive && recordingOutput && obs_output_paused(recordingOutput)) {
-                    // Recording is paused and alive: keep flag, restart will be triggered on unpause
-                } else {
-                    recordingSettingsOverridden = false;
-                    if (recordingActive) {
-                        if (recordingPending) {
-                            // Recording is pending (source collapsed): stop output so it will be
-                            // re-created with new settings when the source is uncollapsed.
-                            obs_log(
-                                LOG_INFO, "%s: Stopping recording output for settings override (pending)",
-                                qUtf8Printable(name)
-                            );
-                            stopRecordingOutput(true);
-                        } else {
-                            obs_log(
-                                LOG_INFO, "%s: Restarting recording for filename format change", qUtf8Printable(name)
-                            );
-                            restartRecordingOutput();
+            OBSOutputAutoRelease splitOutputRef;
+            QString splitFormatOverride;
+
+            pthread_mutex_lock(&outputMutex);
+            {
+                OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+                if (recordingSettingsOverridden) {
+                    if (recordingActive && recordingAlive && recordingOutput && obs_output_paused(recordingOutput)) {
+                        // Recording is paused and alive: keep flag, apply it on unpause
+                    } else if (recordingActive && recordingAlive && !hasRecordingWrittenSinceStart()) {
+                        // Apply once written: a stop or split before the first packet leaves an empty file
+                    } else {
+                        recordingSettingsOverridden = false;
+                        if (recordingActive) {
+                            if (recordingPending) {
+                                // Recording is pending (source collapsed): stop output so it will be
+                                // re-created with new settings when the source is uncollapsed.
+                                obs_log(
+                                    LOG_INFO, "%s: Stopping recording output for settings override (pending)",
+                                    qUtf8Printable(name)
+                                );
+                                stopRecordingOutput(true);
+                            } else if (canSplitRecording()) {
+                                obs_log(
+                                    LOG_INFO, "%s: Splitting recording for filename format change", qUtf8Printable(name)
+                                );
+                                // Keep raised until applied below so that a concurrent override
+                                // proc defers to the next tick.
+                                recordingSettingsOverridden = true;
+                                splitFormatOverride = recordingFilenameFormatOverride;
+                                splitOutputRef = obs_output_get_ref(recordingOutput);
+                            } else {
+                                obs_log(
+                                    LOG_INFO, "%s: Restarting recording for filename format change",
+                                    qUtf8Printable(name)
+                                );
+                                restartRecordingOutput();
+                            }
                         }
                     }
+                } else if (recordingActive && !recordingAlive) {
+                    // Restart recording
+                    obs_log(LOG_INFO, "%s: Attempting reactivate the recording output", qUtf8Printable(name));
+                    restartRecordingOutput();
                 }
-            } else if (recordingActive && !recordingAlive) {
-                // Restart recording
-                obs_log(LOG_INFO, "%s: Attempting reactivate the recording output", qUtf8Printable(name));
-                restartRecordingOutput();
+            }
+
+            if (splitOutputRef) {
+                updateRecordingFormatAndSplit(splitOutputRef, splitFormatOverride);
+
+                pthread_mutex_lock(&outputMutex);
+                {
+                    OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+                    if (recordingOutput.Get() == splitOutputRef.Get() &&
+                        recordingFilenameFormatOverride == splitFormatOverride) {
+                        recordingSettingsOverridden = false;
+                    }
+                }
             }
 
             // Guard per-slot streamings[i].output access against concurrent nulling in
@@ -1567,6 +1605,30 @@ QString BranchOutputFilter::applyFilenameFormatArgs(const QString &format, bool 
     QString filterName = qUtf8Printable(name);
     auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
     return QString(format).arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
+}
+
+QString BranchOutputFilter::resolveFilenameFormat(
+    const QString &formatOverride, obs_data_t *settings, const char *formatKey, bool noSpace
+)
+{
+    QString format = formatOverride;
+    if (format.isEmpty()) {
+        format = obs_data_get_string(settings, formatKey);
+        if (format.isEmpty()) {
+            format = config_get_string(obs_frontend_get_profile_config(), "Output", "FilenameFormatting");
+        }
+    }
+
+    // Sanitize filename
+#ifdef __APPLE__
+    format.replace(QRegularExpression("[:]"), "");
+#elif defined(_WIN32)
+    format.replace(QRegularExpression("[<>:\"\\|\\?\\*]"), "");
+#else
+    // TODO: Add filtering for other platforms
+#endif
+
+    return applyFilenameFormatArgs(format, noSpace);
 }
 
 void BranchOutputFilter::addCallback(obs_source_t *source)

@@ -284,6 +284,8 @@ class BranchOutputFilter : public QObject {
     bool isReplayBufferUserEnabled() const { return replayBufferUserEnabled.load(std::memory_order_relaxed); }
     std::optional<CropRect> calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings);
     QString applyFilenameFormatArgs(const QString &format, bool noSpace);
+    QString
+    resolveFilenameFormat(const QString &formatOverride, obs_data_t *settings, const char *formatKey, bool noSpace);
 
     // Implemented in plugin-streaming.cpp
     obs_data_t *createStreamingSettings(obs_data_t *settings, size_t index = 0);
@@ -311,9 +313,13 @@ class BranchOutputFilter : public QObject {
     bool isSplitRecordingEnabled(obs_data_t *settings);
     bool canPauseRecording();
     bool canAddChapterToRecording();
+    // Caller must hold outputMutex.
+    bool hasRecordingWrittenSinceStart();
     bool canSplitRecording();
     bool splitRecording();
     bool splitRecording(obs_output_t *output);
+    // Caller must not hold outputMutex, and must meet the splitRecording(obs_output_t *) precondition.
+    void updateRecordingFormatAndSplit(obs_output_t *output, const QString &formatOverride);
     bool pauseRecording();
     bool unpauseRecording();
     bool addChapterToRecording(QString chapterName = QString());
