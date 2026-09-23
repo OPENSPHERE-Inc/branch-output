@@ -229,8 +229,9 @@ void BranchOutputFilter::stopRecordingOutput(bool pending)
 
 void BranchOutputFilter::restartRecordingOutput()
 {
-    // FIXME: obs_output_start() waits for the previous run to stop under outputMutex; a script proc
-    // blocked on outputMutex on the graphics thread stalls that stop. Release it before starting.
+    // FIXME: Holding outputMutex across the stop / start below can deadlock with a script proc on
+    // the graphics thread. Release it before stopping; see
+    // https://github.com/OPENSPHERE-Inc/branch-output/issues/195.
     pthread_mutex_lock(&outputMutex);
     {
         OBSMutexAutoUnlock locked(&outputMutex);
