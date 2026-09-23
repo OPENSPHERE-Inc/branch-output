@@ -875,7 +875,7 @@ OutputTableRow::OutputTableRow(
     buttonsContainer->setLayout(buttonsContainerLayout);
 
     auto resetButton = new QPushButton(QTStr("Reset"), parent);
-    connect(resetButton, &QPushButton::clicked, this, [parent, row]() { parent->outputTableRows[row]->reset(); });
+    connect(resetButton, &QPushButton::clicked, this, [this]() { reset(); });
     resetButton->setProperty("toolButton", true);  // Until OBS 30
     resetButton->setProperty("class", "btn-tool"); // Since OBS 31
     resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
@@ -1154,20 +1154,36 @@ void OutputTableRow::update()
 
 void OutputTableRow::reset()
 {
-    obs_output_t *output;
+    // The strong ref defers the filter's destroy (stopOutput()) past the output access below
+    OBSSourceAutoRelease filterSource = obs_weak_source_get_source(filterWeak);
+    if (!filterSource) {
+        droppedFrames->setTextValue("");
+        megabytesSent->setTextValue("");
+        bitrate->setTextValue("");
+        return;
+    }
 
-    switch (outputType) {
-    case ROW_OUTPUT_STREAMING:
-        output = streamingIndex < MAX_SERVICES ? filter->streamings[streamingIndex].output.Get() : nullptr;
-        break;
-    case ROW_OUTPUT_RECORDING:
-        output = filter->recordingOutput.Get();
-        break;
-    case ROW_OUTPUT_REPLAY_BUFFER:
-        output = filter->replayBufferOutput.Get();
-        break;
-    default:
-        output = nullptr;
+    OBSOutputAutoRelease output;
+
+    pthread_mutex_lock(&filter->outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&filter->outputMutex);
+
+        switch (outputType) {
+        case ROW_OUTPUT_STREAMING:
+            if (streamingIndex < MAX_SERVICES) {
+                output = obs_output_get_ref(filter->streamings[streamingIndex].output);
+            }
+            break;
+        case ROW_OUTPUT_RECORDING:
+            output = obs_output_get_ref(filter->recordingOutput);
+            break;
+        case ROW_OUTPUT_REPLAY_BUFFER:
+            output = obs_output_get_ref(filter->replayBufferOutput);
+            break;
+        default:
+            break;
+        }
     }
 
     if (!output) {
