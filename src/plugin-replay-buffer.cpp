@@ -316,10 +316,8 @@ bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
     return replayBufferActive;
 }
 
-bool BranchOutputFilter::startReplayBufferIndividual()
+bool BranchOutputFilter::startReplayBufferIndividual(obs_data_t *applied)
 {
-    auto applied = appliedSettings.get();
-
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);

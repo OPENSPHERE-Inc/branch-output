@@ -491,10 +491,8 @@ bool BranchOutputFilter::createAndStartRecordingOutputChecked(obs_data_t *settin
     return recordingActive || recordingPending;
 }
 
-bool BranchOutputFilter::startRecordingIndividual()
+bool BranchOutputFilter::startRecordingIndividual(obs_data_t *applied)
 {
-    auto applied = appliedSettings.get();
-
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);

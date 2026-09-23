@@ -430,10 +430,8 @@ bool BranchOutputFilter::stopAllStreamingOutputsGracefully()
     return countActiveStreamings() == 0;
 }
 
-bool BranchOutputFilter::startStreamingIndividual()
+bool BranchOutputFilter::startStreamingIndividual(obs_data_t *applied)
 {
-    auto applied = appliedSettings.get();
-
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);
@@ -479,10 +477,8 @@ bool BranchOutputFilter::stopStreamingIndividual()
     return true;
 }
 
-bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
+bool BranchOutputFilter::startSingleStreamingIndividual(obs_data_t *applied, size_t index)
 {
-    auto applied = appliedSettings.get();
-
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);
