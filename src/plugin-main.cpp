@@ -1188,6 +1188,11 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             if (settingsChanged) {
                 // Settings has been changed
                 obs_log(LOG_INFO, "%s: Settings change detected, Attempting restart", qUtf8Printable(name));
+                // FIXME: someStreamingsStarting() only gates a slot's initial start ("starting" ->
+                // "activate"). libobs' reconnect_thread() re-enters obs_output_actual_start() without
+                // "starting", so this restart reaches stopStreamingOutput() -> obs_output_stop() on a
+                // reconnecting output. Gate on obs_output_reconnecting() or route the stop through
+                // stopAllStreamingOutputsGracefully().
                 restartOutput();
                 return;
             }
