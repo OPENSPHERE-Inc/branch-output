@@ -838,7 +838,7 @@ void BranchOutputFilter::stopOutput()
 
 void BranchOutputFilter::restartOutput(int interlockType)
 {
-    if (countActiveStreamings() > 0 || recordingActive || replayBufferActive) {
+    if (countActiveStreamings() > 0 || recordingActive || recordingPending || replayBufferActive) {
         stopOutput();
     }
 
