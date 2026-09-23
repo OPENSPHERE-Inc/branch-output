@@ -1318,6 +1318,9 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                                 obs_log(
                                     LOG_INFO, "%s: Splitting recording for filename format change", qUtf8Printable(name)
                                 );
+                                // Keep raised until applied below so that a concurrent override
+                                // proc defers to the next tick.
+                                recordingSettingsOverridden = true;
                                 splitFormatOverride = recordingFilenameFormatOverride;
                                 splitOutputRef = obs_output_get_ref(recordingOutput);
                             } else {
@@ -1338,6 +1341,16 @@ void BranchOutputFilter::onIntervalTimerTimeout()
 
             if (splitOutputRef) {
                 updateRecordingFormatAndSplit(splitOutputRef, splitFormatOverride);
+
+                pthread_mutex_lock(&outputMutex);
+                {
+                    OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+                    if (recordingOutput.Get() == splitOutputRef.Get() &&
+                        recordingFilenameFormatOverride == splitFormatOverride) {
+                        recordingSettingsOverridden = false;
+                    }
+                }
             }
 
             // Guard per-slot streamings[i].output access against concurrent nulling in
@@ -1592,6 +1605,30 @@ QString BranchOutputFilter::applyFilenameFormatArgs(const QString &format, bool 
     QString filterName = qUtf8Printable(name);
     auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
     return QString(format).arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
+}
+
+QString BranchOutputFilter::resolveFilenameFormat(
+    const QString &formatOverride, obs_data_t *settings, const char *formatKey, bool noSpace
+)
+{
+    QString format = formatOverride;
+    if (format.isEmpty()) {
+        format = obs_data_get_string(settings, formatKey);
+        if (format.isEmpty()) {
+            format = config_get_string(obs_frontend_get_profile_config(), "Output", "FilenameFormatting");
+        }
+    }
+
+    // Sanitize filename
+#ifdef __APPLE__
+    format.replace(QRegularExpression("[:]"), "");
+#elif defined(_WIN32)
+    format.replace(QRegularExpression("[<>:\"\\|\\?\\*]"), "");
+#else
+    // TODO: Add filtering for other platforms
+#endif
+
+    return applyFilenameFormatArgs(format, noSpace);
 }
 
 void BranchOutputFilter::addCallback(obs_source_t *source)
