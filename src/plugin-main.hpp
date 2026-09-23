@@ -170,8 +170,6 @@ class BranchOutputFilter : public QObject {
     bool addChapterToRecordingEnabled;
     QString recordingFilenameFormatOverride;
     bool recordingSettingsOverridden;
-    // obs_output_get_total_bytes() right after the last start; mp4_output keeps it across restarts.
-    uint64_t recordingTotalBytesAtStart = 0;
 
     // Replay buffer context
     bool replayBufferActive;
@@ -318,6 +316,8 @@ class BranchOutputFilter : public QObject {
     bool canSplitRecording();
     bool splitRecording();
     bool splitRecording(obs_output_t *output);
+    // Caller must not hold outputMutex, and must meet the splitRecording(obs_output_t *) precondition.
+    void updateRecordingFormatAndSplit(obs_output_t *output, const QString &formatOverride);
     bool pauseRecording();
     bool unpauseRecording();
     bool addChapterToRecording(QString chapterName = QString());

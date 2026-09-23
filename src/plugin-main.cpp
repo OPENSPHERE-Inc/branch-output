@@ -1291,15 +1291,18 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 }
             }
 
+            OBSOutputAutoRelease splitOutputRef;
+            QString splitFormatOverride;
+
             pthread_mutex_lock(&outputMutex);
             {
                 OBSMutexAutoUnlock outputLocked(&outputMutex);
 
                 if (recordingSettingsOverridden) {
                     if (recordingActive && recordingAlive && recordingOutput && obs_output_paused(recordingOutput)) {
-                        // Recording is paused and alive: keep flag, restart will be triggered on unpause
+                        // Recording is paused and alive: keep flag, apply it on unpause
                     } else if (recordingActive && recordingAlive && !hasRecordingWrittenSinceStart()) {
-                        // Restart once written: stopping before the first packet leaves an empty file
+                        // Apply once written: a stop or split before the first packet leaves an empty file
                     } else {
                         recordingSettingsOverridden = false;
                         if (recordingActive) {
@@ -1311,6 +1314,12 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                                     qUtf8Printable(name)
                                 );
                                 stopRecordingOutput(true);
+                            } else if (canSplitRecording()) {
+                                obs_log(
+                                    LOG_INFO, "%s: Splitting recording for filename format change", qUtf8Printable(name)
+                                );
+                                splitFormatOverride = recordingFilenameFormatOverride;
+                                splitOutputRef = obs_output_get_ref(recordingOutput);
                             } else {
                                 obs_log(
                                     LOG_INFO, "%s: Restarting recording for filename format change",
@@ -1325,6 +1334,10 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                     obs_log(LOG_INFO, "%s: Attempting reactivate the recording output", qUtf8Printable(name));
                     restartRecordingOutput();
                 }
+            }
+
+            if (splitOutputRef) {
+                updateRecordingFormatAndSplit(splitOutputRef, splitFormatOverride);
             }
 
             // Guard per-slot streamings[i].output access against concurrent nulling in
