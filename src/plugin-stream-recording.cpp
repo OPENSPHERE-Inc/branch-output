@@ -24,7 +24,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 
 #include <QDateTime>
-#include <QRegularExpression>
 
 #include "plugin-support.h"
 #include "plugin-main.hpp"
@@ -34,26 +33,6 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
 {
     auto recordingSettings = obs_data_create();
     auto config = obs_frontend_get_profile_config();
-
-    // Recording filename format (override takes precedence)
-    QString filenameFormat;
-    if (!recordingFilenameFormatOverride.isEmpty()) {
-        filenameFormat = recordingFilenameFormatOverride;
-    } else {
-        filenameFormat = obs_data_get_string(settings, "filename_formatting");
-        if (filenameFormat.isEmpty()) {
-            filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
-        }
-    }
-
-    // Sanitize filename
-#ifdef __APPLE__
-    filenameFormat.replace(QRegularExpression("[:]"), "");
-#elif defined(_WIN32)
-    filenameFormat.replace(QRegularExpression("[<>:\"\\|\\?\\*]"), "");
-#else
-    // TODO: Add filtering for other platforms
-#endif
 
     auto useProfileRecordingPath = obs_data_get_bool(settings, "use_profile_recording_path");
     auto path = useProfileRecordingPath ? getProfileRecordingPath(config) : obs_data_get_string(settings, "path");
@@ -75,9 +54,9 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
         }
     }
 
-    // Add filter name to filename format
     bool noSpace = obs_data_get_bool(settings, "no_space_filename");
-    filenameFormat = applyFilenameFormatArgs(filenameFormat, noSpace);
+    QString filenameFormat =
+        resolveFilenameFormat(recordingFilenameFormatOverride, settings, "filename_formatting", noSpace);
     auto compositePath = getOutputFilename(path, recFormat, noSpace, false, qUtf8Printable(filenameFormat));
 
     if (compositePath.isEmpty()) {
@@ -345,15 +324,13 @@ bool BranchOutputFilter::splitRecording(obs_output_t *output)
 void BranchOutputFilter::updateRecordingFormatAndSplit(obs_output_t *output, const QString &formatOverride)
 {
     auto applied = appliedSettings.get();
-    QString format = formatOverride;
-    if (format.isEmpty()) {
-        format = obs_data_get_string(applied, "filename_formatting");
-    }
     bool noSpace = obs_data_get_bool(applied, "no_space_filename");
-    QString appliedFormat = applyFilenameFormatArgs(format, noSpace);
+    QString appliedFormat = resolveFilenameFormat(formatOverride, applied, "filename_formatting", noSpace);
 
     OBSDataAutoRelease settings = obs_data_create();
     obs_data_set_string(settings, "format", qUtf8Printable(appliedFormat));
+    // FIXME: Updating a running output's settings races with the muxer's generate_filename() on
+    // its packet thread. https://github.com/OPENSPHERE-Inc/branch-output/issues/195
     obs_output_update(output, settings);
 
     obs_log(LOG_INFO, "%s: Recording output format updated: %s", qUtf8Printable(name), qUtf8Printable(appliedFormat));

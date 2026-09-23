@@ -23,8 +23,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include <obs.hpp>
 
-#include <QRegularExpression>
-
 #include "plugin-support.h"
 #include "plugin-main.hpp"
 #include "utils.hpp"
@@ -54,28 +52,10 @@ obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
         return nullptr;
     }
 
-    // Replay buffer specific filename format (override takes precedence)
-    QString filenameFormat;
-    if (!replayBufferFilenameFormatOverride.isEmpty()) {
-        filenameFormat = replayBufferFilenameFormatOverride;
-    } else {
-        filenameFormat = obs_data_get_string(settings, "replay_buffer_filename_formatting");
-        if (filenameFormat.isEmpty()) {
-            filenameFormat = config_get_string(config, "Output", "FilenameFormatting");
-        }
-    }
-
-    // Sanitize filename
-#ifdef __APPLE__
-    filenameFormat.replace(QRegularExpression("[:]"), "");
-#elif defined(_WIN32)
-    filenameFormat.replace(QRegularExpression("[<>:\"\\|\\?\\*]"), "");
-#else
-    // TODO: Add filtering for other platforms
-#endif
-
     bool noSpace = obs_data_get_bool(settings, "replay_buffer_no_space_filename");
-    filenameFormat = applyFilenameFormatArgs(filenameFormat, noSpace);
+    QString filenameFormat = resolveFilenameFormat(
+        replayBufferFilenameFormatOverride, settings, "replay_buffer_filename_formatting", noSpace
+    );
 
     obs_data_set_string(replaySettings, "directory", path);
     obs_data_set_string(replaySettings, "format", qUtf8Printable(filenameFormat));
@@ -263,20 +243,9 @@ void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, callda
 
     if (needsFormatUpdate) {
         auto applied = filter->appliedSettings.get();
-
-        QString effectiveFormat;
-        if (!resolvedOverride.isEmpty()) {
-            effectiveFormat = resolvedOverride;
-        } else {
-            effectiveFormat = obs_data_get_string(applied, "replay_buffer_filename_formatting");
-            if (effectiveFormat.isEmpty()) {
-                auto config = obs_frontend_get_profile_config();
-                effectiveFormat = config_get_string(config, "Output", "FilenameFormatting");
-            }
-        }
-
         bool noSpace = obs_data_get_bool(applied, "replay_buffer_no_space_filename");
-        QString appliedFormat = filter->applyFilenameFormatArgs(effectiveFormat, noSpace);
+        QString appliedFormat =
+            filter->resolveFilenameFormat(resolvedOverride, applied, "replay_buffer_filename_formatting", noSpace);
 
         OBSDataAutoRelease settings = obs_data_create();
         obs_data_set_string(settings, "format", qUtf8Printable(appliedFormat));
