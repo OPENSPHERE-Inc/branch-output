@@ -1281,7 +1281,11 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                         // If the output has not yet been created.
                         // Create and start recording when recording output was pending.
                         obs_log(LOG_INFO, "%s: Attempting resume the recording output", qUtf8Printable(name));
-                        createAndStartRecordingOutput(settings);
+                        pthread_mutex_lock(&outputMutex);
+                        {
+                            OBSMutexAutoUnlock outputLocked(&outputMutex);
+                            createAndStartRecordingOutput(settings);
+                        }
                         return;
                     }
                 }
