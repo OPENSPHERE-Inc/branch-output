@@ -1170,12 +1170,11 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 // "starting", so this restart reaches stopStreamingOutput() -> obs_output_stop() on a
                 // reconnecting output. Gate on obs_output_reconnecting() or route the stop through
                 // stopAllStreamingOutputsGracefully().
-                // FIXME: In Individual mode, restartOutput() -> startOutput() starts every
-                // user-enabled output type regardless of its OBS counterpart's active state.
-                // someStreamingsStarting() gates the tick until the streaming "activate"/"stop"
-                // signal instead of the next tick, so an inactive-OBS-counterpart output goes
-                // fully live in the meantime. Use the per-type Individual start conditions
-                // (lines 993-1003) instead.
+                // FIXME: In Individual mode, restartOutput() starts every user-enabled
+                // output type regardless of its OBS counterpart's active state, so a
+                // streaming slot started this way can go live. Start with the per-type
+                // Individual start conditions instead; see
+                // https://github.com/OPENSPHERE-Inc/branch-output/issues/189.
                 restartOutput();
                 return;
             }
