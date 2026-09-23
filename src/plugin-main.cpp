@@ -1047,6 +1047,15 @@ void BranchOutputFilter::onIntervalTimerTimeout()
             bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
             bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
 
+            // Decide the restart before any start below: an individual start reuses the running
+            // infrastructure, which leaves activeSettings at the snapshot it was built from.
+            bool settingsChanged;
+            pthread_mutex_lock(&outputMutex);
+            {
+                OBSMutexAutoUnlock outputLocked(&outputMutex);
+                settingsChanged = activeSettings.Get() != applied.Get();
+            }
+
             // Check interlock condition
             if (interlockType == INTERLOCK_TYPE_ALWAYS_OFF) {
                 // Always OFF: Stop output immediately
@@ -1099,6 +1108,25 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 if (anyStopped) {
                     return;
                 }
+
+                // Individual start for additional outputs while some are already active.
+                if (!settingsChanged) {
+                    bool anyStarted = false;
+                    if (obs_frontend_streaming_active()) {
+                        anyStarted |= startEligibleStreamings();
+                    }
+                    if (isRecordingUserEnabled() && obs_frontend_recording_active() && !recordingActive &&
+                        !recordingPending && isRecordingEnabled(settings)) {
+                        anyStarted |= startRecordingIndividual(settings);
+                    }
+                    if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() && !replayBufferActive &&
+                        isReplayBufferEnabled(settings)) {
+                        anyStarted |= startReplayBufferIndividual(settings);
+                    }
+                    if (anyStarted) {
+                        return;
+                    }
+                }
             }
 
             // Per-output toggle check (all interlock modes including non-Individual)
@@ -1134,15 +1162,6 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 return;
             }
 
-            // Decide the restart before any start below: an individual start reuses the running
-            // infrastructure, which leaves activeSettings at the snapshot it was built from.
-            bool settingsChanged;
-            pthread_mutex_lock(&outputMutex);
-            {
-                OBSMutexAutoUnlock outputLocked(&outputMutex);
-                settingsChanged = activeSettings.Get() != applied.Get();
-            }
-
             if (settingsChanged) {
                 // Settings has been changed
                 obs_log(LOG_INFO, "%s: Settings change detected, Attempting restart", qUtf8Printable(name));
@@ -1151,30 +1170,17 @@ void BranchOutputFilter::onIntervalTimerTimeout()
                 // "starting", so this restart reaches stopStreamingOutput() -> obs_output_stop() on a
                 // reconnecting output. Gate on obs_output_reconnecting() or route the stop through
                 // stopAllStreamingOutputsGracefully().
-                // FIXME: In Individual mode, startOutput() also starts outputs with an inactive OBS
-                // counterpart, which the next tick stops. Use the Individual start conditions instead.
+                // FIXME: In Individual mode, restartOutput() -> startOutput() starts every
+                // user-enabled output type regardless of its OBS counterpart's active state.
+                // someStreamingsStarting() gates the tick until the streaming "activate"/"stop"
+                // signal instead of the next tick, so an inactive-OBS-counterpart output goes
+                // fully live in the meantime. Use the per-type Individual start conditions
+                // (lines 993-1003) instead.
                 restartOutput();
                 return;
             }
 
-            if (interlockType == INTERLOCK_TYPE_INDIVIDUAL) {
-                // Individual start for additional outputs while some are already active.
-                bool anyStarted = false;
-                if (obs_frontend_streaming_active()) {
-                    anyStarted |= startEligibleStreamings();
-                }
-                if (isRecordingUserEnabled() && obs_frontend_recording_active() && !recordingActive &&
-                    !recordingPending && isRecordingEnabled(settings)) {
-                    anyStarted |= startRecordingIndividual(settings);
-                }
-                if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() && !replayBufferActive &&
-                    isReplayBufferEnabled(settings)) {
-                    anyStarted |= startReplayBufferIndividual(settings);
-                }
-                if (anyStarted) {
-                    return;
-                }
-            } else {
+            if (interlockType != INTERLOCK_TYPE_INDIVIDUAL) {
                 // Per-output toggle re-enable check. The interlock checks above have returned unless
                 // the interlock condition holds, so no recheck is needed here.
                 bool anyStarted = false;
