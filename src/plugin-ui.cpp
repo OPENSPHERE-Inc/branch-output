@@ -65,7 +65,7 @@ inline QString makeFormatToolTip()
 
 //--- BranchOutputFiilter class ---//
 
-void BranchOutputFilter::getDefaults(obs_data_t *defaults)
+void BranchOutput::getDefaults(obs_data_t *defaults)
 {
     obs_log(LOG_DEBUG, "Default settings applying.");
 
@@ -188,7 +188,7 @@ void BranchOutputFilter::getDefaults(obs_data_t *defaults)
     obs_log(LOG_INFO, "Default settings applied.");
 }
 
-void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char *propName)
+void BranchOutput::addApplyButton(obs_properties_t *props, const char *propName)
 {
     obs_properties_add_button2(
         props, propName, obs_module_text("Apply"),
@@ -207,7 +207,7 @@ void BranchOutputFilter::addApplyButton(obs_properties_t *props, const char *pro
     );
 }
 
-void BranchOutputFilter::addPluginInfo(obs_properties_t *props)
+void BranchOutput::addPluginInfo(obs_properties_t *props)
 {
     char plugin_info_format[] = "<a href=\"https://github.com/OPENSPHERE-Inc/branch-output\">Branch Output</a> (v%s) "
                                 "developed by <a href=\"https://opensphere.co.jp\">OPENSPHERE Inc.</a>";
@@ -223,7 +223,7 @@ void BranchOutputFilter::addPluginInfo(obs_properties_t *props)
 
 // index 0: No prefix on prop names (for compatibility)
 // index 1~: "service_x." prefix on prop names
-void BranchOutputFilter::createServiceProperties(obs_properties_t *props, size_t index, bool visible)
+void BranchOutput::createServiceProperties(obs_properties_t *props, size_t index, bool visible)
 {
     QString propNameFormat = getIndexedPropNameFormat(index);
 
@@ -305,7 +305,7 @@ static void updateServiceVisibility(obs_properties_t *props, obs_data_t *setting
     }
 }
 
-void BranchOutputFilter::addServices(obs_properties_t *props)
+void BranchOutput::addServices(obs_properties_t *props)
 {
     auto serviceCountList = obs_properties_add_list(
         props, "service_count", obs_module_text("ServiceCount"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT
@@ -330,7 +330,7 @@ void BranchOutputFilter::addServices(obs_properties_t *props)
     );
 }
 
-void BranchOutputFilter::addStreamingGroup(obs_properties_t *props)
+void BranchOutput::addStreamingGroup(obs_properties_t *props)
 {
     auto streamingGroup = obs_properties_create();
 
@@ -364,7 +364,7 @@ void BranchOutputFilter::addStreamingGroup(obs_properties_t *props)
     addApplyButton(props, "apply1");
 }
 
-void BranchOutputFilter::addRecordingGroup(obs_properties_t *props)
+void BranchOutput::addRecordingGroup(obs_properties_t *props)
 {
     auto recordingGroup = obs_properties_create();
 
@@ -476,7 +476,7 @@ void BranchOutputFilter::addRecordingGroup(obs_properties_t *props)
     addApplyButton(props, "apply2");
 }
 
-void BranchOutputFilter::addAdvancedSettingsGroup(obs_properties_t *props)
+void BranchOutput::addAdvancedSettingsGroup(obs_properties_t *props)
 {
     auto advancedGroup = obs_properties_create();
 
@@ -534,7 +534,7 @@ static void updateReplayBufferEstimate(obs_properties_t *props, obs_data_t *sett
     }
 }
 
-void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
+void BranchOutput::addReplayBufferGroup(obs_properties_t *props)
 {
     auto replayBufferGroup = obs_properties_create();
 
@@ -637,7 +637,7 @@ void BranchOutputFilter::addReplayBufferGroup(obs_properties_t *props)
     addApplyButton(props, "apply3");
 }
 
-void BranchOutputFilter::createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible)
+void BranchOutput::createAudioTrackProperties(obs_properties_t *audioGroup, size_t track, bool visible)
 {
     auto propNameFormat = getIndexedPropNameFormat(track, 1);
 
@@ -754,7 +754,7 @@ static void updateAudioTrackVisibility(obs_properties_t *audioProps, bool custom
     }
 }
 
-void BranchOutputFilter::addAudioGroup(obs_properties_t *props)
+void BranchOutput::addAudioGroup(obs_properties_t *props)
 {
     auto audioGroup = obs_properties_create();
 
@@ -817,7 +817,7 @@ void BranchOutputFilter::addAudioGroup(obs_properties_t *props)
     );
 }
 
-void BranchOutputFilter::addAudioEncoderGroup(obs_properties_t *props)
+void BranchOutput::addAudioEncoderGroup(obs_properties_t *props)
 {
     auto audioEncoderGroup = obs_properties_create();
     auto audioEncoderList = obs_properties_add_list(
@@ -940,7 +940,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_set_modified_callback2(
         croppingList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto filter = fromCallbackData(param);
+            auto filter = fromFilterCallbackData(param);
             auto cropType = obs_data_get_string(settings, "crop_type");
             bool isRelative = cropType && !strcmp(cropType, "relative");
             bool isAbsolute = cropType && !strcmp(cropType, "absolute");
@@ -971,7 +971,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 
     // Crop value modified callback: updates preview rectangle in real-time
     auto cropValueModified = [](void *param, obs_properties_t *, obs_property_t *, obs_data_t *settings) {
-        auto filter = fromCallbackData(param);
+        auto filter = fromFilterCallbackData(param);
         // Check the preview checkbox for the active crop type (not isVisible, which may be false
         // due to previous invalid crop values)
         auto cropType = obs_data_get_string(settings, "crop_type");
@@ -993,7 +993,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 
     // Crop preview checkbox callback
     auto previewCropModified = [](void *param, obs_properties_t *, obs_property_t *prop, obs_data_t *settings) {
-        auto filter = fromCallbackData(param);
+        auto filter = fromFilterCallbackData(param);
         bool checked = obs_data_get_bool(settings, obs_property_name(prop));
 
         // Sync both checkboxes so the preview state persists across crop type switches
@@ -1132,7 +1132,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_set_modified_callback2(
         videoEncoderList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto filter = fromCallbackData(param);
+            auto filter = fromFilterCallbackData(param);
             obs_log(LOG_DEBUG, "%s: Video encoder chainging.", qUtf8Printable(filter->name));
 
             auto _videoEncoderGroup = obs_property_group_content(obs_properties_get(_props, "video_encoder_group"));
@@ -1186,7 +1186,7 @@ obs_properties_t *BranchOutputFilter::getProperties()
 
     // Reset crop preview when properties dialog is closed
     obs_properties_set_param(props, toCallbackData(), [](void *param) {
-        auto filter = fromCallbackData(param);
+        auto filter = fromFilterCallbackData(param);
         filter->cropPreview.hide();
     });
 
@@ -1217,7 +1217,7 @@ obs_properties_t *BranchOutputFilter::getProperties()
     return props;
 }
 
-BranchOutputStatusDock *BranchOutputFilter::createOutputStatusDock()
+BranchOutputStatusDock *BranchOutput::createOutputStatusDock()
 {
     auto mainWindow = (QMainWindow *)obs_frontend_get_main_window();
     if (!mainWindow) {

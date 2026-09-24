@@ -1492,7 +1492,7 @@ void OutputCell::openOutputFolder()
         return;
     }
     // The strong reference above keeps info.destroy from running, so the filter stays alive here.
-    auto *filter = static_cast<BranchOutputFilter *>(obs_obj_get_data(source));
+    auto *filter = BranchOutput::fromCallbackData(obs_obj_get_data(source));
     if (!filter) {
         return;
     }

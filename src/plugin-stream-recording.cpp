@@ -26,10 +26,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QDateTime>
 
 #include "plugin-support.h"
-#include "plugin-main.hpp"
+#include "branch-output.hpp"
 #include "utils.hpp"
 
-obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bool createFolder)
+obs_data_t *BranchOutput::createRecordingSettings(obs_data_t *settings, bool createFolder)
 {
     auto recordingSettings = obs_data_create();
     auto config = obs_frontend_get_profile_config();
@@ -106,7 +106,7 @@ obs_data_t *BranchOutputFilter::createRecordingSettings(obs_data_t *settings, bo
     return recordingSettings;
 }
 
-void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
+void BranchOutput::createAndStartRecordingOutput(obs_data_t *settings)
 {
     if (!videoEncoder) {
         return;
@@ -173,7 +173,7 @@ void BranchOutputFilter::createAndStartRecordingOutput(obs_data_t *settings)
     }
 }
 
-void BranchOutputFilter::stopRecordingOutput(bool pending)
+void BranchOutput::stopRecordingOutput(bool pending)
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -199,7 +199,7 @@ void BranchOutputFilter::stopRecordingOutput(bool pending)
     }
 }
 
-void BranchOutputFilter::restartRecordingOutput()
+void BranchOutput::restartRecordingOutput()
 {
     // FIXME: Holding outputMutex across the stop / start below can deadlock with a script proc on
     // the graphics thread. Release it before stopping; see
@@ -229,7 +229,7 @@ void BranchOutputFilter::restartRecordingOutput()
     }
 }
 
-void BranchOutputFilter::setRecordingUserEnabled(bool enabled)
+void BranchOutput::setRecordingUserEnabled(bool enabled)
 {
     bool previous = recordingUserEnabled.exchange(enabled, std::memory_order_relaxed);
     if (previous != enabled) {
@@ -237,35 +237,35 @@ void BranchOutputFilter::setRecordingUserEnabled(bool enabled)
     }
 }
 
-bool BranchOutputFilter::isRecordingEnabled(obs_data_t *settings)
+bool BranchOutput::isRecordingEnabled(obs_data_t *settings)
 {
     return obs_data_get_bool(settings, "stream_recording");
 }
 
-bool BranchOutputFilter::isSplitRecordingEnabled(obs_data_t *settings)
+bool BranchOutput::isSplitRecordingEnabled(obs_data_t *settings)
 {
     // Split mode will be disabled when some streamings are enabled.
     return isRecordingEnabled(settings) && !!strlen(obs_data_get_string(settings, "split_file"));
 }
 
-bool BranchOutputFilter::canPauseRecording()
+bool BranchOutput::canPauseRecording()
 {
     // Pausing recording will be disabled when some streamings are active.
     return countActiveStreamings() == 0 && !recordingPending;
 }
 
-bool BranchOutputFilter::canAddChapterToRecording()
+bool BranchOutput::canAddChapterToRecording()
 {
     return recordingActive && recordingOutput && addChapterToRecordingEnabled && !obs_output_paused(recordingOutput);
 }
 
-bool BranchOutputFilter::hasRecordingWrittenSinceStart()
+bool BranchOutput::hasRecordingWrittenSinceStart()
 {
     // libobs counts a video packet before muxing it; 2 ensures the first keyframe has been muxed.
     return recordingOutput && obs_output_get_total_frames(recordingOutput) >= 2;
 }
 
-bool BranchOutputFilter::canSplitRecording()
+bool BranchOutput::canSplitRecording()
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -278,7 +278,7 @@ bool BranchOutputFilter::canSplitRecording()
     }
 }
 
-bool BranchOutputFilter::splitRecording()
+bool BranchOutput::splitRecording()
 {
     OBSOutputAutoRelease recordingOutputRef;
 
@@ -300,7 +300,7 @@ bool BranchOutputFilter::splitRecording()
 
 // Precondition: caller must verify canSplitRecording() under outputMutex before acquiring a
 // strong ref to output.
-bool BranchOutputFilter::splitRecording(obs_output_t *output)
+bool BranchOutput::splitRecording(obs_output_t *output)
 {
     if (!output) {
         return false;
@@ -315,7 +315,7 @@ bool BranchOutputFilter::splitRecording(obs_output_t *output)
     return calldata_bool(&cd, "split_file_enabled");
 }
 
-void BranchOutputFilter::updateRecordingFormatAndSplit(obs_output_t *output, const QString &formatOverride)
+void BranchOutput::updateRecordingFormatAndSplit(obs_output_t *output, const QString &formatOverride)
 {
     auto applied = appliedSettings.get();
     bool noSpace = obs_data_get_bool(applied, "no_space_filename");
@@ -332,7 +332,7 @@ void BranchOutputFilter::updateRecordingFormatAndSplit(obs_output_t *output, con
     splitRecording(output);
 }
 
-bool BranchOutputFilter::pauseRecording()
+bool BranchOutput::pauseRecording()
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -353,7 +353,7 @@ bool BranchOutputFilter::pauseRecording()
     }
 }
 
-bool BranchOutputFilter::unpauseRecording()
+bool BranchOutput::unpauseRecording()
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -374,7 +374,7 @@ bool BranchOutputFilter::unpauseRecording()
     }
 }
 
-bool BranchOutputFilter::addChapterToRecording(QString chapterName)
+bool BranchOutput::addChapterToRecording(QString chapterName)
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -405,7 +405,7 @@ bool BranchOutputFilter::addChapterToRecording(QString chapterName)
     }
 }
 
-void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_t *cd)
+void BranchOutput::onOverrideRecordingFilenameFormat(void *data, calldata_t *cd)
 {
     auto filter = fromCallbackData(data);
 
@@ -454,7 +454,7 @@ void BranchOutputFilter::onOverrideRecordingFilenameFormat(void *data, calldata_
 // Internal helper: caller must hold outputMutex.
 // Caller must call ensureInfrastructure() before this function to set up
 // the view, video/audio encoders, and related infrastructure.
-bool BranchOutputFilter::createAndStartRecordingOutputChecked(obs_data_t *settings)
+bool BranchOutput::createAndStartRecordingOutputChecked(obs_data_t *settings)
 {
     if (!isRecordingEnabled(settings)) {
         return false;
@@ -478,7 +478,7 @@ bool BranchOutputFilter::createAndStartRecordingOutputChecked(obs_data_t *settin
     return recordingActive || recordingPending;
 }
 
-bool BranchOutputFilter::startRecordingIndividual(obs_data_t *applied)
+bool BranchOutput::startRecordingIndividual(obs_data_t *applied)
 {
     pthread_mutex_lock(&pluginMutex);
     {
@@ -504,7 +504,7 @@ bool BranchOutputFilter::startRecordingIndividual(obs_data_t *applied)
     }
 }
 
-bool BranchOutputFilter::stopRecordingIndividual()
+bool BranchOutput::stopRecordingIndividual()
 {
     bool wasActive = false;
 
@@ -531,33 +531,33 @@ bool BranchOutputFilter::stopRecordingIndividual()
     return wasActive;
 }
 
-void BranchOutputFilter::onSplitRecordingFileHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+void BranchOutput::onSplitRecordingFileHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return;
     }
 
-    BranchOutputFilter *filter = fromCallbackData(data);
+    BranchOutput *filter = fromCallbackData(data);
     filter->splitRecording();
 }
 
-bool BranchOutputFilter::onPauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+bool BranchOutput::onPauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;
     }
 
-    BranchOutputFilter *filter = fromCallbackData(data);
+    BranchOutput *filter = fromCallbackData(data);
     return filter->pauseRecording();
 }
 
-bool BranchOutputFilter::onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+bool BranchOutput::onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;
     }
 
-    BranchOutputFilter *filter = fromCallbackData(data);
+    BranchOutput *filter = fromCallbackData(data);
 
     if (filter->recordingPending) {
         // Block unpausing when recording is pending
@@ -567,17 +567,17 @@ bool BranchOutputFilter::onUnpauseRecordingHotkeyPressed(void *data, obs_hotkey_
     return filter->unpauseRecording();
 }
 
-void BranchOutputFilter::onAddChapterToRecordingFileHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+void BranchOutput::onAddChapterToRecordingFileHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return;
     }
 
-    BranchOutputFilter *filter = fromCallbackData(data);
+    BranchOutput *filter = fromCallbackData(data);
     filter->addChapterToRecording();
 }
 
-bool BranchOutputFilter::onEnableRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+bool BranchOutput::onEnableRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;
@@ -598,7 +598,7 @@ bool BranchOutputFilter::onEnableRecordingHotkeyPressed(void *data, obs_hotkey_p
     return true;
 }
 
-bool BranchOutputFilter::onDisableRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+bool BranchOutput::onDisableRecordingHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;

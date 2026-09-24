@@ -24,10 +24,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 
 #include "plugin-support.h"
-#include "plugin-main.hpp"
+#include "branch-output.hpp"
 #include "utils.hpp"
 
-obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
+obs_data_t *BranchOutput::createReplayBufferSettings(obs_data_t *settings)
 {
     auto replaySettings = obs_data_create();
     auto config = obs_frontend_get_profile_config();
@@ -73,7 +73,7 @@ obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
     return replaySettings;
 }
 
-void BranchOutputFilter::createAndStartReplayBuffer(obs_data_t *settings)
+void BranchOutput::createAndStartReplayBuffer(obs_data_t *settings)
 {
     if (!videoEncoder) {
         return;
@@ -137,7 +137,7 @@ void BranchOutputFilter::createAndStartReplayBuffer(obs_data_t *settings)
     }
 }
 
-void BranchOutputFilter::stopReplayBufferOutput()
+void BranchOutput::stopReplayBufferOutput()
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -159,7 +159,7 @@ void BranchOutputFilter::stopReplayBufferOutput()
     }
 }
 
-void BranchOutputFilter::setReplayBufferUserEnabled(bool enabled)
+void BranchOutput::setReplayBufferUserEnabled(bool enabled)
 {
     bool previous = replayBufferUserEnabled.exchange(enabled, std::memory_order_relaxed);
     if (previous != enabled) {
@@ -167,12 +167,12 @@ void BranchOutputFilter::setReplayBufferUserEnabled(bool enabled)
     }
 }
 
-bool BranchOutputFilter::isReplayBufferEnabled(obs_data_t *settings)
+bool BranchOutput::isReplayBufferEnabled(obs_data_t *settings)
 {
     return obs_data_get_bool(settings, "replay_buffer");
 }
 
-bool BranchOutputFilter::saveReplayBuffer()
+bool BranchOutput::saveReplayBuffer()
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -192,13 +192,13 @@ bool BranchOutputFilter::saveReplayBuffer()
     }
 }
 
-void BranchOutputFilter::onReplayBufferSaved(void *data, calldata_t *)
+void BranchOutput::onReplayBufferSaved(void *data, calldata_t *)
 {
     auto filter = fromCallbackData(data);
     obs_log(LOG_INFO, "%s: Replay buffer saved", qUtf8Printable(filter->name));
 }
 
-void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd)
+void BranchOutput::onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd)
 {
     auto filter = fromCallbackData(data);
 
@@ -252,7 +252,7 @@ void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, callda
     }
 }
 
-void BranchOutputFilter::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+void BranchOutput::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return;
@@ -265,7 +265,7 @@ void BranchOutputFilter::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_
 // Internal helper: caller must hold outputMutex.
 // Caller must call ensureInfrastructure() before this function to set up
 // the view, video/audio encoders, and related infrastructure.
-bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
+bool BranchOutput::createAndStartReplayBufferChecked(obs_data_t *settings)
 {
     if (!isReplayBufferEnabled(settings)) {
         return false;
@@ -279,7 +279,7 @@ bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
     return replayBufferActive;
 }
 
-bool BranchOutputFilter::startReplayBufferIndividual(obs_data_t *applied)
+bool BranchOutput::startReplayBufferIndividual(obs_data_t *applied)
 {
     pthread_mutex_lock(&pluginMutex);
     {
@@ -302,7 +302,7 @@ bool BranchOutputFilter::startReplayBufferIndividual(obs_data_t *applied)
     }
 }
 
-bool BranchOutputFilter::stopReplayBufferIndividual()
+bool BranchOutput::stopReplayBufferIndividual()
 {
     bool wasActive = false;
 
@@ -324,7 +324,7 @@ bool BranchOutputFilter::stopReplayBufferIndividual()
     return wasActive;
 }
 
-bool BranchOutputFilter::onEnableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+bool BranchOutput::onEnableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;
@@ -345,7 +345,7 @@ bool BranchOutputFilter::onEnableReplayBufferHotkeyPressed(void *data, obs_hotke
     return true;
 }
 
-bool BranchOutputFilter::onDisableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+bool BranchOutput::onDisableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;
