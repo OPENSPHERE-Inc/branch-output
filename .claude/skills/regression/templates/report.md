@@ -29,7 +29,16 @@
 
 ## Observations
 
-- {Behavior worth noting that did not fail a case}
+Behavior worth noting that did not fail a case, grouped as below. Leave out an empty group.
+
+- Environment
+  - {A problem of the machine or the operation, and how it was worked around}
+- OBS
+  - {Behavior of OBS itself, and the evidence that OBS shows it without the plugin}
+- Plugin, known issues
+  - {Behavior matching an existing issue, with the case ID and the issue number}
+- Plugin, no issue
+  - {Behavior not judged a defect, with the case ID and the reason}
 
 ## Not covered
 
