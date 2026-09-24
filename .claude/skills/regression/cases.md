@@ -189,7 +189,7 @@ Do and Pass, with a filter on `Quad` and recording on:
 
 ## R17 File name override scripts, Lua — all
 
-Do: in Tools → Scripts, load `recording-filename-from-text.lua` and `replay-buffer-filename-from-text.lua` from `<root>/data/obs-plugins/osi-branch-output/scripts/`. Target the filter on `Media`, with text source `Name`. Record with "Only split manually".
+Do: load `recording-filename-from-text.lua` and `replay-buffer-filename-from-text.lua` from `<root>/data/obs-plugins/osi-branch-output/scripts/`: with OBS closed, append `{"path": "{absolute path with forward slashes}", "settings": {}}` for each to `modules.scripts-tool` in `<root>/config/obs-studio/basic/scenes/BORegression.json`. In Tools → Scripts, set each script's text source to `Name` and its filter to the one on `Media`. Record with "Only split manually".
 
 Pass:
 
@@ -203,7 +203,11 @@ Edge: with the recording script loaded and the filter recording with splitting e
 
 ## R18 File name override scripts, Python — latest
 
-Do and Pass: R17's Pass items with the `.py` scripts. SKIP when no Python compatible with this OBS version can be configured in Tools → Scripts → Python Settings (a Python newer than the OBS build supports fails to load and logs `Could not load library`).
+Do and Pass: R17's Do, Pass, and Edge with the `.py` scripts.
+
+- Use a 64-bit Python 3.6–3.12, regardless of the version on PATH: OBS loads only `python36.dll` to `python312.dll` from the configured folder, and a newer Python logs `Could not load library`.
+- With OBS closed, set its install folder, the one containing `python3XX.dll` (`py -0p` lists the installs), as `Path64bit` under `[Python]` in `<root>/config/obs-studio/user.ini`. After launch, confirm the loaded version in Tools → Scripts → Python Settings.
+- SKIP when no such Python is installed.
 
 ## R19 Lifecycle and shutdown — all
 
