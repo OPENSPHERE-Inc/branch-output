@@ -18,7 +18,7 @@ Build it on each instance.
 
 Defaults unless a case says otherwise: one Branch Output filter on `Media` with x264, Save Path `<root>/work/bo-rec`, dock Interlock "Always ON", every dock checkbox on, and `Main` in Program. Remove filters left by earlier cases when they would affect the result.
 
-A newly added filter starts no output until its Apply is pressed once in the GUI; settings changed after that through obs-websocket take effect.
+A newly added filter, and a filter loaded with every output type off, starts no output until its Apply is pressed once in the GUI; settings changed after that through obs-websocket take effect.
 
 ## R01 Startup and new filter — all
 
@@ -51,7 +51,7 @@ Do: Streaming off, Stream Recording on, a file name format containing `%1` and `
 Pass:
 
 - Each file's name expands `%1` to the source name and `%2` to the filter name.
-- ffprobe: 1280x720 video, one audio stream carrying the 1 kHz tone, duration within about 1 s of the recording time.
+- ffprobe: 1280x720 video, one audio stream carrying the 1 kHz tone, duration within 1 s of the time between the recording's start and stop log lines (1.5 s on 30.1.2, whose own recordings fall short by as much).
 - With "Use profile's recording path", the file is written to the profile's recording path instead of the Save Path.
 
 ## R04 Recording control — all
@@ -116,7 +116,9 @@ Pass:
 - While `Other` is in Program: frames are black, every audio track is silent, and the dock status ends with "(Blank+Mute)". Back on `Main`: the picture and the tones return.
 - Enabling the filter while `Other` is in Program blanks from the first frame.
 - Studio Mode, with `Main` only in Preview and `Other` in Program: the output is blanked. Transitioning `Main` to Program ends the blanking.
-- Studio Mode, with a blanking Branch Output filter on the scene `Main` itself: not blanked while `Main` is in Program, blanked while `Main` is only in Preview.
+- Studio Mode, with a blanking Branch Output filter on the scene `Main` itself: not blanked while `Main` is in Program, blanked while `Main` is only in Preview. Judge this filter by video: its filter audio is always silent, because a scene passes no audio filter.
+
+The `BranchOutputFilter destroyed` line each Studio Mode transition logs (the filter on Studio Mode's discarded scene copy) is not a failure.
 
 ## R10 Interlock modes — latest
 
@@ -146,13 +148,13 @@ Do: run outputs on three filters (on `Media`, on `Quad`, and on the scene `Main`
 Pass:
 
 - "Deactivate All" and "Activate All" disable and enable every filter, and the filters' eye icons follow.
-- A row's Reset clears only that row's statistics, also after one filter is deleted and another added. "Reset All" clears every row (#182).
+- A row's Reset sets only that row's dropped frames back to 0, also after one filter is deleted and another added. "Reset All" does so on every row (#182). Sent Size returns to the cumulative total at the next refresh (#188).
 - Clicking a recording or replay buffer row's folder cell opens its save folder.
 - The Interlock value is kept per profile: set different values in `BORegression` and `BORegression2`; switching profiles shows each profile's own value.
 
 ## R13 Hotkey actions — all
 
-Do: in Settings → Hotkeys, assign unused combinations (for example Ctrl+Alt+Shift+{key}) to one hotkey of each kind: the filter's Enable / Disable, Enable / Disable All Branch Outputs, the filter's all-streaming and slot-1 Enable / Disable, recording Enable / Disable, replay buffer Enable / Disable, Split, Pause, Unpause, Add chapter, Save replay buffer, and the "all" variants of split, pause, unpause, chapter, and save. Press each with the OBS main window focused, with the filter's streaming off while testing Pause and Unpause (pausing is refused while the filter streams). Keep the assignments for R14.
+Do: in Settings → Hotkeys, assign unused combinations (for example Ctrl+Alt+Shift+{key}) to one hotkey of each kind: the filter's Enable / Disable, Enable / Disable All Branch Outputs, the filter's all-streaming and slot-1 Enable / Disable, recording Enable / Disable, replay buffer Enable / Disable, Split, Pause, Unpause, Add chapter, Save replay buffer, and the "all" variants of split, pause, unpause, chapter, and save. Press each with the OBS main window focused, with the filter's streaming off while testing Pause and Unpause (pausing is refused while the filter streams). After a Split key, wait for the new file before pressing a Pause key: a split still pending at Pause waits until after Unpause. Keep the assignments for R14.
 
 Pass:
 
@@ -197,7 +199,7 @@ Pass:
 - The recording file name follows the text. Changing the text during the recording splits to a new file with the new name (the script applies one change per 30 s per distinct text).
 - The next replay buffer save uses the text-based name.
 - A text change while the recording is paused takes effect only after Unpause.
-- Removing the scripts restores the filter's own file name format.
+- Removing the scripts restores the filter's own file name format, splitting the running recording to a new file in that format.
 
 Edge: with the recording script loaded and the filter recording with splitting enabled, restart OBS. The first recording file after startup is not empty and its audio decodes (#191).
 
