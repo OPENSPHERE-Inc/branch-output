@@ -41,8 +41,14 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 ## Tools
 
 - GitHub releases: `gh` against `obsproject/obs-studio` (release list, asset names and digests, download).
-- GUI: computer use, required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button), the "Branch Output Status" dock, Settings → Hotkeys, Tools → Scripts, hotkey presses, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
-- obs-websocket: when a client is available, allowed for any other change or observation it supports (for example main streaming / recording / replay buffer / virtual camera, scene switching, Studio Mode, source settings, `GetSourceActive`, `GetHotkeyList`).
+- GUI: computer use.
+  - Required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button), the "Branch Output Status" dock, Settings → Hotkeys, Tools → Scripts, hotkey presses, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
+  - Access is granted per executable path: request access to `obs64.exe` while the instance of each version runs.
+  - Take a fresh screenshot before each click in the filter properties: the dialog re-lays out when a setting changes (notably on 31.1), and earlier coordinates can hit another control.
+  - Avoid typing: typed text passes through the IME and can be altered, and the file dialog's folder field rejects typing. Set names through obs-websocket, and paths in the ini files under `<root>/config/obs-studio/` while OBS is closed.
+- obs-websocket: when a client is available, allowed for any other change or observation it supports (for example main streaming / recording / replay buffer / virtual camera, scene switching, Studio Mode, source and filter settings, `GetSourceActive`, `GetHotkeyList`).
+  - Enable its server while OBS is closed: `plugin_config/obs-websocket/config.json` on 31.1 and later, the `[OBSWebSocket]` section of `global.ini` on 30.1.2, both under `<root>/config/obs-studio/`.
+  - On 30.1.2, `TriggerHotkeyByName` on one half of a hotkey pair (Enable / Disable, Pause / Unpause) desyncs the pair: press the key or use the dock instead.
 - Local receivers: ffmpeg listening for RTMP (`-listen 1` accepts one connection and exits when it ends; restart it for each connection) and SRT.
 - Output checks: ffprobe / ffmpeg for resolution, frame rate, duration, streams, chapters, pixel colors of a frame, and audio level and frequency.
 - Logs: the newest file in `<root>/config/obs-studio/logs/`. Plugin lines start with `[osi-branch-output]`; shutdown writes `Number of memory leaks: N`. Crash dumps go to `<root>/config/obs-studio/crashes/`.
@@ -52,7 +58,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 1. Set `{YYYYMMDD-HHmmss}` and create `<work>`.
 2. For each target version, pick the release (newest non-prerelease 32.2.x, newest non-prerelease 31.1.x, 30.1.2) and download its Windows x64 zip into `<work>`, not the installer or the PDBs: `OBS-Studio-{version}-Windows-x64.zip`, or `OBS-Studio-{version}.zip` on 30.1.2. When the release lists a SHA-256 digest for the asset, verify the download against it. Extract it to `<work>/obs-{version}/`.
 3. Obtain the build under test and deploy it to every instance: put `osi-branch-output.dll` and `.pdb` in `<root>/obs-plugins/64bit/`, and the `data/obs-plugins/osi-branch-output/` folder in `<root>/data/obs-plugins/`. Record the DLL's SHA-256.
-4. Launch each instance once and read `{plugin-version}` from `[osi-branch-output] Plugin loaded successfully (version {plugin-version})`. If the plugin does not load, or the version is not that of the build under test, stop and report to the user.
+4. Launch each instance once and read `{plugin-version}` from `[osi-branch-output] Plugin loaded successfully (version {plugin-version})`. If the plugin does not load, or the version is not that of the build under test, stop and report to the user. After quitting, set `MaxLogs` under `[General]` in `<root>/config/obs-studio/global.ini` to 100: OBS deletes the oldest logs beyond it (default 10).
 5. Create the report at `.claude/tmp/regression-report/{plugin-version}-{YYYYMMDD-HHmmss}/report.md` from the template `.claude/skills/regression/templates/report.md` (read it to learn the report skeleton), filling in the work folder, the build, and the OBS downloads. Keep evidence files (ffprobe output, log excerpts) in the same folder. Write the report in the language the user converses in.
 6. Build the fixture described in `cases.md` on each instance.
 

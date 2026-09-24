@@ -1,6 +1,6 @@
 # Regression cases
 
-Scope `all` runs on 32.2, 31.1, and 30.1.2; scope `latest` runs on 32.2 only. Issue numbers name the bug an item guards against. "Within 5 s" limits are pass criteria; a longer wait is a failure.
+Scope `all` runs on 32.2, 31.1, and 30.1.2; scope `latest` runs on 32.2 only. Issue numbers name the bug an item guards against. "Within 5 s" limits are pass criteria; a longer wait is a failure. The dock refreshes statuses every 2 s; judge a status after the next refresh.
 
 ## Fixture
 
@@ -12,11 +12,13 @@ Build it on each instance.
   - `tone440.wav`: 440 Hz sine, 10 s.
 - Profiles `BORegression` and `BORegression2`: Simple output mode, x264, base and output resolution 1280x720 at 30 fps, recording path `<root>/work/obs-rec`, replay buffer enabled, streaming service Custom pointing at a local RTMP receiver.
 - Scene collection `BORegression`:
-  - Scene `Main`: media source `Media` (`quad-1k.mp4`, loop, filling the canvas), image source `Quad` (`quad.png`), media source `Tone440` (`tone440.wav`, loop), text source `Name`.
+  - Scene `Main`: media source `Media` (`quad-1k.mp4`, loop, filling the canvas), image source `Quad` (`quad.png`), media source `Tone440` (`tone440.wav`, loop), text source `Name` (`text_gdiplus_v3`; `text_gdiplus_v2` on 30.1.2, which lacks v3).
   - Scene `Other`: one color source.
 - Scene collection `BORegression2`: one scene with one source that has a Branch Output filter.
 
 Defaults unless a case says otherwise: one Branch Output filter on `Media` with x264, Save Path `<root>/work/bo-rec`, dock Interlock "Always ON", every dock checkbox on, and `Main` in Program. Remove filters left by earlier cases when they would affect the result.
+
+A newly added filter starts no output until its Apply is pressed once in the GUI; settings changed after that through obs-websocket take effect.
 
 ## R01 Startup and new filter — all
 
@@ -67,12 +69,12 @@ Edge: split within the first second after the recording starts. No empty file re
 
 ## R05 Replay buffer — all
 
-Do: on two filters, turn Replay Buffer on with Maximum Replay Time 10 s and "Show estimated memory usage" on. Wait more than 10 s, save with one row's Save button, then with "Save All Replay Buffers".
+Do: on two filters, turn Replay Buffer on with Maximum Replay Time 10 s and "Show estimated memory usage" on, and set the video encoder's keyframe interval to 1 s. Wait more than 10 s, save with one row's Save button, then with "Save All Replay Buffers".
 
 Pass:
 
 - The dock shows "Buffering", and the properties show an estimated memory usage in MB.
-- Each save writes one file per saved filter, about 10 s long and not longer than the maximum, with video and audio, and logs `Replay buffer saved`.
+- Each save writes one file per saved filter, about 10 s long and at most 11 s (a save keeps whole keyframe intervals, so it can exceed the maximum by one interval), with video and audio, and logs `Replay buffer saved`.
 - The saved file names expand `%1` and `%2` as in R03.
 
 ## R06 Audio sources — latest
@@ -81,7 +83,7 @@ Do: record about 10 s with each audio setting: Custom Audio Source off (filter a
 
 Pass (check the audio stream count and each stream's dominant frequency):
 
-- Filter audio: 1 kHz only. `Tone440`: 440 Hz only. Master Audio: both tones. No Audio: no audio stream.
+- Filter audio: 1 kHz only. `Tone440`: 440 Hz only. Master Audio: both tones. No Audio: one silent audio stream.
 - Multitrack: one audio stream per enabled track with the expected tone; the disabled track has no stream.
 
 ## R07 Video output — all
@@ -118,7 +120,7 @@ Pass:
 
 ## R10 Interlock modes — latest
 
-Do: with the filter's streaming slot and recording on, set each dock Interlock value in turn (Always ON, Streaming, Recording, Streaming or Recording, Replay Buffer, Virtual Cam, Always OFF), and start and stop the matching OBS outputs.
+Do: with the filter's streaming slot pointing at a local RTMP receiver (an SRT listener adds up to 5 s to each stop) and recording on, set each dock Interlock value in turn (Always ON, Streaming, Recording, Streaming or Recording, Replay Buffer, Virtual Cam, Always OFF), and start and stop the matching OBS outputs.
 
 Pass:
 
@@ -150,11 +152,11 @@ Pass:
 
 ## R13 Hotkey actions — all
 
-Do: in Settings → Hotkeys, assign unused combinations (for example Ctrl+Alt+Shift+{key}) to one hotkey of each kind: the filter's Enable / Disable, Enable / Disable All Branch Outputs, the filter's all-streaming and slot-1 Enable / Disable, recording Enable / Disable, replay buffer Enable / Disable, Split, Pause, Unpause, Add chapter, Save replay buffer, and the "all" variants of split, pause, unpause, chapter, and save. Press each with the OBS main window focused. Keep the assignments for R14.
+Do: in Settings → Hotkeys, assign unused combinations (for example Ctrl+Alt+Shift+{key}) to one hotkey of each kind: the filter's Enable / Disable, Enable / Disable All Branch Outputs, the filter's all-streaming and slot-1 Enable / Disable, recording Enable / Disable, replay buffer Enable / Disable, Split, Pause, Unpause, Add chapter, Save replay buffer, and the "all" variants of split, pause, unpause, chapter, and save. Press each with the OBS main window focused, with the filter's streaming off while testing Pause and Unpause (pausing is refused while the filter streams). Keep the assignments for R14.
 
 Pass:
 
-- Each key acts on its target only, and the dock checkboxes and statuses update immediately.
+- Each key acts on its target only, and the dock checkboxes update immediately.
 - The "all" hotkeys also work with the dock closed.
 - Add chapter acts only on Hybrid MP4 recordings; on 30.1.2 it is expected to do nothing.
 
@@ -201,7 +203,7 @@ Edge: with the recording script loaded and the filter recording with splitting e
 
 ## R18 File name override scripts, Python — latest
 
-Do and Pass: R17's Pass items with the `.py` scripts. SKIP when no Python compatible with this OBS version can be configured in Tools → Scripts → Python Settings.
+Do and Pass: R17's Pass items with the `.py` scripts. SKIP when no Python compatible with this OBS version can be configured in Tools → Scripts → Python Settings (a Python newer than the OBS build supports fails to load and logs `Could not load library`).
 
 ## R19 Lifecycle and shutdown — all
 
@@ -209,4 +211,4 @@ Do and Pass:
 
 - Toggle the filter's eye icon five times quickly while every output runs: the filter ends in the last state, and no failure line is logged.
 - Switch to the scene collection `BORegression2` and back, once with outputs running and once with them stopped: no crash, and the dock lists only the current collection's filters.
-- Quit OBS once with outputs running and once with them stopped: shutdown completes, no crash dump appears, and the log ends with `Number of memory leaks: 0`.
+- Quit OBS once with outputs running and once with them stopped, each from a session launched for this item: shutdown completes, no crash dump appears, and the log ends with `Number of memory leaks: 0`. Other sessions can end with leaks of OBS itself (the first session of an instance; on 30.1.2, one per SRT `Failed to open the url`).
