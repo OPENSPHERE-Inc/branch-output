@@ -37,15 +37,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "utils.hpp"
 #include "branch-output.hpp"
 
-// Publish a fresh filter-list snapshot consumed by the global proc handler.
-// Defined in plugin-main.cpp; thread-safe (mutex-guarded).
-void publishFilterListSnapshot(QList<BranchOutputFilterInfo> snapshot);
-
 class BranchOutputFilter : public BranchOutput {
     Q_OBJECT
-
-    friend class BranchOutputStatusDock;
-    friend class OutputTableRow;
 
     QTimer *intervalTimer;
     bool blankingOutputActive;
@@ -66,11 +59,13 @@ class BranchOutputFilter : public BranchOutput {
     obs_source_t *hotkeyRegistrationTarget;
 
     OBSSignal filterRenamedSignal;
+    OBSSignal parentRenamedSignal;
 
     // Input: the parent source this filter is attached to
     bool validateInput() override;
     bool isInputAvailable() const override;
     QString getInputName() const override;
+    QString getInputUuid() const override;
     void acquireInputShowing() override;
     void releaseInputShowing() override;
     void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight) override;
@@ -81,6 +76,7 @@ class BranchOutputFilter : public BranchOutput {
     void teardownVideoInput() override;
     bool setupDefaultAudio(const obs_audio_info &ai) override;
     bool evaluateBlanking(obs_data_t *settings) override;
+    BlankingState getBlankingState() const override;
 
     // Hotkey registration against the parent source
     bool canRegisterHotkeys() override;
@@ -92,6 +88,7 @@ class BranchOutputFilter : public BranchOutput {
         obs_hotkey_active_func func0, obs_hotkey_active_func func1
     ) override;
 
+    void openSettings() override;
     void updateCallback(obs_data_t *settings) override;
 
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);

@@ -47,6 +47,10 @@ extern pthread_mutex_t pluginMutex;
 // Defined in plugin-main.cpp. Returns nullptr while the status dock does not exist.
 BranchOutputStatusDock *loadStatusDock();
 
+// Publish a fresh filter-list snapshot consumed by the global proc handler.
+// Defined in plugin-main.cpp; thread-safe (mutex-guarded).
+void publishFilterListSnapshot(QList<BranchOutputFilterInfo> snapshot);
+
 class BranchOutput : public QObject {
     Q_OBJECT
 
@@ -63,6 +67,12 @@ protected:
         INTERLOCK_TYPE_REPLAY_BUFFER,
         INTERLOCK_TYPE_INDIVIDUAL,
         INTERLOCK_TYPE_ALWAYS_OFF = 9999,
+    };
+
+    enum BlankingState {
+        BLANKING_STATE_NONE,
+        BLANKING_STATE_VIDEO,
+        BLANKING_STATE_VIDEO_AND_AUDIO,
     };
 
     struct BranchOutputAudioContext {
@@ -227,6 +237,7 @@ protected:
     virtual bool validateInput() = 0;
     virtual bool isInputAvailable() const = 0;
     virtual QString getInputName() const = 0;
+    virtual QString getInputUuid() const = 0;
     virtual void acquireInputShowing() = 0;
     virtual void releaseInputShowing() = 0;
 
@@ -236,6 +247,7 @@ protected:
     virtual void teardownVideoInput() = 0;
     virtual bool setupDefaultAudio(const obs_audio_info &ai) = 0;
     virtual bool evaluateBlanking(obs_data_t *settings) = 0;
+    virtual BlankingState getBlankingState() const = 0;
 
     // Hotkey synchronization. After construction, every libobs hotkey call and every access to
     // hotkeyBindingsCache happens inside an obs_hotkey_update_atomic() callback.
@@ -374,6 +386,7 @@ protected:
     static void onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd);
     static void onOverrideRecordingFilenameFormat(void *data, calldata_t *cd);
 
+    virtual void openSettings() = 0;
     virtual void updateCallback(obs_data_t *settings) = 0;
 
     // The only conversion between an instance and the data pointer handed to OBS callbacks
@@ -384,6 +397,7 @@ protected:
 
 signals:
     void outputUserEnabledChanged();
+    void inputNameChanged(const QString &newName);
 
 protected slots:
     void onIntervalTimerTimeout();

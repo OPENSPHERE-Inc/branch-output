@@ -191,6 +191,8 @@ bool BranchOutputFilter::validateInput()
     return true;
 }
 
+// FIXME: The parent is used without a reference, so sourceInFrontend() can read a parent released
+// on another thread. Keep a weak reference to the parent from addCallback() and resolve it here.
 bool BranchOutputFilter::isInputAvailable() const
 {
     auto parent = obs_filter_get_parent(contextSource);
@@ -200,6 +202,11 @@ bool BranchOutputFilter::isInputAvailable() const
 QString BranchOutputFilter::getInputName() const
 {
     return obs_source_get_name(obs_filter_get_parent(contextSource));
+}
+
+QString BranchOutputFilter::getInputUuid() const
+{
+    return obs_source_get_uuid(obs_filter_get_parent(contextSource));
 }
 
 // FIXME: releaseInputShowing() re-resolves the parent, which libobs has already cleared by the
@@ -417,6 +424,17 @@ bool BranchOutputFilter::evaluateBlanking(obs_data_t *settings)
     return !visibleInProgram;
 }
 
+BranchOutput::BlankingState BranchOutputFilter::getBlankingState() const
+{
+    if (!blankingOutputActive) {
+        return BLANKING_STATE_NONE;
+    }
+    if (blankingAudioMuted) {
+        return BLANKING_STATE_VIDEO_AND_AUDIO;
+    }
+    return BLANKING_STATE_VIDEO;
+}
+
 void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHeight)
 {
     if (useFilterInput) {
@@ -457,10 +475,19 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
     intervalTimer->start();
     connect(intervalTimer, SIGNAL(timeout()), this, SLOT(onIntervalTimerTimeout()));
 
+    parentRenamedSignal.Connect(
+        obs_source_get_signal_handler(source), "rename",
+        [](void *_data, calldata_t *cd) {
+            auto _filter = fromFilterCallbackData(_data);
+            emit _filter->inputNameChanged(QString::fromUtf8(calldata_string(cd, "new_name")));
+        },
+        toCallbackData()
+    );
+
     // Register to status dock
     if (auto *dock = statusDock.load()) {
         // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(dock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+        QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
     }
 
     OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
@@ -476,6 +503,13 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
     );
 
     obs_log(LOG_INFO, "%s: Filter added to '%s'", qUtf8Printable(name), obs_source_get_name(source));
+}
+
+void BranchOutputFilter::openSettings()
+{
+    auto parent = obs_filter_get_parent(contextSource);
+    obs_log(LOG_DEBUG, "uuid=%s", obs_source_get_uuid(parent));
+    obs_frontend_open_source_filters(parent);
 }
 
 void BranchOutputFilter::updateCallback(obs_data_t *settings)
@@ -517,7 +551,7 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
     // Update status dock
     if (auto *dock = statusDock.load()) {
         // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(dock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+        QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
     }
 
     obs_log(LOG_INFO, "%s: Filter updated", qUtf8Printable(name));
@@ -579,9 +613,11 @@ void BranchOutputFilter::removeCallback()
 
     // Do not call stopOutput() here as this will cause a crash.
 
+    parentRenamedSignal.Disconnect();
+
     if (auto *dock = statusDock.load()) {
         // Unregister from output status dock (In proper thread)
-        QMetaObject::invokeMethod(dock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+        QMetaObject::invokeMethod(dock, "removeOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
     }
 
     // Unregister hotkeys
@@ -738,10 +774,10 @@ static void onGetFilterList(void *, calldata_t *cd)
 
 void obs_module_post_load()
 {
-    qRegisterMetaType<BranchOutputFilter *>();
+    qRegisterMetaType<BranchOutput *>();
 
     // Publish an empty snapshot so onGetFilterList sees a defined empty state
-    // before the first addFilter republish, distinguishing pre-init from
+    // before the first addOutput republish, distinguishing pre-init from
     // genuinely-no-filters.
     publishFilterListSnapshot(QList<BranchOutputFilterInfo>{});
 
