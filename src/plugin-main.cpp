@@ -505,6 +505,8 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
     obs_log(LOG_INFO, "%s: Filter added to '%s'", qUtf8Printable(name), obs_source_get_name(source));
 }
 
+// FIXME: The parent is used without a null check or a reference. Resolve a weak reference to the
+// parent and return when it is gone. https://github.com/OPENSPHERE-Inc/branch-output/issues/204
 void BranchOutputFilter::openSettings()
 {
     auto parent = obs_filter_get_parent(contextSource);
