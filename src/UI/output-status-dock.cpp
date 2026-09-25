@@ -785,11 +785,10 @@ OutputTableRow::OutputTableRow(
       outputType(_outputType),
       groupIndex(_groupIndex)
 {
+    parentCell = new ParentCell(QString(), QString(), parent);
+
     // Connected before the input name is read so that no later rename is missed
-    connect(
-        branchOutput, &BranchOutput::inputNameChanged, this,
-        [this](const QString &newName) { parentCell->setTextValue(newName); }, Qt::QueuedConnection
-    );
+    connect(branchOutput, &BranchOutput::inputNameChanged, parentCell, &ParentCell::setTextValue, Qt::QueuedConnection);
 
     filterInfo.sourceName = branchOutput->getInputName();
     filterInfo.sourceUuid = branchOutput->getInputUuid();
@@ -801,7 +800,8 @@ OutputTableRow::OutputTableRow(
     auto rowId = QString("%1_%2_%3").arg(filterInfo.sourceName).arg(branchOutput->name).arg(groupIndex);
 
     filterCell = new FilterCell(rowId, branchOutput->name, branchOutput->contextSource, parent);
-    parentCell = new ParentCell(rowId, filterInfo.sourceName, parent);
+    parentCell->item()->setRowId(rowId);
+    parentCell->setTextValue(filterInfo.sourceName);
     status = new StatusCell(rowId, QTStr("Status.Inactive"), parent);
 
     switch (outputType) {
