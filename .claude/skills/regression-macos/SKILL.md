@@ -91,7 +91,7 @@ Skip this step when the run stopped before every selected case finished, so that
 
 1. Quit OBS and the receivers.
 2. Copy each instance's `<config>/logs/` to the report folder.
-3. Delete `<work>`. When recursive deletion is not permitted in this session, give its path to the user to delete instead.
+3. Delete `<work>` with `.claude/scripts/del-tmp.sh <work>` (it deletes only paths under `.claude/tmp/`). When it fails, give the path to the user to delete instead.
 
 ## Step 4 — Report
 
