@@ -20,6 +20,11 @@ Defaults unless a case says otherwise: one Branch Output filter on `Media` with 
 
 Press the properties' Apply once after adding a filter in any case (for example the filter on the scene `Main` in R09): a newly added filter, and a filter loaded with every output type off, starts no output until then, even when obs-websocket sets its settings and enables it. Settings changed through obs-websocket after that take effect.
 
+While OPENSPHERE-Inc/branch-output#208 is open (`gh issue view 208 --repo OPENSPHERE-Inc/branch-output --json state`), set `codec_type` to 0 through obs-websocket on every filter right after adding it, before its first Apply, and record this workaround under "Plugin, known issues" in the report. Once #208 is closed, skip the workaround.
+
+- Why: selecting a video encoder in the properties, or opening them while Apple VT is selected, leaves Apple VT's `codec_type` default (ProRes 422) in the filter settings. A filter without a `codec_type` user value then fails every recording through ffmpeg-mux (Matroska, MPEG-4) with another encoder until OBS restarts: `ffmpeg-mux: Error opening ...: Invalid data found when processing inputCouldn't initialize muxer`, a 0-byte file and a retry every 2 s, and OBS can exit by SIGPIPE (status 141, no crash report).
+- If that failure appears anyway with an encoder other than Apple VT, link #208 instead of marking it new.
+
 The hardware encoder in R01 and R08 is Apple VT H264 Hardware Encoder.
 
 On 30.1.2, never stop a recording that goes through ffmpeg-mux while another one that started later is still running, OBS's own recording included (every recording format of 30.1.2 uses ffmpeg-mux; a replay buffer spawns a muxer only for the duration of a save). 30.1.2 sets no `FD_CLOEXEC` on the muxer pipes, so each later `obs-ffmpeg-mux` process inherits the input pipes of the earlier ones, and stopping the earlier recording waits until the later muxers exit; the plugin's synchronous stop and its interlock turn that wait into a permanent deadlock.
