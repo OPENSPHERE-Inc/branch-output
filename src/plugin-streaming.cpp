@@ -22,7 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 
 #include "plugin-support.h"
-#include "plugin-main.hpp"
+#include "branch-output.hpp"
 #include "utils.hpp"
 
 #define FTL_PROTOCOL "ftl"
@@ -30,8 +30,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define OUTPUT_MAX_RETRIES 7
 #define OUTPUT_RETRY_DELAY_SECS 1
 #define RECONNECT_ATTEMPTING_TIMEOUT_NS 2000000000ULL
+// RECONNECT_STALL_TIMEOUT_NS must exceed RECONNECT_ATTEMPTING_TIMEOUT_NS:
+// stall detection guarantees the graceful-stop timeout has already elapsed.
+// It must also exceed the longest interval between "reconnect" signals that an attempt
+// ending in a single OBS timeout can produce (about 44 s: retry wait up to ~13.9 s with
+// OUTPUT_MAX_RETRIES / OUTPUT_RETRY_DELAY_SECS, plus the 30 s librtmp receive timeout),
+// or stall recovery would preempt a retry OBS is about to make.
+#define RECONNECT_STALL_TIMEOUT_NS 45000000000ULL
 
-obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, size_t index)
+obs_data_t *BranchOutput::createStreamingSettings(obs_data_t *settings, size_t index)
 {
     auto streamingSettings = obs_data_create();
     auto propNameFormat = getIndexedPropNameFormat(index);
@@ -58,10 +65,17 @@ obs_data_t *BranchOutputFilter::createStreamingSettings(obs_data_t *settings, si
         );
     }
 
+    QString server = obs_data_get_string(streamingSettings, "server");
+    QString adjustedServer = applyDefaultSrtListenTimeout(server);
+    if (adjustedServer != server) {
+        obs_log(LOG_INFO, "%s (%zu): Applied default SRT listen_timeout to listener URL", qUtf8Printable(name), index);
+        obs_data_set_string(streamingSettings, "server", qUtf8Printable(adjustedServer));
+    }
+
     return streamingSettings;
 }
 
-bool BranchOutputFilter::createStreamingOutput(obs_data_t *settings, size_t index)
+bool BranchOutput::createStreamingOutput(obs_data_t *settings, size_t index)
 {
     if (!isStreamingEnabled(settings, index)) {
         return false;
@@ -103,7 +117,7 @@ bool BranchOutputFilter::createStreamingOutput(obs_data_t *settings, size_t inde
     return true;
 }
 
-void BranchOutputFilter::startStreamingOutput(size_t index)
+void BranchOutput::startStreamingOutput(size_t index)
 {
     if (!streamings[index].output) {
         return;
@@ -159,6 +173,9 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
         [](void *_data, calldata_t *) {
             auto context = static_cast<BranchOutputStreamingContext *>(_data);
             context->outputStarting = false;
+            // Clear any stale reconnect timestamp so a later reconnect episode is not
+            // misjudged as stalled by reconnectStallDetected() / reconnectAttemptingTimedOut().
+            context->reconnectAttemptingAt = 0;
             obs_log(LOG_DEBUG, "%s: Streaming output has activated", obs_output_get_name(context->output));
         },
         &streamings[index]
@@ -171,6 +188,17 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
             auto context = static_cast<BranchOutputStreamingContext *>(_data);
             context->reconnectAttemptingAt = os_gettime_ns();
             obs_log(LOG_DEBUG, "%s: Streaming output is reconnecting", obs_output_get_name(context->output));
+        },
+        &streamings[index]
+    );
+
+    // Track reconnect_success signal (delayed-capture reconnect path emits this without "activate")
+    streamings[index].outputReconnectSuccessSignal.Connect(
+        obs_output_get_signal_handler(streamings[index].output), "reconnect_success",
+        [](void *_data, calldata_t *) {
+            auto context = static_cast<BranchOutputStreamingContext *>(_data);
+            context->reconnectAttemptingAt = 0;
+            obs_log(LOG_DEBUG, "%s: Streaming output reconnected", obs_output_get_name(context->output));
         },
         &streamings[index]
     );
@@ -192,23 +220,17 @@ void BranchOutputFilter::startStreamingOutput(size_t index)
     // Start streaming output
     if (obs_output_start(streamings[index].output)) {
         streamings[index].active = true;
-        auto parent = obs_filter_get_parent(filterSource);
-        if (parent) {
-            obs_source_inc_showing(parent);
-        }
+        acquireInputShowing();
         obs_log(LOG_INFO, "%s (%zu): Starting streaming output succeeded", qUtf8Printable(name), index);
     } else {
         obs_log(LOG_ERROR, "%s (%zu): Starting streaming output failed", qUtf8Printable(name), index);
     }
 }
 
-void BranchOutputFilter::stopStreamingOutput(size_t index)
+void BranchOutput::stopStreamingOutput(size_t index)
 {
     if (streamings[index].output && streamings[index].active) {
-        obs_source_t *parent = obs_filter_get_parent(filterSource);
-        if (parent) {
-            obs_source_dec_showing(parent);
-        }
+        releaseInputShowing();
         obs_output_stop(streamings[index].output);
         obs_log(LOG_INFO, "%s (%zu): Stopping streaming output succeeded", qUtf8Printable(name), index);
     }
@@ -217,6 +239,7 @@ void BranchOutputFilter::stopStreamingOutput(size_t index)
     streamings[index].outputStartingSignal.Disconnect();
     streamings[index].outputActivateSignal.Disconnect();
     streamings[index].outputReconnectSignal.Disconnect();
+    streamings[index].outputReconnectSuccessSignal.Disconnect();
     streamings[index].outputStopSignal.Disconnect();
 
     streamings[index].output = nullptr;
@@ -227,7 +250,7 @@ void BranchOutputFilter::stopStreamingOutput(size_t index)
     streamings[index].stopping = false;
 }
 
-void BranchOutputFilter::reconnectStreamingOutput(size_t index)
+void BranchOutput::reconnectStreamingOutput(size_t index)
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -243,13 +266,19 @@ void BranchOutputFilter::reconnectStreamingOutput(size_t index)
     }
 }
 
-bool BranchOutputFilter::reconnectAttemptingTimedOut(size_t index)
+bool BranchOutput::reconnectAttemptingTimedOut(size_t index)
 {
     auto attemptingAt = streamings[index].reconnectAttemptingAt.load();
     return attemptingAt && os_gettime_ns() - attemptingAt > RECONNECT_ATTEMPTING_TIMEOUT_NS;
 }
 
-void BranchOutputFilter::setStreamingUserEnabled(size_t index, bool enabled)
+bool BranchOutput::reconnectStallDetected(size_t index)
+{
+    auto attemptingAt = streamings[index].reconnectAttemptingAt.load();
+    return attemptingAt && os_gettime_ns() - attemptingAt > RECONNECT_STALL_TIMEOUT_NS;
+}
+
+void BranchOutput::setStreamingUserEnabled(size_t index, bool enabled)
 {
     if (index < MAX_SERVICES) {
         bool previous = streamingUserEnabled[index].exchange(enabled, std::memory_order_relaxed);
@@ -259,12 +288,12 @@ void BranchOutputFilter::setStreamingUserEnabled(size_t index, bool enabled)
     }
 }
 
-bool BranchOutputFilter::isStreamingUserEnabled(size_t index) const
+bool BranchOutput::isStreamingUserEnabled(size_t index) const
 {
     return index < MAX_SERVICES ? streamingUserEnabled[index].load(std::memory_order_relaxed) : false;
 }
 
-bool BranchOutputFilter::isAnyStreamingUserEnabled() const
+bool BranchOutput::isAnyStreamingUserEnabled() const
 {
     for (size_t i = 0; i < MAX_SERVICES; i++) {
         if (streamingUserEnabled[i].load(std::memory_order_relaxed)) {
@@ -274,7 +303,7 @@ bool BranchOutputFilter::isAnyStreamingUserEnabled() const
     return false;
 }
 
-bool BranchOutputFilter::isAnyStreamingUserEnabled(obs_data_t *settings)
+bool BranchOutput::isAnyStreamingUserEnabled(obs_data_t *settings)
 {
     for (size_t i = 0; i < MAX_SERVICES; i++) {
         if (isStreamingEnabled(settings, i) && streamingUserEnabled[i].load(std::memory_order_relaxed)) {
@@ -284,7 +313,7 @@ bool BranchOutputFilter::isAnyStreamingUserEnabled(obs_data_t *settings)
     return false;
 }
 
-bool BranchOutputFilter::someStreamingsStarting()
+bool BranchOutput::someStreamingsStarting()
 {
     for (size_t i = 0; i < MAX_SERVICES; i++) {
         if (streamings[i].outputStarting) {
@@ -294,7 +323,7 @@ bool BranchOutputFilter::someStreamingsStarting()
     return false;
 }
 
-int BranchOutputFilter::countEnabledStreamings(obs_data_t *settings)
+int BranchOutput::countEnabledStreamings(obs_data_t *settings)
 {
     int count = 0;
     for (size_t i = 0; i < MAX_SERVICES; i++) {
@@ -305,7 +334,7 @@ int BranchOutputFilter::countEnabledStreamings(obs_data_t *settings)
     return count;
 }
 
-int BranchOutputFilter::countAliveStreamings()
+int BranchOutput::countAliveStreamings()
 {
     int count = 0;
     for (size_t i = 0; i < MAX_SERVICES; i++) {
@@ -316,7 +345,7 @@ int BranchOutputFilter::countAliveStreamings()
     return count;
 }
 
-int BranchOutputFilter::countActiveStreamings()
+int BranchOutput::countActiveStreamings()
 {
     int count = 0;
     for (size_t i = 0; i < MAX_SERVICES; i++) {
@@ -327,7 +356,7 @@ int BranchOutputFilter::countActiveStreamings()
     return count;
 }
 
-bool BranchOutputFilter::hasEnabledStreamings(obs_data_t *settings)
+bool BranchOutput::hasEnabledStreamings(obs_data_t *settings)
 {
     for (int i = 0; i < MAX_SERVICES; i++) {
         if (isStreamingEnabled(settings, i)) {
@@ -337,12 +366,12 @@ bool BranchOutputFilter::hasEnabledStreamings(obs_data_t *settings)
     return false;
 }
 
-bool BranchOutputFilter::isStreamingGroupEnabled(obs_data_t *settings)
+bool BranchOutput::isStreamingGroupEnabled(obs_data_t *settings)
 {
     return obs_data_get_bool(settings, "streaming_enabled") && countEnabledStreamings(settings) > 0;
 }
 
-bool BranchOutputFilter::isStreamingEnabled(obs_data_t *settings, size_t index)
+bool BranchOutput::isStreamingEnabled(obs_data_t *settings, size_t index)
 {
     if (index >= MAX_SERVICES) {
         return false;
@@ -360,7 +389,7 @@ bool BranchOutputFilter::isStreamingEnabled(obs_data_t *settings, size_t index)
 // the view, video/audio encoders, and related infrastructure.
 // Note: stopStreamingOutput() sets streamings[i].output to nullptr, so stopped slots
 // are always recreated with fresh settings via createStreamingOutput().
-bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
+bool BranchOutput::createAndStartStreamingOutputs(obs_data_t *settings)
 {
     if (!isStreamingGroupEnabled(settings)) {
         return false;
@@ -387,7 +416,7 @@ bool BranchOutputFilter::createAndStartStreamingOutputs(obs_data_t *settings)
 // Internal helper: caller must hold outputMutex.
 // Returns true if all streamings have stopped.
 // Note: stopStreamingOutput() called within assumes outputMutex is already held.
-bool BranchOutputFilter::stopAllStreamingOutputsGracefully()
+bool BranchOutput::stopAllStreamingOutputsGracefully()
 {
     for (size_t i = 0; i < MAX_SERVICES; i++) {
         stopSingleStreamingOutputGracefully(i);
@@ -395,10 +424,8 @@ bool BranchOutputFilter::stopAllStreamingOutputsGracefully()
     return countActiveStreamings() == 0;
 }
 
-bool BranchOutputFilter::startStreamingIndividual()
+bool BranchOutput::startStreamingIndividual(obs_data_t *applied)
 {
-    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);
@@ -407,11 +434,11 @@ bool BranchOutputFilter::startStreamingIndividual()
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-            if (!ensureInfrastructure(settings)) {
+            if (!ensureInfrastructure(applied)) {
                 return false;
             }
 
-            if (!createAndStartStreamingOutputs(settings)) {
+            if (!createAndStartStreamingOutputs(applied)) {
                 releaseInfrastructureIfIdle();
                 return false;
             }
@@ -420,7 +447,7 @@ bool BranchOutputFilter::startStreamingIndividual()
     return true;
 }
 
-bool BranchOutputFilter::stopStreamingIndividual()
+bool BranchOutput::stopStreamingIndividual()
 {
     pthread_mutex_lock(&pluginMutex);
     {
@@ -444,10 +471,8 @@ bool BranchOutputFilter::stopStreamingIndividual()
     return true;
 }
 
-bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
+bool BranchOutput::startSingleStreamingIndividual(obs_data_t *applied, size_t index)
 {
-    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);
@@ -456,11 +481,11 @@ bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
 
-            if (!ensureInfrastructure(settings)) {
+            if (!ensureInfrastructure(applied)) {
                 return false;
             }
 
-            if (!isStreamingGroupEnabled(settings) || !isStreamingEnabled(settings, index)) {
+            if (!isStreamingGroupEnabled(applied) || !isStreamingEnabled(applied, index)) {
                 releaseInfrastructureIfIdle();
                 return false;
             }
@@ -470,7 +495,7 @@ bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
             }
 
             if (!streamings[index].output) {
-                createStreamingOutput(settings, index);
+                createStreamingOutput(applied, index);
             }
 
             startStreamingOutput(index);
@@ -487,7 +512,7 @@ bool BranchOutputFilter::startSingleStreamingIndividual(size_t index)
 // Returns true to indicate that a stop operation was attempted (regardless of whether
 // the stream has fully stopped yet). The caller uses this to track whether any action
 // was taken during the current tick via `anyStopped |= stopSingleStreamingIndividual(i)`.
-bool BranchOutputFilter::stopSingleStreamingIndividual(size_t index)
+bool BranchOutput::stopSingleStreamingIndividual(size_t index)
 {
     pthread_mutex_lock(&pluginMutex);
     {
@@ -510,7 +535,7 @@ bool BranchOutputFilter::stopSingleStreamingIndividual(size_t index)
 // Internal helper: caller must hold outputMutex.
 // Returns true if the stream at the given index has stopped.
 // Returns false if the stream is still waiting for reconnect timeout.
-bool BranchOutputFilter::stopSingleStreamingOutputGracefully(size_t index)
+bool BranchOutput::stopSingleStreamingOutputGracefully(size_t index)
 {
     if (index >= MAX_SERVICES) {
         return true;
@@ -518,7 +543,10 @@ bool BranchOutputFilter::stopSingleStreamingOutputGracefully(size_t index)
 
     if (streamings[index].output && streamings[index].active) {
         if (streamings[index].stopping) {
-            if (reconnectAttemptingTimedOut(index)) {
+            // A reconnect that succeeds clears reconnectAttemptingAt, so the timeout gate alone
+            // would never open once "stopping" is latched. Leaving the reconnecting state is
+            // itself sufficient grounds to stop.
+            if (!obs_output_reconnecting(streamings[index].output) || reconnectAttemptingTimedOut(index)) {
                 stopStreamingOutput(index);
             } else {
                 return false;
@@ -534,7 +562,7 @@ bool BranchOutputFilter::stopSingleStreamingOutputGracefully(size_t index)
     return true;
 }
 
-size_t BranchOutputFilter::findStreamingSlotByHotkeyPairId(obs_hotkey_pair_id id) const
+size_t BranchOutput::findStreamingSlotByHotkeyPairId(obs_hotkey_pair_id id) const
 {
     for (size_t i = 0; i < MAX_SERVICES; i++) {
         if (toggleStreamingServiceHotkeyPairIds[i] == id) {
@@ -544,54 +572,52 @@ size_t BranchOutputFilter::findStreamingSlotByHotkeyPairId(obs_hotkey_pair_id id
     return SIZE_MAX;
 }
 
-void BranchOutputFilter::onEnableAllStreamingHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+void BranchOutput::onEnableAllStreamingHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    auto filter = fromCallbackData(data);
+    if (!obs_source_enabled(filter->contextSource)) {
         return;
     }
 
-    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+    auto applied = filter->appliedSettings.get();
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (filter->isStreamingEnabled(settings, i)) {
+        if (filter->isStreamingEnabled(applied, i)) {
             filter->setStreamingUserEnabled(i, true);
         }
     }
 }
 
-void BranchOutputFilter::onDisableAllStreamingHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+void BranchOutput::onDisableAllStreamingHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    auto filter = fromCallbackData(data);
+    if (!obs_source_enabled(filter->contextSource)) {
         return;
     }
 
-    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+    auto applied = filter->appliedSettings.get();
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (filter->isStreamingEnabled(settings, i)) {
+        if (filter->isStreamingEnabled(applied, i)) {
             filter->setStreamingUserEnabled(i, false);
         }
     }
 }
 
-bool BranchOutputFilter::onEnableStreamingServiceHotkeyPressed(
-    void *data, obs_hotkey_pair_id id, obs_hotkey *, bool pressed
-)
+bool BranchOutput::onEnableStreamingServiceHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    auto filter = fromCallbackData(data);
+    if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
 
@@ -610,16 +636,14 @@ bool BranchOutputFilter::onEnableStreamingServiceHotkeyPressed(
     return true;
 }
 
-bool BranchOutputFilter::onDisableStreamingServiceHotkeyPressed(
-    void *data, obs_hotkey_pair_id id, obs_hotkey *, bool pressed
-)
+bool BranchOutput::onDisableStreamingServiceHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    auto filter = fromCallbackData(data);
+    if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
 

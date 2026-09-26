@@ -178,7 +178,21 @@ bool FilterVideoCapture::captureFilterInput()
     gs_blend_state_push();
     gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
 
-    obs_source_video_render(target);
+    obs_source_t *parent = obs_filter_get_parent(filterSource);
+
+    bool useDefaultRender = false;
+    if (target == parent) {
+        const uint32_t parentFlags = obs_source_get_output_flags(parent);
+        useDefaultRender = (parentFlags & (OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_ASYNC)) == 0;
+    }
+
+    // A synchronous, non-custom-draw parent receives a NULL effect inside its own filter chain,
+    // so render it with the default effect as libobs' filter path does.
+    if (useDefaultRender) {
+        obs_source_default_render(target);
+    } else {
+        obs_source_video_render(target);
+    }
 
     gs_blend_state_pop();
     gs_texrender_end(texrender);

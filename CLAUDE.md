@@ -34,6 +34,7 @@ branch-output/
 ├── src/
 │   ├── plugin-main.cpp      # Plugin entry point, BranchOutputFilter core logic
 │   ├── plugin-main.hpp      # BranchOutputFilter class declaration
+│   ├── plugin-hotkey.cpp    # Hotkey registration sync, binding cache, filter enable/disable callbacks
 │   ├── plugin-streaming.cpp # Streaming output logic (individual start/stop, per-slot control)
 │   ├── plugin-stream-recording.cpp  # Stream recording output logic (individual start/stop)
 │   ├── plugin-replay-buffer.cpp  # Replay buffer output logic (individual start/stop)
@@ -174,7 +175,7 @@ The main class is `BranchOutputFilter` (declared in `plugin-main.hpp`), which is
 | **Audio** | Manages up to `MAX_AUDIO_MIXES` audio contexts via `AudioCapture` class. Supports filter audio, per-source audio, and audio track selection. |
 | **Video** | Creates an OBS view (`obs_view_t`) with a private video output for per-filter encoding and resolution control. Supports **filter input mode** via `FilterVideoCapture` class, which captures the filter's input using GPU `gs_texrender` and provides a private proxy source for the `obs_view`, avoiding CPU roundtrips and enabling GPU encoder compatibility (NVENC, QSV, AMF, etc.). |
 | **UI** | Properties panel built via OBS properties API (`plugin-ui.cpp`). Status dock (`BranchOutputStatusDock`) shows live statistics for all filters, including replay buffer save buttons. |
-| **Hotkeys** | Registers hotkey pairs for enable/disable, split recording, pause/unpause, chapter markers, save replay buffer, and per-output enable/disable (streaming per-slot, recording, replay buffer). |
+| **Hotkeys** | Registers hotkey pairs for enable/disable, split recording, pause/unpause, chapter markers, save replay buffer, and per-output enable/disable (streaming per-slot, recording, replay buffer). `syncHotkeys()` registers/unregisters only the difference between the desired set (derived from settings) and the currently registered set. Bindings are captured into `hotkeyBindingsCache` before unregistering and persisted to the `hotkey_bindings` settings key; on registration they are restored from the cache when libobs restored nothing. Renaming updates descriptions only. |
 | **Interlock** | Can link filter activation to OBS streaming, recording, virtual camera, replay buffer, or individual (per-output-type) states. The "Individual" mode maps each Branch Output type to its OBS counterpart independently. |
 | **Individual Start/Stop** | Allows streaming, recording, and replay buffer to be started/stopped independently via `ensureInfrastructure()` / `releaseInfrastructureIfIdle()` to separate shared resource lifecycle from individual output lifecycle. Per-output user intent is tracked via atomic flags (`streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`). |
 | **Cropping** | Supports relative (margin) and absolute (region) video cropping with `CropRect` struct. Live preview via `CropRectPreviewRenderer`. |
@@ -183,12 +184,12 @@ The main class is `BranchOutputFilter` (declared in `plugin-main.hpp`), which is
 ### Threading Model
 
 - OBS callbacks (video render, audio filter, video tick) may run on **different threads** from the UI thread.
-- Three recursive mutexes (`pluginMutex`, `outputMutex`, `audioMutex`) initialized via `pthread_mutex_init_recursive()`. Lock ordering: `pluginMutex` → `outputMutex`.
+- Recursive mutexes (`pthread_mutex_init_recursive()`): `pluginMutex` (module scope) and `outputMutex` / `audioMutex` / `AppliedSettings::mutex` (per filter instance). `filterListSnapshotMutex` (module scope, `PTHREAD_MUTEX_INITIALIZER`, non-recursive, never destroyed) guards only the filter-list snapshot swap and is never nested with the others. Lock ordering: `pluginMutex` → `outputMutex` → `audioMutex` → `AppliedSettings::mutex` (leaf: nothing is acquired while it is held).
 - `audioMutex` protects audio capture pointers against concurrent release in `releaseInfrastructureIfIdle()`.
 - `QMutex` protects audio buffers in `AudioCapture`.
 - Atomic fields (`std::atomic<bool>` for `outputStarting`, `streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`; `std::atomic<uint64_t>` for `reconnectAttemptingAt`) eliminate data races from OBS signal callbacks.
 - UI updates use `QMetaObject::invokeMethod` with `Qt::QueuedConnection` for thread safety.
-- Settings changes are tracked via revision counters (`storedSettingsRev` / `activeSettingsRev`) to defer restarts.
+- `AppliedSettings` (`appliedSettings`) holds a copy of the settings as last applied, guarded by its own leaf mutex (taken last). `updateCallback()` only publishes a new copy; the interval timer restarts the output when the copy it reads is not the one the running infrastructure was built from (`activeSettings`).
 
 ### OBS API Usage
 
@@ -277,6 +278,10 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - Verify that per-output hotkeys toggle the correct output and that the Status Dock checkboxes sync immediately.
 - Verify that video cropping (both relative and absolute modes) produces the correct output resolution and content.
 - Verify that the crop preview rectangle displays correctly and is hidden when the properties dialog closes.
+- Verify that turning an output type off, applying, and turning it back on keeps its hotkey assignments, and that they survive an OBS restart.
+- Verify that renaming the filter keeps its hotkey assignments and renders the new name in the hotkey descriptions.
+- Verify that deleting the filter and undoing the deletion restores its hotkey assignments.
+- Verify that hotkey assignments are restored in normal mode after OBS has been started and shut down in safe mode.
 
 ---
 
@@ -361,17 +366,29 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - Supports individual start/stop via `startRecordingIndividual()` / `stopRecordingIndividual()`.
 - Proc handlers for file name format override are registered here (`override_recording_file_name_format`, `clear_recording_file_name_format_override`).
 
+### Modifying Hotkeys
+
+- Hotkey registration and the binding cache are implemented in `src/plugin-hotkey.cpp`. The per-output-type hotkey callbacks live with their output type (`plugin-streaming.cpp` / `plugin-stream-recording.cpp` / `plugin-replay-buffer.cpp`).
+- Add the new hotkey's base name and locale key as a `HotkeyText` constant at the top of `plugin-hotkey.cpp`, and its ID member to `BranchOutputFilter` (`plugin-main.hpp`).
+- Wire it into the sync function of the group it belongs to (`syncFilterToggleHotkeys()` / `syncStreamingAllHotkeys()` / `syncStreamingSlotHotkeys()` / `syncRecordingHotkeys()` / `syncReplayBufferHotkeys()`), plus `captureRegisteredHotkeyBindings()` and `updateHotkeyDescriptions()`.
+- A group is registered and unregistered as a unit, and its registration state is decided by one representative ID. Register the representative first and abort the group when it fails.
+- When adding a new group, wire it into both `syncHotkeyGroups()` and `unregisterAllHotkeys()`.
+
 ---
 
 ## Important Warnings
 
 - **Do NOT call `obs_filter_get_parent()` in the `BranchOutputFilter` constructor** — it returns `nullptr` at that point. Use `addCallback()` instead.
 - **Private sources** (not visible in frontend) are intentionally excluded from status dock and timer registration.
-- **Settings revisions** (`storedSettingsRev` / `activeSettingsRev`) exist to avoid stopping output during reconnect attempts. Do not bypass this mechanism.
+- **Applied settings snapshot** — `updateCallback()` must not restart outputs; it only calls `appliedSettings.replace()`, and the interval timer performs the restart once no streaming slot is in its initial start (`someStreamingsStarting()`, driven by the "starting" / "activate" signals). A libobs reconnect episode does not raise that gate, so the restart currently reaches `obs_output_stop()` on a reconnecting output (see the FIXME at the `restartOutput()` call in `onIntervalTimerTimeout()`). Output start and the output / encoder / service settings built for it read `appliedSettings.get()`, because the live settings hold unapplied edits of the properties dialog. `obs_source_get_settings()` remains correct where the live object itself is required: `getProperties()` (the properties view edits that object, so a copy would not be saved), the crop preview in `videoTickCallback()` (it must follow unapplied edits), and the settings that `addCallback()` / `updateCallback()` hand to `syncHotkeys()` (identical in content to the snapshot at that moment). The status dock (`addFilter()`, `openOutputFolder()`) reads the snapshot through `getAppliedSettings()`, so its rows and folder button follow the last applied settings (`appliedSettings`), not `activeSettings`, the snapshot the running outputs were built from (recorded by `ensureInfrastructure()`); the two differ while a restart is deferred.
 - **Encoder compatibility** — The plugin maps "simple" encoder names to actual encoder IDs, with version-specific fallbacks (OBS 30 vs OBS 31). See `getSimpleVideoEncoder()` in `utils.hpp`.
 - **Memory management** — Use OBS RAII wrappers. Raw `bfree()` / `obs_data_release()` calls are error-prone.
 - **`.gitignore` uses allowlist pattern** — New top-level files/directories must be explicitly un-ignored with `!` prefix.
 - **FilterVideoCapture proxy source** — The proxy source type (`osi_branch_output_proxy`) must be registered at module load via `FilterVideoCapture::createProxySourceInfo()`. The proxy source is private and intentionally not visible in the OBS frontend.
+- **Hotkey name strings** (`EnableFilter.<uuid>` etc.) must not be changed. Existing user assignments are matched by name.
+- **Never call a libobs hotkey API (including `obs_hotkey_update_atomic()`) while holding `pluginMutex` / `outputMutex` / `audioMutex` / `AppliedSettings::mutex`.** libobs invokes hotkey callbacks while holding the hotkey mutex, and some of them take `outputMutex`. Lock order: hotkey mutex → `pluginMutex` → `outputMutex` → `audioMutex` → `AppliedSettings::mutex`. `AppliedSettings::replace()` / `get()` run under the hotkey mutex and under `outputMutex`, so they must not take any other mutex or call a libobs hotkey API.
+- **Hotkey register/unregister/save/load/description updates and every access to `hotkeyBindingsCache` must run inside an `obs_hotkey_update_atomic()` callback.** `obs_hotkey_set_description()` and `obs_hotkey_pair_set_descriptions()` take no lock of their own.
+- **`syncHotkeys()` registers hotkeys only against a public parent source.** Do not remove its `sourceIsPrivate()` early return: `obs_hotkey_register_source()` rejects a private parent while `obs_hotkey_pair_register_source()` accepts one, which would break the representative-ID registration check.
 
 ---
 
@@ -394,72 +411,8 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 
   **Exception**: Use subagents for parallel reviews.
 
-### Agent Cast
+### Available Agents
 
-#### cpp-sensei — C++ Native Application Specialist
+Custom agents are defined under `.claude/agents/`. Available specialists: `cpp-sensei`, `obs-sensei`, `qt-sensei`, `network-sensei`, `translation-sensei`, `av-sensei`, `devops-sensei`, `python-sensei`, `lua-sensei`.
 
-Expert in C++ language specifications and Windows/macOS/Linux native application development.
-
-- C++ implementation work
-- C++ coding advice
-- Code review from the perspective of C++ language specifications and coding standards
-- Multithreading implementation and thread safety advice
-
-#### obs-sensei — OBS Studio Plugin Specialist
-
-Expert in OBS Studio internals, the OBS Studio API, and OBS Studio plugins.
-
-- OBS Studio specification advice
-- OBS Studio API selection
-- OBS Studio plugin specification advice
-
-#### qt-sensei — Qt Specialist
-
-Expert in Qt framework, GUI application design, implementation, and testing.
-
-- Qt specification advice
-- Qt API selection
-- Qt GUI construction advice
-- Qt object design advice
-
-#### network-sensei — Network Specialist
-
-Expert in network programming, TCP/IP, HTTP, SSL/TLS, WebSocket, socket communication, and streaming protocols such as RTMP/SRT/WebRTC.
-
-- Network programming advice
-- Network protocol implementation advice
-- Streaming protocol implementation advice
-- Security advice
-- Network code review
-
-#### translation-sensei — Translation Specialist
-
-Multilingual translator.
-
-- Locale INI file translation
-- Document translation
-
-#### av-sensei — Audio/Video/Streaming Specialist
-
-Expert in video, audio, and streaming technologies, media quality, video processing, audio processing, encoders, and broadcast operations.
-
-- Technical advice on video, audio, and streaming
-- Quality advice on video, audio, and streaming
-- Encoder configuration advice
-- Broadcast operations advice
-
-#### devops-sensei — DevOps Specialist
-
-Expert in CI/CD (GitHub Actions), CMake, clang-format, VS Code, Inno Setup, and other development environment and build process tooling.
-
-- GitHub Actions workflow editing and review
-- CMake build script editing and review
-- Inno Setup build script editing and review
-
-#### python-sensei — Python Specialist
-
-Expert in Python scripting, OBS Studio Script design, implementation, and testing.
-
-- Python implementation work
-- Python coding advice
-- Code review from the perspective of Python language specifications and coding standards
+See each agent's file in `.claude/agents/` for its specific expertise and responsibilities.
