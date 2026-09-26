@@ -29,11 +29,11 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 ## Ground rules
 
-- Start every OBS process, including relaunches within a case, from a shell in the background as `CFFIXED_USER_HOME=<root>/home <root>/OBS.app/Contents/MacOS/OBS --disable-updater` (add `--profile` / `--collection` to select the fixture, and `--safe-mode` when a case calls for Safe Mode), and note its PID.
+- Start every OBS process, including relaunches within a case, from a shell in the background as `CFFIXED_USER_HOME=<root>/home <root>/OBS.app/Contents/MacOS/OBS --disable-updater` (add `--profile` / `--collection` to select the fixture, and `--safe-mode` when a case calls for Safe Mode), and note its PID. The only exception is R10's Virtual Cam value, launched from `/Applications/OBS.app` as `cases.md` describes.
   - macOS OBS has no portable mode: `--portable` is ignored, and without `CFFIXED_USER_HOME` the instance reads and rewrites the user's own config in `~/Library/Application Support/obs-studio/`. `HOME` does not redirect it.
   - Never start OBS through LaunchServices: computer use's `open_application`, `open`, Finder, the Dock, Spotlight, or AppleScript `tell application "OBS"` / `tell application id`. They resolve the bundle ID `com.obsproject.obs-studio`, which the installed `/Applications/OBS.app` shares, and never pass the environment variable.
   - After each launch, confirm that the new log appeared in `<config>/logs/` and that nothing in `~/Library/Application Support/obs-studio/` is newer than the launch. Otherwise quit OBS at once, stop the run, and report to the user, offering to restore that folder from the Step 1 backup.
-- Keep the installed OBS closed throughout the run (ask the user to quit it when it runs), and run one OBS instance at a time: OBS treats another running process with its bundle ID as "already running".
+- Keep the installed OBS closed throughout the run (ask the user to quit it when it runs), except for the launch above for R10's Virtual Cam value, and run one OBS instance at a time: OBS treats another running process with its bundle ID as "already running".
 - After each launch, bring OBS to the front once: `osascript -e 'tell application "System Events" to set frontmost of (first process whose unix id is <PID>) to true'`. Until then its menu bar has only the app menu. Use the same command whenever OBS must be frontmost.
 - On the first launch of an instance, the app permission check dialog appears: press Continue without granting anything. The Auto-Configuration Wizard opens next: press Cancel (its bandwidth test streams to external services).
 - Grant OBS no macOS permission (camera, microphone, screen recording, input monitoring, accessibility); the cases need none.

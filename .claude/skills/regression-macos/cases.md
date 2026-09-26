@@ -135,14 +135,21 @@ The `BranchOutputFilter destroyed` line each Studio Mode transition logs (the fi
 
 ## R10 Interlock modes — latest
 
-Do: with the filter's streaming slot pointing at a local RTMP receiver (an SRT listener adds up to 5 s to each stop) and recording on, set each dock Interlock value in turn (Always ON, Streaming, Recording, Streaming or Recording, Replay Buffer, Always OFF), and start and stop the matching OBS outputs.
+Do: with the filter's streaming slot pointing at a local RTMP receiver (an SRT listener adds up to 5 s to each stop) and recording on, set each dock Interlock value in turn (Always ON, Streaming, Recording, Streaming or Recording, Replay Buffer, Virtual Cam as described below, Always OFF), and start and stop the matching OBS outputs.
 
 Pass:
 
 - The filter's outputs run exactly while the interlock condition holds (Always ON: always; Always OFF: never), starting and stopping within 5 s.
 - An unchecked dock checkbox keeps its output off even while the condition holds.
 
-SKIP the Virtual Cam value, and do not start the virtual camera: on macOS it is a system extension that installs only from `/Applications/OBS.app` with the user's approval in System Settings.
+Virtual Cam: the virtual camera is a system extension that runs only from `/Applications/OBS.app`. Test the Virtual Cam value on 32.2 when both conditions below hold; otherwise SKIP it, give the unmet condition as the reason, and do not start the virtual camera.
+
+- `/Applications/OBS.app` is the same release as the 32.2 under test.
+- `systemextensionsctl list` shows `com.obsproject.obs-studio.mac-camera-extension` of that release as `[activated enabled]`.
+
+For this value only, launch `CFFIXED_USER_HOME=<root>/home /Applications/OBS.app/Contents/MacOS/OBS --disable-updater` with the 32.2 instance's `<root>`, run the launch checks of the ground rules, and confirm with `lsof` that `osi-branch-output` loads from `<config>/plugins/`. Never change files inside `/Applications/OBS.app`.
+
+When the virtual camera still fails to start, SKIP the value with the failure as the reason: an extension whose version just changed works only after the machine reboots.
 
 ## R11 Individual interlock — all
 
