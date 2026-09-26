@@ -42,6 +42,8 @@ class QPushButton;
 class BranchOutput;
 class OutputTableRow;
 
+Q_MOC_INCLUDE("branch-output.hpp")
+
 enum RowOutputType {
     ROW_OUTPUT_NONE = 0,
     ROW_OUTPUT_STREAMING = 1,
