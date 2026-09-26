@@ -46,7 +46,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 - GitHub releases: `gh` against `obsproject/obs-studio` (release list, asset names, sizes and digests, download).
 - GUI: computer use.
   - Required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button), the "Branch Output Status" dock, Settings → Hotkeys, Tools → Scripts, hotkey presses, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
-  - Request access to the bundle ID `com.obsproject.obs-studio`; one grant covers every version. Request Finder as well for R12.
+  - Request access to the bundle ID `com.obsproject.obs-studio`; one grant covers every version. Request Finder as well for R12, and check the Finder window with computer use only: querying Finder with AppleScript (`tell application "Finder"`) makes macOS ask the user to allow automation of Finder, the Apple Event times out, and the prompt stays on screen over OBS.
   - Prefer the background `app_*` tools. They cannot open context menus; open a source's filters with the Filters button of the toolbar below the preview (shown while the source is selected) instead of the context menu. Use the full-screen tools with OBS frontmost only for what `app_*` refuses.
   - Settings is OBS → Preferences in the app menu.
   - Take a fresh screenshot before each click in the filter properties: the dialog re-lays out when a setting changes (notably on 31.1), and earlier coordinates can hit another control.

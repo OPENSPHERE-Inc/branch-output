@@ -18,9 +18,15 @@ Build it on each instance.
 
 Defaults unless a case says otherwise: one Branch Output filter on `Media` with x264, Save Path `<root>/work/bo-rec`, dock Interlock "Always ON", every dock checkbox on, and `Main` in Program. Remove filters left by earlier cases when they would affect the result.
 
-A newly added filter, and a filter loaded with every output type off, starts no output until its Apply is pressed once in the GUI; settings changed after that through obs-websocket take effect.
+Press the properties' Apply once after adding a filter in any case (for example the filter on the scene `Main` in R09): a newly added filter, and a filter loaded with every output type off, starts no output until then, even when obs-websocket sets its settings and enables it. Settings changed through obs-websocket after that take effect.
 
 The hardware encoder in R01 and R08 is Apple VT H264 Hardware Encoder.
+
+On 30.1.2, never stop a recording that goes through ffmpeg-mux while another one that started later is still running, OBS's own recording included (every recording format of 30.1.2 uses ffmpeg-mux; a replay buffer spawns a muxer only for the duration of a save). 30.1.2 sets no `FD_CLOEXEC` on the muxer pipes, so each later `obs-ffmpeg-mux` process inherits the input pipes of the earlier ones, and stopping the earlier recording waits until the later muxers exit; the plugin's synchronous stop and its interlock turn that wait into a permanent deadlock.
+
+- R11: turn the filter's recording off in the dock before stopping OBS's recording. SKIP the check that the filter's recording stops with OBS's recording, judge R11 on its remaining items, and list the skipped check in the Notes column and under "Not covered".
+- R12: "Deactivate All" stops every filter at once, so record on one filter only: run a recording on one filter, streaming on another, and a replay buffer on the third.
+- When a stop hangs anyway, `lsof -p` on the `obs-ffmpeg-mux` processes shows the inherited PIPE fds; killing the later-started muxers releases the hang.
 
 ## R01 Startup and new filter — all
 
