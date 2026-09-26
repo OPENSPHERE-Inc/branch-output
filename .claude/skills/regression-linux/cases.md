@@ -51,7 +51,7 @@ Do: Streaming off, Stream Recording on, a file name format containing `%1` and `
 Pass:
 
 - Each file's name expands `%1` to the source name and `%2` to the filter name.
-- ffprobe: 1280x720 video, one audio stream carrying the 1 kHz tone, duration within 1 s of the time between the recording's start and stop log lines.
+- ffprobe: 1280x720 video, one audio stream carrying the 1 kHz tone, duration short of the time between the recording's start and stop log lines by at most OBS's own shortfall plus 0.2 s. Measure OBS's own shortfall once with an OBS recording of about 10 s (the time between `==== Recording Start` and `==== Recording Stop` minus the file's duration): on Xvfb it can exceed 1 s.
 - With "Use profile's recording path", the file is written to the profile's recording path instead of the Save Path.
 
 ## R04 Recording control
@@ -69,7 +69,7 @@ Edge: split within the first second after the recording starts. No empty file re
 
 ## R05 Replay buffer
 
-Do: on two filters, turn Replay Buffer on with Maximum Replay Time 10 s and "Show estimated memory usage" on, and set the video encoder's keyframe interval to 1 s. Wait more than 10 s, save with one row's Save button, then with "Save All Replay Buffers".
+Do: on two filters, turn Replay Buffer on with Maximum Replay Time 10 s and "Show estimated memory usage" on, and set the video encoder's keyframe interval to 1 s. Wait more than 10 s, save with one row's Save button, then with "Save All Replay Buffers". Tick "Show estimated memory usage" in the properties: it is display-only, reset to off when the settings are saved, so obs-websocket cannot turn it on.
 
 Pass:
 
