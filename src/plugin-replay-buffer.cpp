@@ -24,10 +24,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 
 #include "plugin-support.h"
-#include "plugin-main.hpp"
+#include "branch-output.hpp"
 #include "utils.hpp"
 
-obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
+obs_data_t *BranchOutput::createReplayBufferSettings(obs_data_t *settings)
 {
     auto replaySettings = obs_data_create();
     auto config = obs_frontend_get_profile_config();
@@ -73,7 +73,7 @@ obs_data_t *BranchOutputFilter::createReplayBufferSettings(obs_data_t *settings)
     return replaySettings;
 }
 
-void BranchOutputFilter::createAndStartReplayBuffer(obs_data_t *settings)
+void BranchOutput::createAndStartReplayBuffer(obs_data_t *settings)
 {
     if (!videoEncoder) {
         return;
@@ -125,22 +125,19 @@ void BranchOutputFilter::createAndStartReplayBuffer(obs_data_t *settings)
 
     // Connect "saved" signal
     auto handler = obs_output_get_signal_handler(replayBufferOutput);
-    replayBufferSavedSignal.Connect(handler, "saved", onReplayBufferSaved, this);
+    replayBufferSavedSignal.Connect(handler, "saved", onReplayBufferSaved, toCallbackData());
 
     // Start replay buffer output
     if (obs_output_start(replayBufferOutput)) {
         replayBufferActive = true;
-        auto parent = obs_filter_get_parent(filterSource);
-        if (parent) {
-            obs_source_inc_showing(parent);
-        }
+        acquireInputShowing();
         obs_log(LOG_INFO, "%s: Starting replay buffer succeeded", qUtf8Printable(name));
     } else {
         obs_log(LOG_ERROR, "%s: Starting replay buffer failed", qUtf8Printable(name));
     }
 }
 
-void BranchOutputFilter::stopReplayBufferOutput()
+void BranchOutput::stopReplayBufferOutput()
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -148,10 +145,7 @@ void BranchOutputFilter::stopReplayBufferOutput()
 
         if (replayBufferOutput) {
             if (replayBufferActive) {
-                obs_source_t *parent = obs_filter_get_parent(filterSource);
-                if (parent) {
-                    obs_source_dec_showing(parent);
-                }
+                releaseInputShowing();
                 obs_output_stop(replayBufferOutput);
             }
         }
@@ -165,7 +159,7 @@ void BranchOutputFilter::stopReplayBufferOutput()
     }
 }
 
-void BranchOutputFilter::setReplayBufferUserEnabled(bool enabled)
+void BranchOutput::setReplayBufferUserEnabled(bool enabled)
 {
     bool previous = replayBufferUserEnabled.exchange(enabled, std::memory_order_relaxed);
     if (previous != enabled) {
@@ -173,12 +167,12 @@ void BranchOutputFilter::setReplayBufferUserEnabled(bool enabled)
     }
 }
 
-bool BranchOutputFilter::isReplayBufferEnabled(obs_data_t *settings)
+bool BranchOutput::isReplayBufferEnabled(obs_data_t *settings)
 {
     return obs_data_get_bool(settings, "replay_buffer");
 }
 
-bool BranchOutputFilter::saveReplayBuffer()
+bool BranchOutput::saveReplayBuffer()
 {
     pthread_mutex_lock(&outputMutex);
     {
@@ -198,15 +192,15 @@ bool BranchOutputFilter::saveReplayBuffer()
     }
 }
 
-void BranchOutputFilter::onReplayBufferSaved(void *data, calldata_t *)
+void BranchOutput::onReplayBufferSaved(void *data, calldata_t *)
 {
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     obs_log(LOG_INFO, "%s: Replay buffer saved", qUtf8Printable(filter->name));
 }
 
-void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd)
+void BranchOutput::onOverrideReplayBufferFilenameFormat(void *data, calldata_t *cd)
 {
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
 
     const char *format = calldata_string(cd, "format");
     OBSOutputAutoRelease replayBufferOutputRef;
@@ -258,20 +252,20 @@ void BranchOutputFilter::onOverrideReplayBufferFilenameFormat(void *data, callda
     }
 }
 
-void BranchOutputFilter::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
+void BranchOutput::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
+    auto filter = fromCallbackData(data);
     filter->saveReplayBuffer();
 }
 
 // Internal helper: caller must hold outputMutex.
 // Caller must call ensureInfrastructure() before this function to set up
 // the view, video/audio encoders, and related infrastructure.
-bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
+bool BranchOutput::createAndStartReplayBufferChecked(obs_data_t *settings)
 {
     if (!isReplayBufferEnabled(settings)) {
         return false;
@@ -285,7 +279,7 @@ bool BranchOutputFilter::createAndStartReplayBufferChecked(obs_data_t *settings)
     return replayBufferActive;
 }
 
-bool BranchOutputFilter::startReplayBufferIndividual(obs_data_t *applied)
+bool BranchOutput::startReplayBufferIndividual(obs_data_t *applied)
 {
     pthread_mutex_lock(&pluginMutex);
     {
@@ -308,7 +302,7 @@ bool BranchOutputFilter::startReplayBufferIndividual(obs_data_t *applied)
     }
 }
 
-bool BranchOutputFilter::stopReplayBufferIndividual()
+bool BranchOutput::stopReplayBufferIndividual()
 {
     bool wasActive = false;
 
@@ -330,14 +324,14 @@ bool BranchOutputFilter::stopReplayBufferIndividual()
     return wasActive;
 }
 
-bool BranchOutputFilter::onEnableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+bool BranchOutput::onEnableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    auto filter = fromCallbackData(data);
+    if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
 
@@ -351,14 +345,14 @@ bool BranchOutputFilter::onEnableReplayBufferHotkeyPressed(void *data, obs_hotke
     return true;
 }
 
-bool BranchOutputFilter::onDisableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+bool BranchOutput::onDisableReplayBufferHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;
     }
 
-    auto filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    auto filter = fromCallbackData(data);
+    if (!obs_source_enabled(filter->contextSource)) {
         return false;
     }
 

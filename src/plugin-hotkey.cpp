@@ -82,32 +82,85 @@ captureHotkeyPairBindings(obs_data_t *cache, obs_hotkey_pair_id id, const QStrin
     }
 }
 
-QString BranchOutputFilter::buildHotkeyName(const char *base) const
+QString BranchOutput::buildHotkeyName(const char *base) const
 {
-    return QString("%1.%2").arg(base).arg(obs_source_get_uuid(filterSource));
+    return QString("%1.%2").arg(base).arg(obs_source_get_uuid(contextSource));
 }
 
-QString BranchOutputFilter::buildStreamingSlotHotkeyName(const char *base, size_t index) const
+QString BranchOutput::buildStreamingSlotHotkeyName(const char *base, size_t index) const
 {
-    return QString("%1%2.%3").arg(base).arg(index).arg(obs_source_get_uuid(filterSource));
+    return QString("%1%2.%3").arg(base).arg(index).arg(obs_source_get_uuid(contextSource));
 }
 
-QString BranchOutputFilter::buildHotkeyDescription(const char *textKey) const
+QString BranchOutput::buildHotkeyDescription(const char *textKey) const
 {
     return QString(obs_module_text(textKey)).arg(name);
 }
 
-QString BranchOutputFilter::buildStreamingSlotHotkeyDescription(const char *textKey, size_t index) const
+QString BranchOutput::buildStreamingSlotHotkeyDescription(const char *textKey, size_t index) const
 {
     return QString(obs_module_text(textKey)).arg(name).arg(index + 1);
 }
 
+// sourceIsPrivate() enumerates sources and must not run under the hotkey mutex.
+// Registering against a private parent is not allowed: obs_hotkey_pair_register_source()
+// accepts one while obs_hotkey_register_source() rejects it, which would leave a group
+// half registered.
+bool BranchOutputFilter::canRegisterHotkeys()
+{
+    auto parent = obs_filter_get_parent(contextSource);
+    return parent && !sourceIsPrivate(parent);
+}
+
 // Caller must hold the libobs hotkey mutex.
-obs_hotkey_id BranchOutputFilter::registerHotkeyWithRestore(
-    obs_source_t *parent, const QString &fullName, const QString &description, obs_hotkey_func func
+// Every registration of one sync pass goes to the source latched here. Resolving the parent per
+// registration could lose it between two hotkeys of a group and leave the group half registered.
+bool BranchOutputFilter::beginHotkeyRegistration()
+{
+    hotkeyRegistrationTarget = obs_filter_get_parent(contextSource);
+    return hotkeyRegistrationTarget != nullptr;
+}
+
+// Caller must hold the libobs hotkey mutex.
+void BranchOutputFilter::endHotkeyRegistration()
+{
+    hotkeyRegistrationTarget = nullptr;
+}
+
+// Caller must hold the libobs hotkey mutex.
+obs_hotkey_id
+BranchOutputFilter::registerHotkey(const QString &fullName, const QString &description, obs_hotkey_func func)
+{
+    if (!hotkeyRegistrationTarget) {
+        return OBS_INVALID_HOTKEY_ID;
+    }
+
+    return obs_hotkey_register_source(
+        hotkeyRegistrationTarget, qUtf8Printable(fullName), qUtf8Printable(description), func, toCallbackData()
+    );
+}
+
+// Caller must hold the libobs hotkey mutex.
+obs_hotkey_pair_id BranchOutputFilter::registerHotkeyPair(
+    const QString &fullName0, const QString &description0, const QString &fullName1, const QString &description1,
+    obs_hotkey_active_func func0, obs_hotkey_active_func func1
 )
 {
-    auto id = obs_hotkey_register_source(parent, qUtf8Printable(fullName), qUtf8Printable(description), func, this);
+    if (!hotkeyRegistrationTarget) {
+        return OBS_INVALID_HOTKEY_PAIR_ID;
+    }
+
+    return obs_hotkey_pair_register_source(
+        hotkeyRegistrationTarget, qUtf8Printable(fullName0), qUtf8Printable(description0), qUtf8Printable(fullName1),
+        qUtf8Printable(description1), func0, func1, toCallbackData(), toCallbackData()
+    );
+}
+
+// Caller must hold the libobs hotkey mutex.
+obs_hotkey_id
+BranchOutput::registerHotkeyWithRestore(const QString &fullName, const QString &description, obs_hotkey_func func)
+{
+    auto id = registerHotkey(fullName, description, func);
     if (id == OBS_INVALID_HOTKEY_ID) {
         return id;
     }
@@ -136,15 +189,12 @@ obs_hotkey_id BranchOutputFilter::registerHotkeyWithRestore(
 }
 
 // Caller must hold the libobs hotkey mutex.
-obs_hotkey_pair_id BranchOutputFilter::registerHotkeyPairWithRestore(
-    obs_source_t *parent, const QString &fullName0, const QString &description0, const QString &fullName1,
-    const QString &description1, obs_hotkey_active_func func0, obs_hotkey_active_func func1
+obs_hotkey_pair_id BranchOutput::registerHotkeyPairWithRestore(
+    const QString &fullName0, const QString &description0, const QString &fullName1, const QString &description1,
+    obs_hotkey_active_func func0, obs_hotkey_active_func func1
 )
 {
-    auto id = obs_hotkey_pair_register_source(
-        parent, qUtf8Printable(fullName0), qUtf8Printable(description0), qUtf8Printable(fullName1),
-        qUtf8Printable(description1), func0, func1, this, this
-    );
+    auto id = registerHotkeyPair(fullName0, description0, fullName1, description1, func0, func1);
     if (id == OBS_INVALID_HOTKEY_PAIR_ID) {
         return id;
     }
@@ -197,7 +247,7 @@ obs_hotkey_pair_id BranchOutputFilter::registerHotkeyPairWithRestore(
 }
 
 // Caller must hold the libobs hotkey mutex.
-void BranchOutputFilter::unregisterHotkeyWithCapture(obs_hotkey_id &id, const QString &fullName)
+void BranchOutput::unregisterHotkeyWithCapture(obs_hotkey_id &id, const QString &fullName)
 {
     if (id == OBS_INVALID_HOTKEY_ID) {
         return;
@@ -210,7 +260,7 @@ void BranchOutputFilter::unregisterHotkeyWithCapture(obs_hotkey_id &id, const QS
 }
 
 // Caller must hold the libobs hotkey mutex.
-void BranchOutputFilter::unregisterHotkeyPairWithCapture(
+void BranchOutput::unregisterHotkeyPairWithCapture(
     obs_hotkey_pair_id &id, const QString &fullName0, const QString &fullName1
 )
 {
@@ -226,7 +276,7 @@ void BranchOutputFilter::unregisterHotkeyPairWithCapture(
 }
 
 // Caller must hold the libobs hotkey mutex.
-void BranchOutputFilter::syncFilterToggleHotkeys(obs_source_t *parent, bool desired)
+void BranchOutput::syncFilterToggleHotkeys(bool desired)
 {
     bool registered = toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID;
     if (desired == registered) {
@@ -238,7 +288,7 @@ void BranchOutputFilter::syncFilterToggleHotkeys(obs_source_t *parent, bool desi
 
     if (desired) {
         toggleEnableHotkeyPairId = registerHotkeyPairWithRestore(
-            parent, enableName, buildHotkeyDescription(HK_ENABLE_FILTER.textKey), disableName,
+            enableName, buildHotkeyDescription(HK_ENABLE_FILTER.textKey), disableName,
             buildHotkeyDescription(HK_DISABLE_FILTER.textKey), onEnableFilterHotkeyPressed, onDisableFilterHotkeyPressed
         );
         if (toggleEnableHotkeyPairId == OBS_INVALID_HOTKEY_PAIR_ID) {
@@ -253,7 +303,7 @@ void BranchOutputFilter::syncFilterToggleHotkeys(obs_source_t *parent, bool desi
 }
 
 // Caller must hold the libobs hotkey mutex.
-void BranchOutputFilter::syncStreamingAllHotkeys(obs_source_t *parent, bool desired)
+void BranchOutput::syncStreamingAllHotkeys(bool desired)
 {
     bool registered = enableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID;
     if (desired == registered) {
@@ -265,16 +315,14 @@ void BranchOutputFilter::syncStreamingAllHotkeys(obs_source_t *parent, bool desi
 
     if (desired) {
         enableAllStreamingHotkeyId = registerHotkeyWithRestore(
-            parent, enableName, buildHotkeyDescription(HK_ENABLE_ALL_STREAMING.textKey),
-            onEnableAllStreamingHotkeyPressed
+            enableName, buildHotkeyDescription(HK_ENABLE_ALL_STREAMING.textKey), onEnableAllStreamingHotkeyPressed
         );
         if (enableAllStreamingHotkeyId == OBS_INVALID_HOTKEY_ID) {
             obs_log(LOG_WARNING, "%s: Streaming hotkey registration failed", qUtf8Printable(name));
             return;
         }
         disableAllStreamingHotkeyId = registerHotkeyWithRestore(
-            parent, disableName, buildHotkeyDescription(HK_DISABLE_ALL_STREAMING.textKey),
-            onDisableAllStreamingHotkeyPressed
+            disableName, buildHotkeyDescription(HK_DISABLE_ALL_STREAMING.textKey), onDisableAllStreamingHotkeyPressed
         );
     } else {
         unregisterHotkeyWithCapture(enableAllStreamingHotkeyId, enableName);
@@ -285,7 +333,7 @@ void BranchOutputFilter::syncStreamingAllHotkeys(obs_source_t *parent, bool desi
 }
 
 // Caller must hold the libobs hotkey mutex.
-void BranchOutputFilter::syncStreamingSlotHotkeys(obs_source_t *parent, size_t index, bool desired)
+void BranchOutput::syncStreamingSlotHotkeys(size_t index, bool desired)
 {
     if (index >= MAX_SERVICES) {
         return;
@@ -301,8 +349,8 @@ void BranchOutputFilter::syncStreamingSlotHotkeys(obs_source_t *parent, size_t i
 
     if (desired) {
         toggleStreamingServiceHotkeyPairIds[index] = registerHotkeyPairWithRestore(
-            parent, enableName, buildStreamingSlotHotkeyDescription(HK_ENABLE_STREAMING_SERVICE.textKey, index),
-            disableName, buildStreamingSlotHotkeyDescription(HK_DISABLE_STREAMING_SERVICE.textKey, index),
+            enableName, buildStreamingSlotHotkeyDescription(HK_ENABLE_STREAMING_SERVICE.textKey, index), disableName,
+            buildStreamingSlotHotkeyDescription(HK_DISABLE_STREAMING_SERVICE.textKey, index),
             onEnableStreamingServiceHotkeyPressed, onDisableStreamingServiceHotkeyPressed
         );
         if (toggleStreamingServiceHotkeyPairIds[index] == OBS_INVALID_HOTKEY_PAIR_ID) {
@@ -320,7 +368,7 @@ void BranchOutputFilter::syncStreamingSlotHotkeys(obs_source_t *parent, size_t i
 }
 
 // Caller must hold the libobs hotkey mutex.
-void BranchOutputFilter::syncRecordingHotkeys(obs_source_t *parent, bool desired)
+void BranchOutput::syncRecordingHotkeys(bool desired)
 {
     bool registered = splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID;
     if (desired == registered) {
@@ -336,23 +384,23 @@ void BranchOutputFilter::syncRecordingHotkeys(obs_source_t *parent, bool desired
 
     if (desired) {
         splitRecordingHotkeyId = registerHotkeyWithRestore(
-            parent, splitName, buildHotkeyDescription(HK_SPLIT_RECORDING.textKey), onSplitRecordingFileHotkeyPressed
+            splitName, buildHotkeyDescription(HK_SPLIT_RECORDING.textKey), onSplitRecordingFileHotkeyPressed
         );
         if (splitRecordingHotkeyId == OBS_INVALID_HOTKEY_ID) {
             obs_log(LOG_WARNING, "%s: Recording hotkey registration failed", qUtf8Printable(name));
             return;
         }
         togglePauseRecordingHotkeyPairId = registerHotkeyPairWithRestore(
-            parent, pauseName, buildHotkeyDescription(HK_PAUSE_RECORDING.textKey), unpauseName,
+            pauseName, buildHotkeyDescription(HK_PAUSE_RECORDING.textKey), unpauseName,
             buildHotkeyDescription(HK_UNPAUSE_RECORDING.textKey), onPauseRecordingHotkeyPressed,
             onUnpauseRecordingHotkeyPressed
         );
         addChapterToRecordingHotkeyId = registerHotkeyWithRestore(
-            parent, addChapterName, buildHotkeyDescription(HK_ADD_CHAPTER_TO_RECORDING.textKey),
+            addChapterName, buildHotkeyDescription(HK_ADD_CHAPTER_TO_RECORDING.textKey),
             onAddChapterToRecordingFileHotkeyPressed
         );
         toggleRecordingHotkeyPairId = registerHotkeyPairWithRestore(
-            parent, enableName, buildHotkeyDescription(HK_ENABLE_RECORDING.textKey), disableName,
+            enableName, buildHotkeyDescription(HK_ENABLE_RECORDING.textKey), disableName,
             buildHotkeyDescription(HK_DISABLE_RECORDING.textKey), onEnableRecordingHotkeyPressed,
             onDisableRecordingHotkeyPressed
         );
@@ -367,7 +415,7 @@ void BranchOutputFilter::syncRecordingHotkeys(obs_source_t *parent, bool desired
 }
 
 // Caller must hold the libobs hotkey mutex.
-void BranchOutputFilter::syncReplayBufferHotkeys(obs_source_t *parent, bool desired)
+void BranchOutput::syncReplayBufferHotkeys(bool desired)
 {
     bool registered = saveReplayBufferHotkeyId != OBS_INVALID_HOTKEY_ID;
     if (desired == registered) {
@@ -380,14 +428,14 @@ void BranchOutputFilter::syncReplayBufferHotkeys(obs_source_t *parent, bool desi
 
     if (desired) {
         saveReplayBufferHotkeyId = registerHotkeyWithRestore(
-            parent, saveName, buildHotkeyDescription(HK_SAVE_REPLAY_BUFFER.textKey), onSaveReplayBufferHotkeyPressed
+            saveName, buildHotkeyDescription(HK_SAVE_REPLAY_BUFFER.textKey), onSaveReplayBufferHotkeyPressed
         );
         if (saveReplayBufferHotkeyId == OBS_INVALID_HOTKEY_ID) {
             obs_log(LOG_WARNING, "%s: Replay buffer hotkey registration failed", qUtf8Printable(name));
             return;
         }
         toggleReplayBufferHotkeyPairId = registerHotkeyPairWithRestore(
-            parent, enableName, buildHotkeyDescription(HK_ENABLE_REPLAY_BUFFER.textKey), disableName,
+            enableName, buildHotkeyDescription(HK_ENABLE_REPLAY_BUFFER.textKey), disableName,
             buildHotkeyDescription(HK_DISABLE_REPLAY_BUFFER.textKey), onEnableReplayBufferHotkeyPressed,
             onDisableReplayBufferHotkeyPressed
         );
@@ -401,22 +449,22 @@ void BranchOutputFilter::syncReplayBufferHotkeys(obs_source_t *parent, bool desi
 
 // Caller must hold the libobs hotkey mutex.
 // registerAll ignores the settings and treats every group as desired.
-void BranchOutputFilter::syncHotkeyGroups(obs_source_t *parent, obs_data_t *settings, bool registerAll)
+void BranchOutput::syncHotkeyGroups(obs_data_t *settings, bool registerAll)
 {
-    syncFilterToggleHotkeys(parent, true);
+    syncFilterToggleHotkeys(true);
 
     bool streaming = registerAll || isStreamingGroupEnabled(settings);
-    syncStreamingAllHotkeys(parent, streaming);
+    syncStreamingAllHotkeys(streaming);
     for (size_t i = 0; i < MAX_SERVICES; i++) {
-        syncStreamingSlotHotkeys(parent, i, registerAll || (streaming && isStreamingEnabled(settings, i)));
+        syncStreamingSlotHotkeys(i, registerAll || (streaming && isStreamingEnabled(settings, i)));
     }
 
-    syncRecordingHotkeys(parent, registerAll || isRecordingEnabled(settings));
-    syncReplayBufferHotkeys(parent, registerAll || isReplayBufferEnabled(settings));
+    syncRecordingHotkeys(registerAll || isRecordingEnabled(settings));
+    syncReplayBufferHotkeys(registerAll || isReplayBufferEnabled(settings));
 }
 
 // Caller must hold the libobs hotkey mutex.
-void BranchOutputFilter::captureRegisteredHotkeyBindings()
+void BranchOutput::captureRegisteredHotkeyBindings()
 {
     captureHotkeyPairBindings(
         hotkeyBindingsCache, toggleEnableHotkeyPairId, buildHotkeyName(HK_ENABLE_FILTER.base),
@@ -457,9 +505,9 @@ void BranchOutputFilter::captureRegisteredHotkeyBindings()
 // Caller must hold the libobs hotkey mutex.
 // Entries of another filter appear when a filter is duplicated together with its settings.
 // An empty binding array and a missing key mean the same thing on restore.
-void BranchOutputFilter::pruneHotkeyBindingsCache()
+void BranchOutput::pruneHotkeyBindingsCache()
 {
-    auto suffix = QString(".%1").arg(obs_source_get_uuid(filterSource));
+    auto suffix = QString(".%1").arg(obs_source_get_uuid(contextSource));
     QStringList staleKeys;
 
     for (auto item = obs_data_first(hotkeyBindingsCache); item; obs_data_item_next(&item)) {
@@ -484,64 +532,64 @@ void BranchOutputFilter::pruneHotkeyBindingsCache()
 // registered at save time, so bindings of hotkeys this filter unregisters would be lost.
 // Every hotkey call and every cache access runs inside obs_hotkey_update_atomic(): the description
 // setters take no lock of their own, and the callers run on several threads.
-void BranchOutputFilter::syncHotkeys(obs_data_t *settings)
+void BranchOutput::syncHotkeys(obs_data_t *settings)
 {
-    auto parent = obs_filter_get_parent(filterSource);
-    // sourceIsPrivate() enumerates sources and must not run under the hotkey mutex.
-    // Registering against a private parent is not allowed: obs_hotkey_pair_register_source()
-    // accepts one while obs_hotkey_register_source() rejects it, which would leave a group
-    // half registered.
-    if (!parent || sourceIsPrivate(parent)) {
+    if (!canRegisterHotkeys()) {
         return;
     }
 
     struct SyncContext {
-        BranchOutputFilter *filter;
-        obs_source_t *parent;
+        BranchOutput *filter;
         obs_data_t *settings;
     };
-    SyncContext context{this, parent, settings};
+    SyncContext context{this, settings};
 
     obs_hotkey_update_atomic(
         [](void *param) {
             auto ctx = static_cast<SyncContext *>(param);
             auto filter = ctx->filter;
 
+            if (!filter->beginHotkeyRegistration()) {
+                return;
+            }
+
             if (filter->hotkeyHarvestPending) {
-                filter->syncHotkeyGroups(ctx->parent, ctx->settings, true);
+                filter->syncHotkeyGroups(ctx->settings, true);
                 filter->hotkeyHarvestPending = false;
             }
 
-            filter->syncHotkeyGroups(ctx->parent, ctx->settings, false);
+            filter->syncHotkeyGroups(ctx->settings, false);
+
+            filter->endHotkeyRegistration();
         },
         &context
     );
 }
 
-void BranchOutputFilter::unregisterAllHotkeys()
+void BranchOutput::unregisterAllHotkeys()
 {
     obs_hotkey_update_atomic(
         [](void *param) {
-            auto filter = static_cast<BranchOutputFilter *>(param);
+            auto filter = fromCallbackData(param);
 
-            filter->syncFilterToggleHotkeys(nullptr, false);
-            filter->syncStreamingAllHotkeys(nullptr, false);
+            filter->syncFilterToggleHotkeys(false);
+            filter->syncStreamingAllHotkeys(false);
             for (size_t i = 0; i < MAX_SERVICES; i++) {
-                filter->syncStreamingSlotHotkeys(nullptr, i, false);
+                filter->syncStreamingSlotHotkeys(i, false);
             }
-            filter->syncRecordingHotkeys(nullptr, false);
-            filter->syncReplayBufferHotkeys(nullptr, false);
+            filter->syncRecordingHotkeys(false);
+            filter->syncReplayBufferHotkeys(false);
         },
-        this
+        toCallbackData()
     );
 }
 
 // Renaming only refreshes the descriptions: unregistering and re-registering would be visible in
 // the OBS hotkey settings UI without changing anything the user configured.
-void BranchOutputFilter::updateHotkeyDescriptions(const QString &newName)
+void BranchOutput::updateHotkeyDescriptions(const QString &newName)
 {
     struct RenameContext {
-        BranchOutputFilter *filter;
+        BranchOutput *filter;
         const QString &newName;
     };
     RenameContext context{this, newName};
@@ -592,10 +640,10 @@ void BranchOutputFilter::updateHotkeyDescriptions(const QString &newName)
     );
 }
 
-void BranchOutputFilter::snapshotHotkeyBindings(obs_data_t *settings)
+void BranchOutput::snapshotHotkeyBindings(obs_data_t *settings)
 {
     struct SnapshotContext {
-        BranchOutputFilter *filter;
+        BranchOutput *filter;
         obs_data_t *settings;
     };
     SnapshotContext context{this, settings};
@@ -618,34 +666,34 @@ void BranchOutputFilter::snapshotHotkeyBindings(obs_data_t *settings)
     );
 }
 
-bool BranchOutputFilter::onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+bool BranchOutput::onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;
     }
 
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
-    if (obs_source_enabled(filter->filterSource)) {
+    BranchOutput *filter = fromCallbackData(data);
+    if (obs_source_enabled(filter->contextSource)) {
         // Already enabled
         return false;
     }
 
-    obs_source_set_enabled(filter->filterSource, true);
+    obs_source_set_enabled(filter->contextSource, true);
     return true;
 }
 
-bool BranchOutputFilter::onDisableFilterHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
+bool BranchOutput::onDisableFilterHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
 {
     if (!pressed) {
         return false;
     }
 
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
+    BranchOutput *filter = fromCallbackData(data);
+    if (!obs_source_enabled(filter->contextSource)) {
         // Already disabled
         return false;
     }
 
-    obs_source_set_enabled(filter->filterSource, false);
+    obs_source_set_enabled(filter->contextSource, false);
     return true;
 }
