@@ -1,6 +1,6 @@
 ---
 name: regression
-description: Pre-release regression test of the Branch Output plugin on portable OBS Studio builds downloaded from the official releases (32.2 latest, 31.1 final, 30.1.2), driving OBS through its GUI with computer use and verifying outputs with ffprobe and OBS logs. Use before a release or when the user asks for a regression or run-through test of Branch Output.
+description: Pre-release regression test of the Branch Output plugin on Windows, on portable OBS Studio builds downloaded from the official releases (32.2 latest, 31.1 final, 30.1.2), driving OBS through its GUI with computer use and verifying outputs with ffprobe and OBS logs. Use before a release or when the user asks for a regression or run-through test of Branch Output on Windows.
 ---
 
 # Branch Output Regression Test
