@@ -126,6 +126,6 @@ void renderMainTexture(uint32_t offsetX, uint32_t offsetY)
 
     gs_matrix_push();
     gs_matrix_translate3f(-(float)offsetX, -(float)offsetY, 0.0f);
-    obs_render_main_texture();
+    obs_render_main_texture_src_color_only();
     gs_matrix_pop();
 }
