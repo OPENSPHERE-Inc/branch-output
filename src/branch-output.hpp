@@ -370,6 +370,7 @@ protected:
     void addAdvancedSettingsGroup(obs_properties_t *props);
     void addReplayBufferGroup(obs_properties_t *props);
     void addVideoEncoderGroup(obs_properties_t *props);
+    static void applyVideoEncoderDefaults(obs_data_t *settings);
 
     // Callbacks from obs core
     static bool onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);

@@ -258,6 +258,7 @@ Pass:
 
 Do and Pass, every step in the dialog, with `Main Output 1` recording. Count restarts by the `Settings change detected, Attempting restart` lines.
 
+- Open the dialog and press Cancel without a change: it closes without OBS's unsaved-changes prompt ("There are unsaved changes. Do you want to keep them?"), and no restart.
 - Set Resolution to "Half of canvas (50%)" and press Cancel: no restart, and on reopening Resolution is "Output (Stretch to fit)".
 - Set Resolution to "Half of canvas (50%)" and press the dialog's Apply: one restart with the dialog still open, and the recording is 640x360. Then press OK: no restart.
 - Open the dialog and press OK without a change: no restart (unlike a filter's Apply without a change, #178).
@@ -338,7 +339,7 @@ Do and Pass, with Stream Recording and Replay Buffer on in `Main Output 1`:
 
 - Uncheck the replay buffer row in the dock, then restart OBS: `Main Output 1` is listed with its settings kept (Stream Recording and Replay Buffer on, x264), its recording runs again, and its replay buffer stays unchecked, without "Buffering". Check it again.
 - Disable `Main Output 1` with the eye icon in its Filter cell, then restart OBS: it is listed disabled and runs nothing. Enabling it starts its outputs.
-- While it records, switch the profile to `BORegression2`: `Main Output 1`'s rows leave the dock, its recording stops, and the file plays. In `BORegression2`, set the dock Interlock to "Always ON" and press "Add Main Output" twice, closing each dialog with Cancel: `Main Output 1` and `Main Output 2` appear. Turn only Replay Buffer on in `BORegression2`'s `Main Output 1`.
+- While it records, switch the profile to `BORegression2`: `Main Output 1`'s rows leave the dock, its recording stops, and the file plays. In `BORegression2`, set the dock Interlock to "Always ON" and press "Add Main Output" twice, closing each dialog with Cancel without a change: each closes without OBS's unsaved-changes prompt (M02), and `Main Output 1` and `Main Output 2` appear. Turn only Replay Buffer on in `BORegression2`'s `Main Output 1`.
   - Switch back to `BORegression`: only `BORegression`'s `Main Output 1` is listed, with its settings kept, and its recording runs again.
   - Switch to `BORegression2` again: its two main outputs are listed, `Main Output 1` shows "Buffering", and `Main Output 2` runs nothing.
   - Each profile's `branchOutputPrograms.json` lists only that profile's main outputs (two in `BORegression2`).

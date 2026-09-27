@@ -1083,6 +1083,13 @@ static bool resetFirstUnlistedListValue(
     return false;
 }
 
+void BranchOutput::applyVideoEncoderDefaults(obs_data_t *settings)
+{
+    auto encoderId = obs_data_get_string(settings, "video_encoder");
+    OBSDataAutoRelease encoderDefaults = obs_encoder_defaults(encoderId);
+    applyDefaults(settings, encoderDefaults);
+}
+
 void BranchOutput::addVideoEncoderGroup(obs_properties_t *props)
 {
     auto videoEncoderGroup = obs_properties_create();
@@ -1316,11 +1323,9 @@ void BranchOutput::addVideoEncoderGroup(obs_properties_t *props)
             obs_log(LOG_DEBUG, "%s: Video encoder chainging.", qUtf8Printable(filter->name));
 
             auto _videoEncoderGroup = obs_property_group_content(obs_properties_get(_props, "video_encoder_group"));
-            auto _encoderId = obs_data_get_string(settings, "video_encoder");
 
-            // Apply encoder's defaults
-            OBSDataAutoRelease encoderEefaults = obs_encoder_defaults(_encoderId);
-            applyDefaults(settings, encoderEefaults);
+            applyVideoEncoderDefaults(settings);
+            auto _encoderId = obs_data_get_string(settings, "video_encoder");
 
             obs_properties_remove_by_name(_videoEncoderGroup, "video_encoder_settings_group");
 
@@ -1347,7 +1352,7 @@ void BranchOutput::addVideoEncoderGroup(obs_properties_t *props)
                         if (!resetFirstUnlistedListValue(encoderProps, settings, filter->name, resetNames)) {
                             break;
                         }
-                        applyDefaults(settings, encoderEefaults);
+                        applyVideoEncoderDefaults(settings);
                         obs_properties_apply_settings(encoderProps, settings);
                     }
                     if (pass == ENCODER_LIST_RESET_MAX_PASSES) {
