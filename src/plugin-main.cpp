@@ -397,9 +397,6 @@ void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHe
         outWidth = obs_source_get_width(parent);
         outHeight = obs_source_get_height(parent);
     }
-    // Round up to a multiple of 2
-    outWidth += (outWidth & 1);
-    outHeight += (outHeight & 1);
 }
 
 void BranchOutputFilter::addCallback(obs_source_t *source)

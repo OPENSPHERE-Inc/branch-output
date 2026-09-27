@@ -1219,12 +1219,23 @@ void BranchOutput::addVideoEncoderGroup(obs_properties_t *props)
     auto resolutionList = obs_properties_add_list(
         videoEncoderGroup, "resolution", obs_module_text("Resolution"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
     );
-    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Source"), "");
+    const char *sourceKey = "Resolution.Source";
+    const char *threeQuartersKey = "Resolution.ThreeQuarters";
+    const char *halfKey = "Resolution.Half";
+    const char *quarterKey = "Resolution.Quarter";
+    if (!hasFilterPipeline()) {
+        // Main outputs take the canvas as their input
+        sourceKey = "Resolution.MainOutput.Source";
+        threeQuartersKey = "Resolution.MainOutput.ThreeQuarters";
+        halfKey = "Resolution.MainOutput.Half";
+        quarterKey = "Resolution.MainOutput.Quarter";
+    }
+    obs_property_list_add_string(resolutionList, obs_module_text(sourceKey), "");
     obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Output"), "output");
     obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Canvas"), "canvas");
-    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.ThreeQuarters"), "three_quarters");
-    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Half"), "half");
-    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Quarter"), "quarter");
+    obs_property_list_add_string(resolutionList, obs_module_text(threeQuartersKey), "three_quarters");
+    obs_property_list_add_string(resolutionList, obs_module_text(halfKey), "half");
+    obs_property_list_add_string(resolutionList, obs_module_text(quarterKey), "quarter");
     obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Custom"), "custom");
 
     obs_property_set_modified_callback2(
