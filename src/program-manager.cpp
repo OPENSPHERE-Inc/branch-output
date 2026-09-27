@@ -284,7 +284,7 @@ void BranchOutputProgramManager::addProgram()
     }
     savePrograms();
 
-    obs_frontend_open_source_properties(source);
+    BranchOutputProgram::fromSource(source)->openSettings();
 }
 
 void BranchOutputProgramManager::onFrontendEvent(enum obs_frontend_event event, void *param)

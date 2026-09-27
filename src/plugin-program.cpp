@@ -90,6 +90,8 @@ BranchOutputProgram::BranchOutputProgram(obs_data_t *settings, obs_source_t *sou
     // The crop in recently.json is in the coordinates of a filter's parent source, not the canvas
     initializeSettings(settings, initialCreation, false);
     resetTransientCheckboxes(settings);
+    // For the dialogs opened without openSettings(), such as by obs-websocket
+    applyVideoEncoderDefaults(settings);
 
     // No bindings saved by an earlier version exist to harvest
     hotkeyHarvestPending = false;
@@ -255,6 +257,9 @@ void BranchOutputProgram::openSettings()
     // Reset to defaults in the dialog drops the keys pinned by pinOutputLineup()
     OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
     pinOutputLineup(settings);
+    // The dialog detects unsaved changes by comparing JSON in key order, and a default added to
+    // a key with a user value moves the key to the end: add the encoder defaults before it opens.
+    applyVideoEncoderDefaults(settings);
 
     obs_frontend_open_source_properties(contextSource);
 }

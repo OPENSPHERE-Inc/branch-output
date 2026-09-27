@@ -70,7 +70,6 @@ class BranchOutputProgram : public BranchOutput {
         obs_hotkey_active_func func0, obs_hotkey_active_func func1
     ) override;
 
-    void openSettings() override;
     void updateCallback(obs_data_t *settings) override;
 
     void videoTickCallback(float seconds);
@@ -95,6 +94,7 @@ public:
     void attach();                   // UI thread. Idempotent.
     void detach();                   // UI thread. Idempotent.
     void setSuspended(bool suspend); // UI thread.
+    void openSettings() override;    // UI thread.
 
     // Caller holds a strong reference to source. Null when source is not a main output.
     static BranchOutputProgram *fromSource(obs_source_t *source);
