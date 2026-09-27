@@ -42,8 +42,7 @@ static const char *const nonPropertyKeys[] = {
 
 static QJsonObject toComparableJson(obs_data_t *settings)
 {
-    OBSDataAutoRelease copy = obs_data_create();
-    obs_data_apply(copy, settings);
+    OBSDataAutoRelease copy = duplicateSettings(settings);
 
     for (auto key : nonPropertyKeys) {
         obs_data_erase(copy, key);
@@ -53,16 +52,13 @@ static QJsonObject toComparableJson(obs_data_t *settings)
         obs_data_erase(copy, qUtf8Printable(key));
     }
 
-    const char *switchKeys[] = {"streaming_enabled", "stream_recording", "replay_buffer"};
-    for (auto key : switchKeys) {
-        obs_data_set_bool(copy, key, obs_data_get_bool(settings, key));
-    }
+    BranchOutput::pinOutputLineup(copy);
 
     auto json = obs_data_get_json(copy);
     return QJsonDocument::fromJson(QByteArray(json ? json : "{}")).object();
 }
 
-// Compares the user values of a and b (the output type switches by their effective value),
+// Compares the user values of a and b (the keys of pinOutputLineup() by their effective value),
 // ignoring the non-property keys and the key order.
 static bool settingsEquivalent(obs_data_t *a, obs_data_t *b)
 {
@@ -160,9 +156,6 @@ void BranchOutputProgram::getSourceResolution(uint32_t &outWidth, uint32_t &outH
         outWidth = 0;
         outHeight = 0;
     }
-    // Round down to a multiple of 2: the main texture has no pixels beyond the canvas
-    outWidth &= ~1u;
-    outHeight &= ~1u;
 }
 
 void BranchOutputProgram::selectVideoInputMode(obs_data_t *) {}
@@ -259,9 +252,9 @@ obs_hotkey_pair_id BranchOutputProgram::registerHotkeyPair(
 
 void BranchOutputProgram::openSettings()
 {
-    // Reset to defaults in the dialog drops the pinned switches
+    // Reset to defaults in the dialog drops the keys pinned by pinOutputLineup()
     OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
-    pinOutputTypeSwitches(settings);
+    pinOutputLineup(settings);
 
     obs_frontend_open_source_properties(contextSource);
 }
