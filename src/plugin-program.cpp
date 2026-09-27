@@ -53,14 +53,29 @@ static QJsonObject toComparableJson(obs_data_t *settings)
         obs_data_erase(copy, qUtf8Printable(key));
     }
 
+    const char *switchKeys[] = {"streaming_enabled", "stream_recording", "replay_buffer"};
+    for (auto key : switchKeys) {
+        obs_data_set_bool(copy, key, obs_data_get_bool(settings, key));
+    }
+
     auto json = obs_data_get_json(copy);
     return QJsonDocument::fromJson(QByteArray(json ? json : "{}")).object();
 }
 
-// Compares the user values of a and b, ignoring the non-property keys and the key order.
+// Compares the user values of a and b (the output type switches by their effective value),
+// ignoring the non-property keys and the key order.
 static bool settingsEquivalent(obs_data_t *a, obs_data_t *b)
 {
     return toComparableJson(a) == toComparableJson(b);
+}
+
+// The properties dialog reports unsaved changes against the settings at open, so these keys are
+// kept as false user values while no dialog is open.
+static void resetTransientCheckboxes(obs_data_t *settings)
+{
+    obs_data_set_bool(settings, "preview_crop_rect_rel", false);
+    obs_data_set_bool(settings, "preview_crop_rect_abs", false);
+    obs_data_set_bool(settings, "replay_buffer_estimate", false);
 }
 
 //--- BranchOutputProgram class ---//
@@ -73,10 +88,12 @@ BranchOutputProgram::BranchOutputProgram(obs_data_t *settings, obs_source_t *sou
       openProperties(0)
 {
     obs_log(LOG_DEBUG, "%s: BranchOutputProgram creating", qUtf8Printable(name));
-    // obs_data_get_last_json() below reads the buffer that this obs_data_get_json() call fills.
-    obs_log(LOG_DEBUG, "program_settings_json=%s", obs_data_get_json(settings));
 
-    initializeSettings(settings, !strcmp(obs_data_get_last_json(settings), "{}"));
+    const char *json = obs_data_get_json(settings);
+    bool initialCreation = json && !strcmp(json, "{}");
+    // The crop in recently.json is in the coordinates of a filter's parent source, not the canvas
+    initializeSettings(settings, initialCreation, false);
+    resetTransientCheckboxes(settings);
 
     // No bindings saved by an earlier version exist to harvest
     hotkeyHarvestPending = false;
@@ -143,9 +160,9 @@ void BranchOutputProgram::getSourceResolution(uint32_t &outWidth, uint32_t &outH
         outWidth = 0;
         outHeight = 0;
     }
-    // Round up to a multiple of 2
-    outWidth += (outWidth & 1);
-    outHeight += (outHeight & 1);
+    // Round down to a multiple of 2: the main texture has no pixels beyond the canvas
+    outWidth &= ~1u;
+    outHeight &= ~1u;
 }
 
 void BranchOutputProgram::selectVideoInputMode(obs_data_t *) {}
@@ -242,6 +259,10 @@ obs_hotkey_pair_id BranchOutputProgram::registerHotkeyPair(
 
 void BranchOutputProgram::openSettings()
 {
+    // Reset to defaults in the dialog drops the pinned switches
+    OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
+    pinOutputTypeSwitches(settings);
+
     obs_frontend_open_source_properties(contextSource);
 }
 
@@ -319,9 +340,7 @@ obs_properties_t *BranchOutputProgram::getProperties()
 
     // Ensure transient checkboxes start unchecked
     OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
-    obs_data_set_bool(settings, "preview_crop_rect_rel", false);
-    obs_data_set_bool(settings, "preview_crop_rect_abs", false);
-    obs_data_set_bool(settings, "replay_buffer_estimate", false);
+    resetTransientCheckboxes(settings);
 
     obs_properties_set_param(props, toCallbackData(), [](void *param) {
         auto program = fromProgramCallbackData(param);
@@ -345,7 +364,8 @@ obs_properties_t *BranchOutputProgram::getProperties()
 
 // The standard properties dialog restores the live settings on Cancel without calling update, so
 // they can differ from the applied snapshot after an in-dialog Apply. Once the last properties
-// object is gone the live settings are final: apply them if they differ.
+// object is gone the live settings are final: apply them if they differ, and persist them anyway
+// because a save made while the dialog was open may have written unapplied edits.
 void BranchOutputProgram::onPropertiesDestroyed()
 {
     // Reloading the properties creates the new object before destroying the old one.
@@ -359,7 +379,9 @@ void BranchOutputProgram::onPropertiesDestroyed()
     }
 
     OBSDataAutoRelease live = obs_source_get_settings(source);
+    resetTransientCheckboxes(live);
     updateCallback(live);
+    emit persistRequested();
 }
 
 void BranchOutputProgram::attach()

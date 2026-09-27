@@ -60,7 +60,7 @@ QString BranchOutputProgramManager::programsJsonPath()
         return QString();
     }
 
-    return QString("%1/%2").arg(QString(profilePath)).arg(PROGRAMS_JSON_NAME);
+    return QString(profilePath) + "/" PROGRAMS_JSON_NAME;
 }
 
 BranchOutputProgramManager::ReadResult BranchOutputProgramManager::readProgramsFile(OBSDataArrayAutoRelease &outputs
@@ -197,6 +197,8 @@ void BranchOutputProgramManager::onProfileChanged()
 
 void BranchOutputProgramManager::releasePrograms(bool drain)
 {
+    // FIXME: An open properties dialog keeps its source alive: edits there are lost, and reloading
+    // the profile reassigns the UUID. Close the dialogs first, handling a canceled save prompt.
     for (const auto &source : std::as_const(programs)) {
         if (auto *program = BranchOutputProgram::fromSource(source)) {
             program->detach();
@@ -247,12 +249,20 @@ QString BranchOutputProgramManager::nextDefaultName() const
         names.insert(QString::fromUtf8(obs_source_get_name(source)));
     }
 
-    int number = 1;
-    while (names.contains(QTStr("MainOutput.DefaultName").arg(number))) {
-        number++;
+    auto format = QTStr("MainOutput.DefaultName");
+    if (!format.contains(QStringLiteral("%1"))) {
+        format = QTStr("MainOutput") + " %1";
     }
 
-    return QTStr("MainOutput.DefaultName").arg(number);
+    auto count = static_cast<int>(programs.size());
+    for (int number = 1; number <= count; number++) {
+        auto name = format.arg(number);
+        if (!names.contains(name)) {
+            return name;
+        }
+    }
+
+    return format.arg(count + 1);
 }
 
 void BranchOutputProgramManager::addProgram()
