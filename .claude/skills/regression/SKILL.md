@@ -14,7 +14,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 - A subset of the target versions (default all three).
 - The plugin build under test: a folder in install layout (`obs-plugins/64bit/osi-branch-output.dll`, `data/obs-plugins/osi-branch-output/`). When omitted, build the current checkout with `build.ps1` and use `release/Package`.
 - Case IDs to run (default all).
-- An existing report to resume: reuse the work folder and the build recorded in the report, and run only the cells that have no result. When the work folder is gone, redo Step 1 at the recorded work folder path with the OBS releases recorded in the report, without creating a new report, and before a case that relies on an earlier case's setup (R14 on R13's hotkey assignments), redo that setup.
+- An existing report to resume: reuse the work folder and the build recorded in the report, and run only the cells that have no result. Before running them, request computer-use access as in Step 1.4 for each version that has cells left. When the work folder is gone, redo Step 1 at the recorded work folder path with the OBS releases recorded in the report, without creating a new report, and before a case that relies on an earlier case's setup (R14 on R13's hotkey assignments), redo that setup.
 
 ## Layout
 
@@ -44,7 +44,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 - GitHub releases: `gh` against `obsproject/obs-studio` (release list, asset names and digests, download).
 - GUI: computer use.
   - Required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button), the "Branch Output Status" dock, Settings → Hotkeys, Tools → Scripts, hotkey presses, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
-  - Access is granted per executable path: request access to `obs64.exe` while the instance of each version runs.
+  - Access is granted per executable path and requested while that instance runs.
   - Take a fresh screenshot before each click in the filter properties: the dialog re-lays out when a setting changes (notably on 31.1), and earlier coordinates can hit another control.
   - Widen the dock's Status column (Split / Pause / Unpause / Add chapter / Save) and last column (Reset) before clicking a row's buttons: at the default widths clicks miss them.
   - Avoid typing: typed text passes through the IME and can be altered, and the file dialog's folder field rejects typing. Set names through obs-websocket, and paths in the config files under `<root>/config/obs-studio/` while OBS is closed.
@@ -61,7 +61,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 1. Set `{YYYYMMDD-HHmmss}` and create `<work>`. When `%APPDATA%\obs-studio` exists, back it up to `<work>/appdata-obs-studio/`, leaving out the browser cache `plugin_config/obs-browser/`.
 2. For each target version, pick the release (newest non-prerelease 32.2.x, newest non-prerelease 31.1.x, 30.1.2) and download its Windows x64 zip into `<work>`, not the installer or the PDBs: `OBS-Studio-{version}-Windows-x64.zip`, or `OBS-Studio-{version}.zip` on 30.1.2. When the release lists a SHA-256 digest for the asset, verify the download against it. Extract it to `<work>/obs-{version}/`.
 3. Obtain the build under test and deploy it to every instance: put `osi-branch-output.dll` and `.pdb` in `<root>/obs-plugins/64bit/`, and the `data/obs-plugins/osi-branch-output/` folder in `<root>/data/obs-plugins/`. Record the DLL's SHA-256.
-4. Launch each instance once and read `{plugin-version}` from `[osi-branch-output] Plugin loaded successfully (version {plugin-version})`. If the plugin does not load, or the version is not that of the build under test, stop and report to the user. After quitting, set `MaxLogs` under `[General]` in `<root>/config/obs-studio/global.ini` to 100: OBS deletes the oldest logs beyond it (default 10).
+4. Launch each instance once. While it runs, request computer-use access to its `obs64.exe`, so that the rest of the run needs no user approval. Read `{plugin-version}` from `[osi-branch-output] Plugin loaded successfully (version {plugin-version})`. If the plugin does not load, or the version is not that of the build under test, stop and report to the user. After quitting, set `MaxLogs` under `[General]` in `<root>/config/obs-studio/global.ini` to 100: OBS deletes the oldest logs beyond it (default 10).
 5. Create the report at `.claude/tmp/regression-report/{plugin-version}-{YYYYMMDD-HHmmss}/report.md` from the template `.claude/skills/regression/templates/report.md` (read it to learn the report skeleton), filling in the work folder, the build, and the OBS downloads. Keep evidence files (ffprobe output, log excerpts) in the same folder. Write the report in the language the user converses in.
 6. Build the fixture described in `cases.md` on each instance.
 
