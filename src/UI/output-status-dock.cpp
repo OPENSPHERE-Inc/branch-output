@@ -158,6 +158,12 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     }
 
     // Tool buttons
+    addMainOutputButton = new QPushButton(QTStr("AddMainOutput"), this);
+    addMainOutputButton->setToolTip(QTStr("AddMainOutput"));
+    addMainOutputButton->setProperty("toolButton", true);  // Until OBS 30
+    addMainOutputButton->setProperty("class", "btn-tool"); // Since OBS 31
+    connect(addMainOutputButton, &QPushButton::clicked, this, &BranchOutputStatusDock::addMainOutputRequested);
+
     applyToAllLabel = new QLabel(QTStr("ApplyToAll"), this);
 
     enableAllButton = new QToolButton(this);
@@ -217,6 +223,8 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     });
 
     auto buttonsContainerLayout = new QHBoxLayout();
+    buttonsContainerLayout->addWidget(addMainOutputButton);
+    buttonsContainerLayout->addSpacing(10);
     buttonsContainerLayout->addWidget(applyToAllLabel);
     buttonsContainerLayout->addSpacing(5);
     buttonsContainerLayout->addWidget(enableAllButton);

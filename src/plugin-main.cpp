@@ -33,13 +33,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "audio/audio-capture.hpp"
 #include "video/filter-video-capture.hpp"
+#include "video/main-texture-proxy.hpp"
 #include "plugin-support.h"
 #include "plugin-main.hpp"
+#include "plugin-program.hpp"
+#include "program-manager.hpp"
 #include "utils.hpp"
 
 #define FILTER_ID "osi_branch_output"
 #define AVAILAVILITY_CHECK_INTERVAL_NS 1000000000ULL
-#define TASK_INTERVAL_MS 1000
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -107,68 +109,8 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     // obs_data_get_last_json() below reads the buffer that this obs_data_get_json() call fills.
     obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
 
-    if (!strcmp(obs_data_get_last_json(settings), "{}")) {
-        // Maybe initial creation
-        loadProfile(settings);
-        loadRecently(settings);
-
-        // Assit initial settings
-        obs_data_set_bool(settings, "use_profile_recording_path", true);
-    }
-
-    hotkeyBindingsCache = obs_data_create();
-    OBSDataAutoRelease savedHotkeyBindings = obs_data_get_obj(settings, HOTKEY_BINDINGS_KEY);
-    if (savedHotkeyBindings) {
-        obs_data_apply(hotkeyBindingsCache, savedHotkeyBindings);
-    }
-    hotkeyHarvestPending = !obs_data_has_user_value(settings, HOTKEY_BINDINGS_KEY);
-
-    // Migrate audio_source schema
-    auto audioSource = obs_data_get_string(settings, "audio_source");
-    if (!strncmp(audioSource, "master_track_", strlen("master_track_"))) {
-        // Separate out track number
-        size_t trackNo = 0;
-        sscanf(audioSource, "master_track_%zu", &trackNo);
-
-        obs_data_set_string(settings, "audio_source", "master_track");
-        obs_data_set_int(settings, "audio_track", trackNo);
-    }
-
-    // Migrate streaming_enabled (for pre-existing filters without this key)
-    if (!obs_data_has_user_value(settings, "streaming_enabled")) {
-        bool hasAnyServer = countEnabledStreamings(settings) > 0;
-        obs_data_set_bool(settings, "streaming_enabled", hasAnyServer);
-    }
-
-    // FIXME: obs_save_source() / obs_source_duplicate() persist the live settings, so edits never
-    // applied in the properties dialog arrive here and get published as applied. Store the
-    // snapshot under a dedicated settings key in AppliedSettings::replace() and prefer it here; the
-    // live object is shared with the properties view, so saveCallback() must not rewrite its keys.
-    appliedSettings.replace(settings);
-
-    // Fiter activate immediately when "server" or "stream_recording" or "replay_buffer" is exists.
-    initialized = isStreamingGroupEnabled(settings) || obs_data_get_bool(settings, "stream_recording") ||
-                  obs_data_get_bool(settings, "replay_buffer");
-
-    // Register proc handlers for external script access. These handlers
-    // live on contextSource and die with it. A well-behaved script acquires a
-    // strong ref via obs_get_source_by_uuid() before calling; the weak-ref CAS
-    // refuses to bump a count of 0, so the filter cannot be destroyed mid-call.
-    // A misbehaving script that caches a proc_handler_t * past source release
-    // and calls it without holding the strong ref triggers a UAF that the
-    // plugin cannot prevent — that is a script-side bug.
-    //
-    // FIXME: libobs has no proc_handler_remove(). If it gains one, pair
-    // unregistration with ~BranchOutputFilter().
-    proc_handler_t *ph = obs_source_get_proc_handler(contextSource);
-    proc_handler_add(
-        ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat,
-        toCallbackData()
-    );
-    proc_handler_add(
-        ph, "void override_recording_filename_format(in string format)", onOverrideRecordingFilenameFormat,
-        toCallbackData()
-    );
+    bool initialCreation = !strcmp(obs_data_get_last_json(settings), "{}");
+    initializeSettings(settings, initialCreation);
 
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
 }
@@ -433,6 +375,11 @@ BranchOutput::BlankingState BranchOutputFilter::getBlankingState() const
         return BLANKING_STATE_VIDEO_AND_AUDIO;
     }
     return BLANKING_STATE_VIDEO;
+}
+
+bool BranchOutputFilter::hasFilterPipeline() const
+{
+    return true;
 }
 
 void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHeight)
@@ -724,6 +671,11 @@ obs_source_info BranchOutputFilter::createFilterInfo()
 
 obs_source_info filterInfo;
 obs_source_info proxySourceInfo;
+obs_source_info programInfo;
+obs_source_info programProxyInfo;
+
+// Touched only on the UI thread.
+static BranchOutputProgramManager *programManager = nullptr;
 
 bool obs_module_load()
 {
@@ -732,6 +684,12 @@ bool obs_module_load()
 
     proxySourceInfo = FilterVideoCapture::createProxySourceInfo();
     obs_register_source(&proxySourceInfo);
+
+    programInfo = BranchOutputProgram::createProgramInfo();
+    obs_register_source(&programInfo);
+
+    programProxyInfo = createMainTextureProxySourceInfo();
+    obs_register_source(&programProxyInfo);
 
     pthread_mutex_init_recursive(&pluginMutex);
 
@@ -786,6 +744,7 @@ void obs_module_post_load()
     // Must precede the dock creation: the dock constructor can already query the table's interface.
     OutputStatusTable::installAccessibilityFactory();
     statusDock.store(BranchOutputFilter::createOutputStatusDock());
+    programManager = new BranchOutputProgramManager(statusDock.load());
 
     // Register global proc handler for script access (obs-websocket style).
     // data=nullptr: onGetFilterList reads the filter-list snapshot directly.
@@ -803,6 +762,9 @@ void obs_module_unload()
     // Publish the unload flag before tearing down module state so onGetFilterList
     // (which outlives the module via the global proc handler) early-returns.
     moduleUnloading.store(true, std::memory_order_release);
+
+    delete programManager;
+    programManager = nullptr;
 
     // Release the snapshot before destroying the dock so no dangling
     // references to FilterInfo objects remain once the dock rows are freed.

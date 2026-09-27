@@ -87,6 +87,72 @@ BranchOutput::~BranchOutput()
     pthread_mutex_destroy(&audioMutex);
 }
 
+void BranchOutput::initializeSettings(obs_data_t *settings, bool initialCreation)
+{
+    if (initialCreation) {
+        // Maybe initial creation
+        loadProfile(settings);
+        loadRecently(settings);
+
+        // Assit initial settings
+        obs_data_set_bool(settings, "use_profile_recording_path", true);
+    }
+
+    hotkeyBindingsCache = obs_data_create();
+    OBSDataAutoRelease savedHotkeyBindings = obs_data_get_obj(settings, HOTKEY_BINDINGS_KEY);
+    if (savedHotkeyBindings) {
+        obs_data_apply(hotkeyBindingsCache, savedHotkeyBindings);
+    }
+    hotkeyHarvestPending = !obs_data_has_user_value(settings, HOTKEY_BINDINGS_KEY);
+
+    // Migrate audio_source schema
+    auto audioSource = obs_data_get_string(settings, "audio_source");
+    if (!strncmp(audioSource, "master_track_", strlen("master_track_"))) {
+        // Separate out track number
+        size_t trackNo = 0;
+        sscanf(audioSource, "master_track_%zu", &trackNo);
+
+        obs_data_set_string(settings, "audio_source", "master_track");
+        obs_data_set_int(settings, "audio_track", trackNo);
+    }
+
+    // Migrate streaming_enabled (for pre-existing filters without this key)
+    if (!obs_data_has_user_value(settings, "streaming_enabled")) {
+        bool hasAnyServer = countEnabledStreamings(settings) > 0;
+        obs_data_set_bool(settings, "streaming_enabled", hasAnyServer);
+    }
+
+    // FIXME: obs_save_source() / obs_source_duplicate() persist the live settings, so edits never
+    // applied in the properties dialog arrive here and get published as applied. Store the
+    // snapshot under a dedicated settings key in AppliedSettings::replace() and prefer it here; the
+    // live object is shared with the properties view, so saveCallback() must not rewrite its keys.
+    appliedSettings.replace(settings);
+
+    // Fiter activate immediately when "server" or "stream_recording" or "replay_buffer" is exists.
+    initialized = isStreamingGroupEnabled(settings) || obs_data_get_bool(settings, "stream_recording") ||
+                  obs_data_get_bool(settings, "replay_buffer");
+
+    // Register proc handlers for external script access. These handlers
+    // live on contextSource and die with it. A well-behaved script acquires a
+    // strong ref via obs_get_source_by_uuid() before calling; the weak-ref CAS
+    // refuses to bump a count of 0, so the filter cannot be destroyed mid-call.
+    // A misbehaving script that caches a proc_handler_t * past source release
+    // and calls it without holding the strong ref triggers a UAF that the
+    // plugin cannot prevent — that is a script-side bug.
+    //
+    // FIXME: libobs has no proc_handler_remove(). If it gains one, pair
+    // unregistration with ~BranchOutput().
+    proc_handler_t *ph = obs_source_get_proc_handler(contextSource);
+    proc_handler_add(
+        ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat,
+        toCallbackData()
+    );
+    proc_handler_add(
+        ph, "void override_recording_filename_format(in string format)", onOverrideRecordingFilenameFormat,
+        toCallbackData()
+    );
+}
+
 BranchOutput::AppliedSettings::AppliedSettings()
 {
     pthread_mutex_init_recursive(&mutex);
@@ -126,6 +192,8 @@ OBSDataAutoRelease BranchOutput::AppliedSettings::get()
 // so that the next call can retry from a clean state.
 bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
 {
+    // FIXME: obs_reset_video() is allowed while no encoder of this view is active (an output still
+    // connecting or retrying), and it frees the view's mix. Detect it with obs_view_get_video_info().
     if (infrastructureReady) {
         return true;
     }
@@ -146,8 +214,8 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
         return false;
     }
 
-    bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
-    bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
+    bool blankWhenHidden = hasFilterPipeline() && obs_data_get_bool(settings, "blank_when_not_visible");
+    bool muteWhenHidden = hasFilterPipeline() && obs_data_get_bool(settings, "mute_audio_when_blank");
 
     obs_video_info ovi = {0};
     if (!obs_get_video_info(&ovi)) {
@@ -275,6 +343,14 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
                 }
 
             } else if (!strcmp(audioSourceUuid, "filter")) {
+                if (!hasFilterPipeline()) {
+                    // Non-stopping error
+                    obs_log(
+                        LOG_WARNING, "%s: Ignore filter audio for track %d (%s)", qUtf8Printable(name), track, audioDest
+                    );
+                    continue;
+                }
+
                 // Filter pipline's audio
                 obs_log(LOG_INFO, "%s: Use filter audio for track %d (%s)", qUtf8Printable(name), track, audioDest);
 

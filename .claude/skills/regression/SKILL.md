@@ -14,7 +14,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 - A subset of the target versions (default all three).
 - The plugin build under test: a folder in install layout (`obs-plugins/64bit/osi-branch-output.dll`, `data/obs-plugins/osi-branch-output/`). When omitted, build the current checkout with `build.ps1` and use `release/Package`.
 - Case IDs to run (default all).
-- An existing report to resume: reuse the work folder and the build recorded in the report, and run only the cells that have no result. Before running them, request computer-use access as in Step 1.4 for each version that has cells left. When the work folder is gone, redo Step 1 at the recorded work folder path with the OBS releases recorded in the report, without creating a new report, and before a case that relies on an earlier case's setup (R14 on R13's hotkey assignments), redo that setup.
+- An existing report to resume: reuse the work folder and the build recorded in the report, and run only the cells that have no result. Before running them, request computer-use access as in Step 1.4 for each version that has cells left. When the work folder is gone, redo Step 1 at the recorded work folder path with the OBS releases recorded in the report, without creating a new report, and before a case that relies on an earlier case's setup (R14 on R13's hotkey assignments, the M cases on M01's main output), redo that setup.
 
 ## Layout
 
@@ -43,9 +43,9 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 - GitHub releases: `gh` against `obsproject/obs-studio` (release list, asset names and digests, download).
 - GUI: computer use.
-  - Required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button), the "Branch Output Status" dock, Settings → Hotkeys, Tools → Scripts, hotkey presses, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
+  - Required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button), a main output's properties dialog where a case checks it, the "Branch Output Status" dock (including its "Add Main Output" button), Settings → Hotkeys, Tools → Scripts, hotkey presses, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
   - Access is granted per executable path and requested while that instance runs.
-  - Take a fresh screenshot before each click in the filter properties: the dialog re-lays out when a setting changes (notably on 31.1), and earlier coordinates can hit another control.
+  - Take a fresh screenshot before each click in the filter properties and in a main output's properties dialog: the dialog re-lays out when a setting changes (notably on 31.1), and earlier coordinates can hit another control.
   - Widen the dock's Status column (Split / Pause / Unpause / Add chapter / Save) and last column (Reset) before clicking a row's buttons: at the default widths clicks miss them.
   - Avoid typing: typed text passes through the IME and can be altered, and the file dialog's folder field rejects typing. Set names through obs-websocket, and paths in the config files under `<root>/config/obs-studio/` while OBS is closed.
 - obs-websocket: when a client is available, allowed for any other change or observation it supports (for example main streaming / recording / replay buffer / virtual camera, scene switching, Studio Mode, source and filter settings, `GetSourceActive`, `GetHotkeyList`).
@@ -67,7 +67,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 ## Step 2 — Run the cases
 
-- Run 32.2 first, then 31.1, then 30.1.2, each with the selected cases in its scope (`cases.md`); mark cells out of scope or not selected N/A.
+- Run 32.2 first, then 31.1, then 30.1.2, each with the selected cases in its scope, in the order of `cases.md` (R01–R19, then M01–M10); mark cells out of scope or not selected N/A.
 - Write each result into the report as soon as its case finishes.
 - Result values: PASS, FAIL, SKIP (a prerequisite is missing on this machine; give the reason), BLOCKED (an earlier failure prevents the case; name it), N/A.
 - When a missing prerequisite rules out only some items of a case, judge the case on the remaining items, and list the skipped items in the Notes column and under "Not covered".

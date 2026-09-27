@@ -30,9 +30,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
+#include "video/crop-rect-preview-renderer.hpp"
 #include "utils.hpp"
 
 #define MAX_SERVICES 8
+#define TASK_INTERVAL_MS 1000
 #define HOTKEY_BINDINGS_KEY "hotkey_bindings"
 #define RECENTLY_SETTINGS_JSON_NAME "recently.json"
 
@@ -121,7 +123,7 @@ protected:
     };
 
     QString name;
-    bool initialized; // Activate after first "Apply" click
+    std::atomic<bool> initialized; // Activate after first "Apply" click
     AppliedSettings appliedSettings;
     // Snapshot the current infrastructure was built from; guarded by outputMutex. The strong
     // reference keeps its address from being reused, which the pointer comparison against
@@ -154,6 +156,7 @@ protected:
     bool videoOutputOwned;
     uint32_t width;
     uint32_t height;
+    CropRectPreviewRenderer cropPreview;
 
     // Audio context
     // Lock ordering: always acquire in order pluginMutex -> outputMutex -> audioMutex ->
@@ -248,6 +251,8 @@ protected:
     virtual bool setupDefaultAudio(const obs_audio_info &ai) = 0;
     virtual bool evaluateBlanking(obs_data_t *settings) = 0;
     virtual BlankingState getBlankingState() const = 0;
+    // True when the input passes through a source's filter chain (filter audio, filter input, blanking)
+    virtual bool hasFilterPipeline() const = 0;
 
     // Hotkey synchronization. After construction, every libobs hotkey call and every access to
     // hotkeyBindingsCache happens inside an obs_hotkey_update_atomic() callback.
@@ -362,6 +367,7 @@ protected:
     void addAudioEncoderGroup(obs_properties_t *props);
     void addAdvancedSettingsGroup(obs_properties_t *props);
     void addReplayBufferGroup(obs_properties_t *props);
+    void addVideoEncoderGroup(obs_properties_t *props);
 
     // Callbacks from obs core
     static bool onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
@@ -394,6 +400,8 @@ protected:
     static void getDefaults(obs_data_t *settings);
 
     explicit BranchOutput(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
+    // Completes construction from the settings handed to info.create. Calls no virtual hook.
+    void initializeSettings(obs_data_t *settings, bool initialCreation);
 
 signals:
     void outputUserEnabledChanged();

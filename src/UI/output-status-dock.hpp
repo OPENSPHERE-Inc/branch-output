@@ -241,6 +241,7 @@ class BranchOutputStatusDock : public QFrame {
     // Same-thread calls (e.g. removeOutput from the update() timer slot) also
     // exist and are intentional.
     QList<OutputTableRow *> outputTableRows;
+    QPushButton *addMainOutputButton = nullptr;
     QLabel *applyToAllLabel = nullptr;
     QToolButton *enableAllButton = nullptr;
     QToolButton *disableAllButton = nullptr;
@@ -292,6 +293,9 @@ class BranchOutputStatusDock : public QFrame {
     static void onUnpauseRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onAddChapterToRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onSaveReplayBufferAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
+
+signals:
+    void addMainOutputRequested();
 
 private slots:
     void onHeaderPressed(int index);
