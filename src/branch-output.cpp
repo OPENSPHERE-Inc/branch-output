@@ -192,8 +192,8 @@ OBSDataAutoRelease BranchOutput::AppliedSettings::get()
 // so that the next call can retry from a clean state.
 bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
 {
-    // FIXME: obs_reset_video() is allowed while no encoder of this view is active (an output still
-    // connecting or retrying), and it frees the view's mix. Detect it with obs_view_get_video_info().
+    // FIXME: obs_reset_video() frees the view's mix while no encoder of this view is connected (an
+    // output still connecting or reconnecting), leaving videoOutput and the encoder dangling (issue #216).
     if (infrastructureReady) {
         return true;
     }
