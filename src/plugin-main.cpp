@@ -106,11 +106,10 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
 {
     // DO NOT use obs_filter_get_parent() in this function (It'll return nullptr)
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", qUtf8Printable(name));
-    // obs_data_get_last_json() below reads the buffer that this obs_data_get_json() call fills.
-    obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
 
-    bool initialCreation = !strcmp(obs_data_get_last_json(settings), "{}");
-    initializeSettings(settings, initialCreation);
+    const char *json = obs_data_get_json(settings);
+    bool initialCreation = json && !strcmp(json, "{}");
+    initializeSettings(settings, initialCreation, true);
 
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
 }

@@ -87,12 +87,12 @@ BranchOutput::~BranchOutput()
     pthread_mutex_destroy(&audioMutex);
 }
 
-void BranchOutput::initializeSettings(obs_data_t *settings, bool initialCreation)
+void BranchOutput::initializeSettings(obs_data_t *settings, bool initialCreation, bool inheritRecentCrop)
 {
     if (initialCreation) {
         // Maybe initial creation
         loadProfile(settings);
-        loadRecently(settings);
+        loadRecently(settings, inheritRecentCrop);
 
         // Assit initial settings
         obs_data_set_bool(settings, "use_profile_recording_path", true);
@@ -121,6 +121,7 @@ void BranchOutput::initializeSettings(obs_data_t *settings, bool initialCreation
         bool hasAnyServer = countEnabledStreamings(settings) > 0;
         obs_data_set_bool(settings, "streaming_enabled", hasAnyServer);
     }
+    pinOutputTypeSwitches(settings);
 
     // FIXME: obs_save_source() / obs_source_duplicate() persist the live settings, so edits never
     // applied in the properties dialog arrive here and get published as applied. Store the
@@ -151,6 +152,18 @@ void BranchOutput::initializeSettings(obs_data_t *settings, bool initialCreation
         ph, "void override_recording_filename_format(in string format)", onOverrideRecordingFilenameFormat,
         toCallbackData()
     );
+}
+
+// Discard in the properties dialog restores only the keys that had a user value when it opened, so
+// the output type switches keep their current value as a user value.
+void BranchOutput::pinOutputTypeSwitches(obs_data_t *settings)
+{
+    const char *switchKeys[] = {"streaming_enabled", "stream_recording", "replay_buffer"};
+    for (auto key : switchKeys) {
+        if (!obs_data_has_user_value(settings, key)) {
+            obs_data_set_bool(settings, key, obs_data_get_bool(settings, key));
+        }
+    }
 }
 
 BranchOutput::AppliedSettings::AppliedSettings()
@@ -580,7 +593,7 @@ void BranchOutput::loadProfile(obs_data_t *settings)
     obs_log(LOG_INFO, "Profile settings loaded");
 }
 
-void BranchOutput::loadRecently(obs_data_t *settings)
+void BranchOutput::loadRecently(obs_data_t *settings, bool inheritCrop)
 {
     obs_log(LOG_DEBUG, "Recently settings loading");
     OBSString path = obs_module_get_config_path(obs_current_module(), RECENTLY_SETTINGS_JSON_NAME);
@@ -614,6 +627,17 @@ void BranchOutput::loadRecently(obs_data_t *settings)
         obs_data_erase(recently_settings, "custom_height");
         obs_data_erase(recently_settings, "downscale_filter");
         obs_data_erase(recently_settings, "fps_divider");
+        if (!inheritCrop) {
+            obs_data_erase(recently_settings, "crop_type");
+            obs_data_erase(recently_settings, "crop_rel_top");
+            obs_data_erase(recently_settings, "crop_rel_right");
+            obs_data_erase(recently_settings, "crop_rel_bottom");
+            obs_data_erase(recently_settings, "crop_rel_left");
+            obs_data_erase(recently_settings, "crop_abs_x");
+            obs_data_erase(recently_settings, "crop_abs_y");
+            obs_data_erase(recently_settings, "crop_abs_width");
+            obs_data_erase(recently_settings, "crop_abs_height");
+        }
         // Hotkey bindings are keyed by the owning filter's UUID and must not be inherited.
         obs_data_erase(recently_settings, HOTKEY_BINDINGS_KEY);
         obs_data_apply(settings, recently_settings);

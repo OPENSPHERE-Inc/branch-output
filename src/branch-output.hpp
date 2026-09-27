@@ -232,7 +232,7 @@ protected:
     virtual void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight) = 0;
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop);
     void loadProfile(obs_data_t *settings);
-    void loadRecently(obs_data_t *settings);
+    void loadRecently(obs_data_t *settings, bool inheritCrop);
     void restartOutput(int interlockType);
     void stopOutputGracefully();
 
@@ -401,7 +401,8 @@ protected:
 
     explicit BranchOutput(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
     // Completes construction from the settings handed to info.create. Calls no virtual hook.
-    void initializeSettings(obs_data_t *settings, bool initialCreation);
+    void initializeSettings(obs_data_t *settings, bool initialCreation, bool inheritRecentCrop);
+    static void pinOutputTypeSwitches(obs_data_t *settings);
 
 signals:
     void outputUserEnabledChanged();
