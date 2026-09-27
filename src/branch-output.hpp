@@ -122,6 +122,8 @@ protected:
         OBSDataAutoRelease get();
     };
 
+    // FIXME: updateHotkeyDescriptions() rewrites this on the renaming thread while the UI, graphics and
+    // script threads read it without a lock. Guard the copy with a leaf lock or an atomic swap (issue #217).
     QString name;
     std::atomic<bool> initialized; // Activate after first "Apply" click
     AppliedSettings appliedSettings;
