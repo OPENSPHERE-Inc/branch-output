@@ -34,4 +34,18 @@ This file provides a brief overview for AI agents. For detailed project document
 4. Code style enforced by `.clang-format` (120 columns, 4-space indent, C++17)
 5. No automated tests — manual testing in OBS Studio required
 
+## Codex Instructions
+
+Read the applicable file under `.codex/instructions/` before starting the corresponding work:
+
+- Code changes: `development.md`, plus `comment.md` when comments are added or modified
+- Human-facing documentation: `document.md`
+- AI-facing prompts and agent definitions: `prompt.md`
+- Code review: `review.md`
+- Commits: `commit.md`
+- CReview sub-agent work: `sub-agent.md`
+
+Project-scoped custom agents are defined under `.codex/agents/`. When delegating, select the narrowest specialist whose
+description matches the task and keep ownership boundaries explicit.
+
 For full details on architecture, coding guidelines, build instructions, CI/CD, and common tasks, refer to **[CLAUDE.md](CLAUDE.md)**.

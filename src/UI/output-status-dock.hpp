@@ -22,6 +22,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-frontend-api.h>
 #include <obs.hpp>
 
+#include <atomic>
+
 #include <QFrame>
 #include <QPointer>
 #include <QList>
@@ -37,8 +39,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 class QTableWidget;
 class QString;
 class QPushButton;
-class BranchOutputFilter;
+class BranchOutput;
 class OutputTableRow;
+
+Q_MOC_INCLUDE("branch-output.hpp")
 
 enum RowOutputType {
     ROW_OUTPUT_NONE = 0,
@@ -115,22 +119,15 @@ public:
 class ParentCell : public LabelCell {
     Q_OBJECT
 
-    OBSSignal parentRenamedSignal;
-    obs_source_t *source;
-
-    static void onParentRenamed(void *data, calldata_t *cd);
-
 protected:
     void mousePressEvent(QMouseEvent *event) override;
 
 signals:
     void renamed(const QString &newName);
+    void clicked();
 
 public:
-    explicit ParentCell(
-        const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent = (QWidget *)nullptr
-    );
-    ~ParentCell();
+    explicit ParentCell(const QString &rowId, const QString &textValue, QWidget *parent = (QWidget *)nullptr);
 
     void setTextValue(const QString &value);
 };
@@ -226,6 +223,10 @@ class BranchOutputStatusDock : public QFrame {
 
     QTimer timer;
     QTableWidget *outputTable = nullptr;
+    // Invariant: touched only from the Qt UI thread; no mutex is needed.
+    // Cross-thread callers use QMetaObject::invokeMethod with QueuedConnection.
+    // Same-thread calls (e.g. removeOutput from the update() timer slot) also
+    // exist and are intentional.
     QList<OutputTableRow *> outputTableRows;
     QLabel *applyToAllLabel = nullptr;
     QToolButton *enableAllButton = nullptr;
@@ -237,6 +238,11 @@ class BranchOutputStatusDock : public QFrame {
     QToolButton *saveReplayBufferAllButton = nullptr;
     QLabel *interlockLabel = nullptr;
     QComboBox *interlockComboBox = nullptr;
+    // QComboBox mirror so getInterlockType() can be called from non-UI threads
+    // (e.g. the BranchOutput interval timer slot, whose thread affinity
+    // follows addCallback's caller). Updated on the UI thread whenever the
+    // combo selection changes or settings are applied.
+    std::atomic<int> interlockTypeAtomic;
     OBSSignal sourceAddedSignal;
     obs_hotkey_id enableAllHotkey;
     obs_hotkey_id disableAllHotkey;
@@ -250,7 +256,9 @@ class BranchOutputStatusDock : public QFrame {
     Qt::SortOrder sortingOrder;
 
     void update();
-    void updateOutputToggles(BranchOutputFilter *filter);
+    void updateOutputToggles(BranchOutput *output);
+    QList<BranchOutputFilterInfo> buildFilterListSnapshot() const;
+    void publishFilterListSnapshot();
     void applyEnableAllButtonEnabled();
     void applyDisableAllButtonEnabled();
     void applySplitRecordingAllButtonEnabled();
@@ -260,6 +268,7 @@ class BranchOutputStatusDock : public QFrame {
     void applySaveReplayBufferAllButtonEnabled();
     void saveSettings();
     void loadSettings();
+    void loadHotkeys();
     void applySettings(obs_data_t *settings);
 
     static void onOBSFrontendEvent(enum obs_frontend_event event, void *param);
@@ -274,6 +283,7 @@ class BranchOutputStatusDock : public QFrame {
 private slots:
     void onHeaderPressed(int index);
     void onOutputUserEnabledChanged();
+    void onOutputDestroyed(QObject *obj);
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
@@ -284,9 +294,9 @@ public:
     ~BranchOutputStatusDock();
 
 public slots:
-    void addRow(BranchOutputFilter *filter, size_t streamingIndex, RowOutputType outputType, size_t groupIndex = 0);
-    void addFilter(BranchOutputFilter *filter);
-    void removeFilter(BranchOutputFilter *filter);
+    void addRow(BranchOutput *output, size_t streamingIndex, RowOutputType outputType, size_t groupIndex = 0);
+    void addOutput(BranchOutput *output);
+    void removeOutput(BranchOutput *output);
     void setEabnleAll(bool enabled);
     void splitRecordingAll();
     void pauseRecordingAll();
@@ -296,8 +306,7 @@ public slots:
     void resetStatsAll();
     void sort();
 
-    inline int getInterlockType() const { return interlockComboBox->currentData().toInt(); };
-    QList<BranchOutputFilterInfo> getFilterList() const;
+    inline int getInterlockType() const { return interlockTypeAtomic.load(std::memory_order_relaxed); };
 };
 
 class OutputTableRow : public QObject {
@@ -305,7 +314,14 @@ class OutputTableRow : public QObject {
 
     friend class BranchOutputStatusDock;
 
-    BranchOutputFilter *filter;
+    // Invariant: while a row is listed in outputTableRows, its output QObject is
+    // alive (addOutput() removes the rows on QObject::destroyed). The output's
+    // context obs_source_t may already be released, so rows keep their own copies
+    // of the identifying data below. Touched only from the Qt UI thread.
+    BranchOutput *branchOutput;
+    BranchOutputFilterInfo filterInfo;
+    bool contextIsFilter = false;
+    OBSWeakSourceAutoRelease contextWeak;
     FilterCell *filterCell;
     ParentCell *parentCell;
     OutputCell *outputName;
@@ -331,13 +347,14 @@ class OutputTableRow : public QObject {
     void pauseRecording();
     void unpauseRecording();
     void addChapterToRecording();
+    void openSettings();
     void updateRowId();
 
     long double kbps = 0.0l;
 
 public:
     explicit OutputTableRow(
-        int row, BranchOutputFilter *filter, size_t streamingIndex, RowOutputType outputType, size_t groupIndex,
+        int row, BranchOutput *branchOutput, size_t streamingIndex, RowOutputType outputType, size_t groupIndex,
         BranchOutputStatusDock *parent = nullptr
     );
     ~OutputTableRow();

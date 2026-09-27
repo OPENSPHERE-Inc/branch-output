@@ -123,7 +123,7 @@ Branch Output はシーンがアクティブでなくとも配信を行います
 
 Branch Output は、外部スクリプトから実行時にストリーム録画およびリプレイバッファ保存のファイル名フォーマットをオーバーライドするための公開プロシージャを備えています。現在のシーンやテキストインプットの値、その他の外部データによってファイル名を動的に変更し、録画ファイルを整理した状態で保存したい場合に有用です。
 
-サンプル Python スクリプト（`recording-filename-from-text.py` および `replay-buffer-filename-from-text.py`）がプラグインに同梱されており、OBS の Tools → Scripts からロードして使用できます。
+サンプルスクリプト（`recording-filename-from-text` および `replay-buffer-filename-from-text`）は、**Python**（`.py`）版と **Lua**（`.lua`）版の両方がプラグインに同梱されており、OBS の Tools → Scripts からロードして使用できます。
 
 プロシージャのシグネチャ、サンプルコード、同梱スクリプトの使用方法については [API リファレンス](./API_ja.md) を参照してください。
 

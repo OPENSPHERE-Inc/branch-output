@@ -24,7 +24,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include <obs.hpp>
 
+#include <atomic>
+#include <memory>
+#include <utility>
+
 #include <QRegularExpression>
+#include <QStringList>
 
 #include "audio/audio-capture.hpp"
 #include "video/filter-video-capture.hpp"
@@ -32,7 +37,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "plugin-main.hpp"
 #include "utils.hpp"
 
-#define SETTINGS_JSON_NAME "recently.json"
 #define FILTER_ID "osi_branch_output"
 #define AVAILAVILITY_CHECK_INTERVAL_NS 1000000000ULL
 #define TASK_INTERVAL_MS 1000
@@ -40,67 +44,68 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-BranchOutputStatusDock *statusDock = nullptr;
+// Atomic so addCallback/updateCallback/removeCallback can safely read the
+// pointer when dispatching QMetaObject::invokeMethod from worker threads.
+//
+// FIXME: A worker that loads the pointer before obs_module_unload() runs
+// statusDock.exchange(nullptr) can still reach QMetaObject::invokeMethod
+// after the dock QObject is destroyed. This also covers workers already
+// inside onGetFilterList that continue calling obs_data_* after the module
+// is unloaded. Needs an in-flight counter or QPointer-based UI-thread
+// marshalling.
+static std::atomic<BranchOutputStatusDock *> statusDock{nullptr};
+
+// Set by obs_module_unload() before module-owned state is torn down. Procs
+// registered via obs_get_proc_handler() outlive the module (libobs has no
+// proc_handler_remove API), so they must early-return when this is true.
+static std::atomic<bool> moduleUnloading{false};
+
+// Filter list snapshot read by onGetFilterList without touching the dock QObject.
+// Mutex guards the shared_ptr swap; the published QList itself is immutable. Statically
+// initialized and never destroyed: the proc handler that reads it outlives obs_module_unload().
+static pthread_mutex_t filterListSnapshotMutex = PTHREAD_MUTEX_INITIALIZER;
+static std::shared_ptr<const QList<BranchOutputFilterInfo>> filterListSnapshot;
+
+static std::shared_ptr<const QList<BranchOutputFilterInfo>> loadFilterListSnapshot()
+{
+    pthread_mutex_lock(&filterListSnapshotMutex);
+    OBSMutexAutoUnlock locked(&filterListSnapshotMutex);
+    return filterListSnapshot;
+}
+
+void publishFilterListSnapshot(QList<BranchOutputFilterInfo> snapshot)
+{
+    auto shared = std::make_shared<const QList<BranchOutputFilterInfo>>(std::move(snapshot));
+    pthread_mutex_lock(&filterListSnapshotMutex);
+    {
+        OBSMutexAutoUnlock locked(&filterListSnapshotMutex);
+        filterListSnapshot = std::move(shared);
+    }
+}
+
+BranchOutputStatusDock *loadStatusDock()
+{
+    return statusDock.load();
+}
+
 pthread_mutex_t pluginMutex;
 
 //--- BranchOutputFilter class ---//
 
 BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent)
-    : QObject(parent),
-      name(obs_source_get_name(source)),
-      filterSource(source),
-      initialized(false),
-      recordingActive(false),
-      recordingPending(false),
-      storedSettingsRev(0),
-      activeSettingsRev(0),
+    : BranchOutput(settings, source, parent),
       intervalTimer(nullptr),
-      outputGracefullyStopping(false),
-      streamingIndividualStopping(false),
       blankingOutputActive(false),
       blankingAudioMuted(false),
-      recordingUserEnabled(obs_data_get_bool(settings, "recording_output_enabled")),
-      replayBufferUserEnabled(obs_data_get_bool(settings, "replay_buffer_output_enabled")),
-      recordingOutput(nullptr),
-      videoEncoder(nullptr),
-      videoOutput(nullptr),
-      view(nullptr),
       useFilterInput(false),
       filterVideoCapture(nullptr),
-      width(0),
-      height(0),
       cropScene(nullptr),
-      toggleEnableHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
-      splitRecordingHotkeyId(OBS_INVALID_HOTKEY_ID),
-      togglePauseRecordingHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
-      addChapterToRecordingHotkeyId(OBS_INVALID_HOTKEY_ID),
-      splitRecordingEnabled(false),
-      recordingSettingsOverridden(false),
-      replayBufferActive(false),
-      saveReplayBufferHotkeyId(OBS_INVALID_HOTKEY_ID),
-      enableAllStreamingHotkeyId(OBS_INVALID_HOTKEY_ID),
-      disableAllStreamingHotkeyId(OBS_INVALID_HOTKEY_ID),
-      toggleRecordingHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID),
-      toggleReplayBufferHotkeyPairId(OBS_INVALID_HOTKEY_PAIR_ID)
+      hotkeyRegistrationTarget(nullptr)
 {
     // DO NOT use obs_filter_get_parent() in this function (It'll return nullptr)
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter creating", qUtf8Printable(name));
+    // obs_data_get_last_json() below reads the buffer that this obs_data_get_json() call fills.
     obs_log(LOG_DEBUG, "filter_settings_json=%s", obs_data_get_json(settings));
-
-    // Per-stream user-enabled flags and hotkey IDs
-    for (size_t i = 0; i < MAX_SERVICES; i++) {
-        auto key = QString("streaming_output_enabled_%1").arg(i);
-        streamingUserEnabled[i].store(obs_data_get_bool(settings, qUtf8Printable(key)), std::memory_order_relaxed);
-        toggleStreamingServiceHotkeyPairIds[i] = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-
-    // Do not use memset
-    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-        audios[i] = {0};
-    }
-
-    pthread_mutex_init_recursive(&outputMutex);
-    pthread_mutex_init_recursive(&audioMutex);
 
     if (!strcmp(obs_data_get_last_json(settings), "{}")) {
         // Maybe initial creation
@@ -110,6 +115,13 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
         // Assit initial settings
         obs_data_set_bool(settings, "use_profile_recording_path", true);
     }
+
+    hotkeyBindingsCache = obs_data_create();
+    OBSDataAutoRelease savedHotkeyBindings = obs_data_get_obj(settings, HOTKEY_BINDINGS_KEY);
+    if (savedHotkeyBindings) {
+        obs_data_apply(hotkeyBindingsCache, savedHotkeyBindings);
+    }
+    hotkeyHarvestPending = !obs_data_has_user_value(settings, HOTKEY_BINDINGS_KEY);
 
     // Migrate audio_source schema
     auto audioSource = obs_data_get_string(settings, "audio_source");
@@ -128,230 +140,43 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
         obs_data_set_bool(settings, "streaming_enabled", hasAnyServer);
     }
 
+    // FIXME: obs_save_source() / obs_source_duplicate() persist the live settings, so edits never
+    // applied in the properties dialog arrive here and get published as applied. Store the
+    // snapshot under a dedicated settings key in AppliedSettings::replace() and prefer it here; the
+    // live object is shared with the properties view, so saveCallback() must not rewrite its keys.
+    appliedSettings.replace(settings);
+
     // Fiter activate immediately when "server" or "stream_recording" or "replay_buffer" is exists.
     initialized = isStreamingGroupEnabled(settings) || obs_data_get_bool(settings, "stream_recording") ||
                   obs_data_get_bool(settings, "replay_buffer");
 
-    // Register proc handlers for external script access
-    proc_handler_t *ph = obs_source_get_proc_handler(filterSource);
+    // Register proc handlers for external script access. These handlers
+    // live on contextSource and die with it. A well-behaved script acquires a
+    // strong ref via obs_get_source_by_uuid() before calling; the weak-ref CAS
+    // refuses to bump a count of 0, so the filter cannot be destroyed mid-call.
+    // A misbehaving script that caches a proc_handler_t * past source release
+    // and calls it without holding the strong ref triggers a UAF that the
+    // plugin cannot prevent — that is a script-side bug.
+    //
+    // FIXME: libobs has no proc_handler_remove(). If it gains one, pair
+    // unregistration with ~BranchOutputFilter().
+    proc_handler_t *ph = obs_source_get_proc_handler(contextSource);
     proc_handler_add(
-        ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat, this
+        ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat,
+        toCallbackData()
     );
     proc_handler_add(
-        ph, "void override_recording_filename_format(in string format)", onOverrideRecordingFilenameFormat, this
+        ph, "void override_recording_filename_format(in string format)", onOverrideRecordingFilenameFormat,
+        toCallbackData()
     );
 
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
 }
 
-BranchOutputFilter::~BranchOutputFilter()
+bool BranchOutputFilter::validateInput()
 {
-    pthread_mutex_destroy(&outputMutex);
-    pthread_mutex_destroy(&audioMutex);
-}
-
-void BranchOutputFilter::unregisterAllHotkeys()
-{
-    if (toggleEnableHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(toggleEnableHotkeyPairId);
-        toggleEnableHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-    if (splitRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(splitRecordingHotkeyId);
-        splitRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (togglePauseRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(togglePauseRecordingHotkeyPairId);
-        togglePauseRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-    if (addChapterToRecordingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(addChapterToRecordingHotkeyId);
-        addChapterToRecordingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (saveReplayBufferHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(saveReplayBufferHotkeyId);
-        saveReplayBufferHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (enableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(enableAllStreamingHotkeyId);
-        enableAllStreamingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    if (disableAllStreamingHotkeyId != OBS_INVALID_HOTKEY_ID) {
-        obs_hotkey_unregister(disableAllStreamingHotkeyId);
-        disableAllStreamingHotkeyId = OBS_INVALID_HOTKEY_ID;
-    }
-    for (size_t i = 0; i < MAX_SERVICES; i++) {
-        if (toggleStreamingServiceHotkeyPairIds[i] != OBS_INVALID_HOTKEY_PAIR_ID) {
-            obs_hotkey_pair_unregister(toggleStreamingServiceHotkeyPairIds[i]);
-            toggleStreamingServiceHotkeyPairIds[i] = OBS_INVALID_HOTKEY_PAIR_ID;
-        }
-    }
-    if (toggleRecordingHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(toggleRecordingHotkeyPairId);
-        toggleRecordingHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-    if (toggleReplayBufferHotkeyPairId != OBS_INVALID_HOTKEY_PAIR_ID) {
-        obs_hotkey_pair_unregister(toggleReplayBufferHotkeyPairId);
-        toggleReplayBufferHotkeyPairId = OBS_INVALID_HOTKEY_PAIR_ID;
-    }
-}
-
-// OBS hotkey persistence note:
-// OBS persists hotkey keybindings in source->context.hotkey_data using the hotkey **name string**
-// as the dictionary key (NOT the numeric obs_hotkey_id / obs_hotkey_pair_id).
-// When a hotkey is unregistered and re-registered with the same name string,
-// obs_hotkey_register_internal() automatically restores saved keybindings from context.hotkey_data.
-// Therefore, unregister→re-register cycles do NOT lose user keybindings.
-// See: libobs/obs-hotkey.c — obs_hotkey_register_internal(), load_bindings(), enum_save_hotkey().
-//
-// This function conditionally registers hotkeys based on which output types are currently enabled
-// in settings, keeping OBS's hotkey settings UI clean. It is called from:
-//   - addCallback() — initial registration when filter is added
-//   - filterRenamedSignal handler — re-register with updated description text
-//   - updateCallback() — re-register when settings change (output types enabled/disabled)
-void BranchOutputFilter::registerHotkey()
-{
-    auto parent = obs_filter_get_parent(filterSource);
-    if (!parent) {
-        return;
-    }
-
-    // Unregister all previous hotkeys
-    unregisterAllHotkeys();
-
-    auto uuid = obs_source_get_uuid(filterSource);
-    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-
-    // Register enable/disable filter hotkey (always registered)
-    auto enableFilterName = QString("EnableFilter.%1").arg(uuid);
-    auto enableFilterDescription = QString(obs_module_text("EnableHotkey")).arg(name);
-    auto disableFilterName = QString("DisableFilter.%1").arg(uuid);
-    auto disableFilterDescription = QString(obs_module_text("DisableHotkey")).arg(name);
-
-    toggleEnableHotkeyPairId = obs_hotkey_pair_register_source(
-        parent, qUtf8Printable(enableFilterName), qUtf8Printable(enableFilterDescription),
-        qUtf8Printable(disableFilterName), qUtf8Printable(disableFilterDescription), onEnableFilterHotkeyPressed,
-        onDisableFilterHotkeyPressed, this, this
-    );
-
-    // --- Streaming hotkeys (only when streaming is enabled) ---
-    if (isStreamingGroupEnabled(settings)) {
-        // Enable/disable all streaming hotkeys
-        auto enableAllStreamingName = QString("EnableAllStreaming.%1").arg(uuid);
-        auto enableAllStreamingDesc = QString(obs_module_text("EnableAllStreamingHotkey")).arg(name);
-
-        enableAllStreamingHotkeyId = obs_hotkey_register_source(
-            parent, qUtf8Printable(enableAllStreamingName), qUtf8Printable(enableAllStreamingDesc),
-            onEnableAllStreamingHotkeyPressed, this
-        );
-
-        auto disableAllStreamingName = QString("DisableAllStreaming.%1").arg(uuid);
-        auto disableAllStreamingDesc = QString(obs_module_text("DisableAllStreamingHotkey")).arg(name);
-
-        disableAllStreamingHotkeyId = obs_hotkey_register_source(
-            parent, qUtf8Printable(disableAllStreamingName), qUtf8Printable(disableAllStreamingDesc),
-            onDisableAllStreamingHotkeyPressed, this
-        );
-
-        // Per-slot streaming enable/disable hotkeys (only for configured slots)
-        for (size_t i = 0; i < MAX_SERVICES; i++) {
-            if (!isStreamingEnabled(settings, i)) {
-                continue;
-            }
-
-            auto enableName = QString("EnableStreamingService%1.%2").arg(i).arg(uuid);
-            auto enableDesc = QString(obs_module_text("EnableStreamingServiceHotkey")).arg(name).arg(i + 1);
-            auto disableName = QString("DisableStreamingService%1.%2").arg(i).arg(uuid);
-            auto disableDesc = QString(obs_module_text("DisableStreamingServiceHotkey")).arg(name).arg(i + 1);
-
-            toggleStreamingServiceHotkeyPairIds[i] = obs_hotkey_pair_register_source(
-                parent, qUtf8Printable(enableName), qUtf8Printable(enableDesc), qUtf8Printable(disableName),
-                qUtf8Printable(disableDesc), onEnableStreamingServiceHotkeyPressed,
-                onDisableStreamingServiceHotkeyPressed, this, this
-            );
-        }
-    }
-
-    // --- Recording hotkeys (only when recording is enabled) ---
-    if (isRecordingEnabled(settings)) {
-        auto splitName = QString("SplitRecordingFile.%1").arg(uuid);
-        auto splitDescription = QString(obs_module_text("SplitRecordingFileHotkey")).arg(name);
-
-        splitRecordingHotkeyId = obs_hotkey_register_source(
-            parent, qUtf8Printable(splitName), qUtf8Printable(splitDescription), onSplitRecordingFileHotkeyPressed, this
-        );
-
-        auto pauseRecordingName = QString("PauseRecording.%1").arg(uuid);
-        auto pauseRecordingDescription = QString(obs_module_text("PauseRecordingHotkey")).arg(name);
-        auto unpauseRecordingName = QString("UnpauseRecording.%1").arg(uuid);
-        auto unpauseRecordingDescription = QString(obs_module_text("UnpauseRecordingHotkey")).arg(name);
-
-        togglePauseRecordingHotkeyPairId = obs_hotkey_pair_register_source(
-            parent, qUtf8Printable(pauseRecordingName), qUtf8Printable(pauseRecordingDescription),
-            qUtf8Printable(unpauseRecordingName), qUtf8Printable(unpauseRecordingDescription),
-            onPauseRecordingHotkeyPressed, onUnpauseRecordingHotkeyPressed, this, this
-        );
-
-        auto addChapterName = QString("AddChapterToRecordingFile.%1").arg(uuid);
-        auto addChapterDescription = QString(obs_module_text("AddChapterToRecordingFileHotkey")).arg(name);
-        addChapterToRecordingHotkeyId = obs_hotkey_register_source(
-            parent, qUtf8Printable(addChapterName), qUtf8Printable(addChapterDescription),
-            onAddChapterToRecordingFileHotkeyPressed, this
-        );
-
-        // Enable/disable recording hotkey
-        auto enableRecName = QString("EnableRecordingIndividual.%1").arg(uuid);
-        auto enableRecDesc = QString(obs_module_text("EnableRecordingIndividualHotkey")).arg(name);
-        auto disableRecName = QString("DisableRecordingIndividual.%1").arg(uuid);
-        auto disableRecDesc = QString(obs_module_text("DisableRecordingIndividualHotkey")).arg(name);
-
-        toggleRecordingHotkeyPairId = obs_hotkey_pair_register_source(
-            parent, qUtf8Printable(enableRecName), qUtf8Printable(enableRecDesc), qUtf8Printable(disableRecName),
-            qUtf8Printable(disableRecDesc), onEnableRecordingHotkeyPressed, onDisableRecordingHotkeyPressed, this, this
-        );
-    }
-
-    // --- Replay buffer hotkeys (only when replay buffer is enabled) ---
-    if (isReplayBufferEnabled(settings)) {
-        auto saveReplayName = QString("SaveReplayBuffer.%1").arg(uuid);
-        auto saveReplayDescription = QString(obs_module_text("SaveReplayBufferHotkey")).arg(name);
-        saveReplayBufferHotkeyId = obs_hotkey_register_source(
-            parent, qUtf8Printable(saveReplayName), qUtf8Printable(saveReplayDescription),
-            onSaveReplayBufferHotkeyPressed, this
-        );
-
-        // Enable/disable replay buffer hotkey
-        auto enableReplayName = QString("EnableReplayBufferIndividual.%1").arg(uuid);
-        auto enableReplayDesc = QString(obs_module_text("EnableReplayBufferIndividualHotkey")).arg(name);
-        auto disableReplayName = QString("DisableReplayBufferIndividual.%1").arg(uuid);
-        auto disableReplayDesc = QString(obs_module_text("DisableReplayBufferIndividualHotkey")).arg(name);
-
-        toggleReplayBufferHotkeyPairId = obs_hotkey_pair_register_source(
-            parent, qUtf8Printable(enableReplayName), qUtf8Printable(enableReplayDesc),
-            qUtf8Printable(disableReplayName), qUtf8Printable(disableReplayDesc), onEnableReplayBufferHotkeyPressed,
-            onDisableReplayBufferHotkeyPressed, this, this
-        );
-    }
-}
-
-// Caller must hold outputMutex.
-// Idempotent: if infrastructure already exists, return true.
-// On failure after partial resource creation, all resources are cleaned up
-// so that the next call can retry from a clean state.
-bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
-{
-    if (view) {
-        return true;
-    }
-
-    // Abort when obs initializing or filter disabled.
-    if (!obs_initialized() || !obs_source_enabled(filterSource)) {
-        obs_log(LOG_ERROR, "%s: Ignore unavailable filter", qUtf8Printable(name));
-        return false;
-    }
-
     // Retrieve filter source
-    auto parent = obs_filter_get_parent(filterSource);
+    auto parent = obs_filter_get_parent(contextSource);
     if (!parent) {
         obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
         return false;
@@ -363,69 +188,68 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
         return false;
     }
 
-    // Mandatory parameters
-    if (!isStreamingGroupEnabled(settings) && !isRecordingEnabled(settings) && !isReplayBufferEnabled(settings)) {
-        obs_log(LOG_ERROR, "%s: Nothing to do", qUtf8Printable(name));
-        return false;
+    return true;
+}
+
+// FIXME: The parent is used without a reference, so sourceInFrontend() can read a parent released
+// on another thread. Keep a weak reference to the parent from addCallback() and resolve it here.
+bool BranchOutputFilter::isInputAvailable() const
+{
+    auto parent = obs_filter_get_parent(contextSource);
+    return parent && sourceInFrontend(parent);
+}
+
+QString BranchOutputFilter::getInputName() const
+{
+    return obs_source_get_name(obs_filter_get_parent(contextSource));
+}
+
+QString BranchOutputFilter::getInputUuid() const
+{
+    return obs_source_get_uuid(obs_filter_get_parent(contextSource));
+}
+
+// FIXME: releaseInputShowing() re-resolves the parent, which libobs has already cleared by the
+// time destroyCallback() stops the outputs, so the reference taken here leaks until the parent is
+// destroyed. Keep a weak reference to the parent at acquire time and release against it.
+void BranchOutputFilter::acquireInputShowing()
+{
+    auto parent = obs_filter_get_parent(contextSource);
+    if (parent) {
+        obs_source_inc_showing(parent);
     }
+}
 
-    bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
-    bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
-
-    obs_video_info ovi = {0};
-    if (!obs_get_video_info(&ovi)) {
-        // Abort when no video situation
-        obs_log(LOG_ERROR, "%s: No video", qUtf8Printable(name));
-        return false;
+void BranchOutputFilter::releaseInputShowing()
+{
+    auto parent = obs_filter_get_parent(contextSource);
+    if (parent) {
+        obs_source_dec_showing(parent);
     }
+}
 
-    // Determine video source type first to choose correct resolution source
+void BranchOutputFilter::selectVideoInputMode(obs_data_t *settings)
+{
     auto videoSourceType = obs_data_get_string(settings, "video_source_type");
     useFilterInput = videoSourceType && !strcmp(videoSourceType, "filter_input");
+}
 
-    // Resolve input resolution based on video source type
-    // sourceWidth/sourceHeight represent the actual input resolution for this filter,
-    // used both for video capture and for collapsed-source detection (recording pending).
-    uint32_t sourceWidth;
-    uint32_t sourceHeight;
-    getSourceResolution(sourceWidth, sourceHeight);
-
-    width = sourceWidth;
-    height = sourceHeight;
-
-    if (width == 0 || height == 0) {
-        // Default to canvas size
-        width = ovi.base_width;
-        height = ovi.base_height;
-    }
-
-    // Treat 0x0 crop result as source collapse — abort silently so that
-    // the interval timer can retry when the resolution becomes compatible.
-    auto crop = calculateCrop(width, height, settings);
-    if (!crop) {
-        // Abort when crop produces invalid resolution (0x0)
-        obs_log(LOG_DEBUG, "%s: Crop produces invalid resolution, treat as collapsed source", qUtf8Printable(name));
+// Caller must hold outputMutex.
+// On failure, everything created here has already been cleaned up.
+bool BranchOutputFilter::setupVideoInput(obs_data_t *, obs_video_info *ovi, const CropRect &crop)
+{
+    auto parent = obs_filter_get_parent(contextSource);
+    if (!parent) {
+        obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
         return false;
     }
 
-    determineOutputResolution(settings, &ovi, *crop);
-
-    if (ovi.output_width == 0 || ovi.output_height == 0 || ovi.fps_den == 0 || ovi.fps_num == 0) {
-        // Abort when invalid video parameters situation
-        obs_log(LOG_DEBUG, "%s: Invalid video spec", qUtf8Printable(name));
-        return false;
-    }
-
-    // Update active revision with stored settings.
-    activeSettingsRev = storedSettingsRev;
-
-    //--- Open video output ---//
     if (useFilterInput) {
         // Filter input mode: capture via texrender + proxy source + obs_view.
         // The proxy source renders the captured texrender texture on the GPU.
         // obs_view creates a video_t* registered in OBS's mix list, allowing
         // GPU encoders (NVENC, QSV, AMF, etc.) to work directly.
-        filterVideoCapture = new FilterVideoCapture(filterSource, parent, width, height);
+        filterVideoCapture = new FilterVideoCapture(contextSource, parent, width, height);
         if (!filterVideoCapture->getProxySource()) {
             obs_log(LOG_ERROR, "%s: Filter video capture creation failed", qUtf8Printable(name));
             delete filterVideoCapture;
@@ -433,14 +257,15 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
             return false;
         }
 
-        if (crop->width != width || crop->height != height) {
-            filterVideoCapture->setCrop(*crop);
+        if (crop.width != width || crop.height != height) {
+            filterVideoCapture->setCrop(crop);
         }
 
         view = obs_view_create();
+        videoOutputOwned = true;
         obs_view_set_source(view, 0, filterVideoCapture->getProxySource());
 
-        videoOutput = obs_view_add2(view, &ovi);
+        videoOutput = obs_view_add2(view, ovi);
         if (!videoOutput) {
             obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
             // releaseInfrastructureIfIdle() safely handles partially-initialized state:
@@ -455,16 +280,17 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
     } else {
         // Source output mode (default): use obs_view for the parent source
         view = obs_view_create();
+        videoOutputOwned = true;
 
-        if (crop->width != width || crop->height != height) {
+        if (crop.width != width || crop.height != height) {
             cropScene = obs_scene_create_private("branch_output_crop");
             obs_sceneitem_t *item = obs_scene_add(cropScene, parent);
 
             struct obs_sceneitem_crop itemCrop;
-            itemCrop.left = (int)crop->left;
-            itemCrop.top = (int)crop->top;
-            itemCrop.right = (int)(width - crop->left - crop->width);
-            itemCrop.bottom = (int)(height - crop->top - crop->height);
+            itemCrop.left = (int)crop.left;
+            itemCrop.top = (int)crop.top;
+            itemCrop.right = (int)(width - crop.left - crop.width);
+            itemCrop.bottom = (int)(height - crop.top - crop.height);
             obs_sceneitem_set_crop(item, &itemCrop);
 
             obs_view_set_source(view, 0, obs_scene_get_source(cropScene));
@@ -472,7 +298,7 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
             obs_view_set_source(view, 0, parent);
         }
 
-        videoOutput = obs_view_add2(view, &ovi);
+        videoOutput = obs_view_add2(view, ovi);
         if (!videoOutput) {
             obs_log(LOG_ERROR, "%s: Video output association failed", qUtf8Printable(name));
             releaseInfrastructureIfIdle();
@@ -480,382 +306,36 @@ bool BranchOutputFilter::ensureInfrastructure(obs_data_t *settings)
         }
     }
 
-    //--- Open audio output(s) ---//
-    // Do not use memset
-    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-        audios[i] = {0};
-    }
+    return true;
+}
 
-    obs_audio_info ai = {0};
-    if (!obs_get_audio_info(&ai)) {
-        obs_log(LOG_ERROR, "%s: Failed to get audio info", qUtf8Printable(name));
+// Caller must hold outputMutex.
+// On failure, everything created here has already been cleaned up.
+bool BranchOutputFilter::setupDefaultAudio(const obs_audio_info &ai)
+{
+    // Filter pipeline's audio
+    obs_log(LOG_INFO, "%s: Use filter audio for track 1", qUtf8Printable(name));
+    auto audioContext = &audios[0];
+    audioContext->capture = new FilterAudioCapture(qUtf8Printable(name), ai.samples_per_sec, ai.speakers, this);
+    audioContext->audio = audioContext->capture->getAudio();
+    audioContext->streaming = true;
+    audioContext->recording = true;
+    audioContext->name = audioContext->capture->getName();
+
+    if (!audioContext->audio) {
+        obs_log(LOG_ERROR, "%s: Audio creation failed", qUtf8Printable(name));
+        delete audioContext->capture;
+        audioContext->capture = nullptr;
         releaseInfrastructureIfIdle();
         return false;
-    }
-
-    if (obs_data_get_bool(settings, "custom_audio_source")) {
-        // Apply custom audio source
-        bool multitrack = obs_data_get_bool(settings, "multitrack_audio");
-
-        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-            auto audioContext = &audios[i];
-            if (!multitrack && i > 0) {
-                // Signle track mode
-                break;
-            }
-
-            size_t track = i + 1;
-            auto propNameFormat = getIndexedPropNameFormat(track, 1);
-
-            auto audioDest = obs_data_get_string(settings, qUtf8Printable(propNameFormat.arg("audio_dest")));
-            audioContext->streaming = !strcmp(audioDest, "streaming") || !strcmp(audioDest, "both");
-            audioContext->recording = !strcmp(audioDest, "recording") || !strcmp(audioDest, "both");
-
-            auto audioSourceUuid = obs_data_get_string(settings, qUtf8Printable(propNameFormat.arg("audio_source")));
-            if (!strcmp(audioSourceUuid, "disabled")) {
-                // Disabled track
-                obs_log(LOG_INFO, "%s: Track %d is disabled", qUtf8Printable(name), track);
-                continue;
-
-            } else if (!strcmp(audioSourceUuid, "no_audio")) {
-                // Silence audio
-                obs_log(LOG_INFO, "%s: Use silence for track %d (%s)", qUtf8Printable(name), track, audioDest);
-
-                audioContext->capture =
-                    new AudioCapture("Silence", ai.samples_per_sec, ai.speakers, AudioCapture::silenceCapture, this);
-                audioContext->audio = audioContext->capture->getAudio();
-                audioContext->name = audioContext->capture->getName();
-
-            } else if (!strcmp(audioSourceUuid, "master_track")) {
-                // Master audio
-                auto masterTrack = obs_data_get_int(settings, qUtf8Printable(propNameFormat.arg("audio_track")));
-                if (masterTrack < 1 || masterTrack > MAX_AUDIO_MIXES) {
-                    obs_log(
-                        LOG_ERROR, "%s: Invalid master audio track No.%d for track %d", qUtf8Printable(name),
-                        masterTrack, track
-                    );
-                    releaseInfrastructureIfIdle();
-                    return false;
-                }
-                obs_log(
-                    LOG_INFO, "%s: Use master audio track No.%d for track %d (%s)", qUtf8Printable(name), masterTrack,
-                    track, audioDest
-                );
-
-                if (blankWhenHidden && muteWhenHidden) {
-                    audioContext->capture =
-                        new MasterAudioCapture(masterTrack - 1, ai.samples_per_sec, ai.speakers, this);
-                    audioContext->audio = audioContext->capture->getAudio();
-                    audioContext->mixIndex = 0;
-                    audioContext->name = audioContext->capture->getName();
-                } else {
-                    audioContext->mixIndex = masterTrack - 1;
-                    audioContext->audio = obs_get_audio();
-                    audioContext->name = QTStr("MasterTrack%1").arg(masterTrack);
-                }
-
-            } else if (!strcmp(audioSourceUuid, "filter")) {
-                // Filter pipline's audio
-                obs_log(LOG_INFO, "%s: Use filter audio for track %d (%s)", qUtf8Printable(name), track, audioDest);
-
-                audioContext->capture =
-                    new FilterAudioCapture(qUtf8Printable(name), ai.samples_per_sec, ai.speakers, this);
-                audioContext->audio = audioContext->capture->getAudio();
-                audioContext->name = audioContext->capture->getName();
-
-            } else {
-                // Specific source's audio
-                OBSSourceAutoRelease source = obs_get_source_by_uuid(audioSourceUuid);
-                if (!source) {
-                    // Non-stopping error
-                    obs_log(
-                        LOG_WARNING, "%s: Ignore audio source for track %d (%s)", qUtf8Printable(name), track, audioDest
-                    );
-                    continue;
-                }
-
-                // Use custom audio source
-                obs_log(
-                    LOG_INFO, "%s: Use %s audio for track %d", qUtf8Printable(name), obs_source_get_name(source), track
-                );
-
-                audioContext->capture = new SourceAudioCapture(source, ai.samples_per_sec, ai.speakers, this);
-                audioContext->audio = audioContext->capture->getAudio();
-                audioContext->name = audioContext->capture->getName();
-            }
-
-            if (!audioContext->audio) {
-                obs_log(
-                    LOG_ERROR, "%s: Audio creation failed for track %d (%s)", qUtf8Printable(name), track, audioDest
-                );
-                if (audioContext->capture) {
-                    delete audioContext->capture;
-                    audioContext->capture = nullptr;
-                }
-                releaseInfrastructureIfIdle();
-                return false;
-            }
-        }
-    } else {
-        // Filter pipeline's audio
-        obs_log(LOG_INFO, "%s: Use filter audio for track 1", qUtf8Printable(name));
-        auto audioContext = &audios[0];
-        audioContext->capture = new FilterAudioCapture(qUtf8Printable(name), ai.samples_per_sec, ai.speakers, this);
-        audioContext->audio = audioContext->capture->getAudio();
-        audioContext->streaming = true;
-        audioContext->recording = true;
-        audioContext->name = audioContext->capture->getName();
-
-        if (!audioContext->audio) {
-            obs_log(LOG_ERROR, "%s: Audio creation failed", qUtf8Printable(name));
-            delete audioContext->capture;
-            audioContext->capture = nullptr;
-            releaseInfrastructureIfIdle();
-            return false;
-        }
-    }
-
-    //--- Setup video encoder ---//
-    auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
-
-    videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), settings, nullptr);
-    if (!videoEncoder) {
-        obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));
-        releaseInfrastructureIfIdle();
-        return false;
-    }
-
-    // Apply frame rate divisor
-    auto fpsDivider = (uint32_t)obs_data_get_int(settings, "fps_divider");
-    if (fpsDivider > 1) {
-        // Validate: fps_num must be evenly divisible by the divisor
-        // This ensures clean frame rate for both integer (60, 30, 24) and
-        // NTSC (60000/1001, 30000/1001) source rates.
-        bool valid = (ovi.fps_num % fpsDivider) == 0;
-
-        if (!valid) {
-            // Fallback: search downward for nearest valid divisor
-            uint32_t originalDivider = fpsDivider;
-            fpsDivider = 1;
-            for (uint32_t d = originalDivider - 1; d > 1; d--) {
-                if ((ovi.fps_num % d) == 0) {
-                    fpsDivider = d;
-                    break;
-                }
-            }
-            obs_log(
-                LOG_WARNING, "%s: Frame rate divider 1/%u invalid for %u/%u fps, falling back to 1/%u",
-                qUtf8Printable(name), originalDivider, ovi.fps_num, ovi.fps_den, fpsDivider
-            );
-        }
-
-        if (fpsDivider > 1) {
-            if (!obs_encoder_set_frame_rate_divisor(videoEncoder, fpsDivider)) {
-                obs_log(LOG_WARNING, "%s: Failed to set frame rate divisor to %u", qUtf8Printable(name), fpsDivider);
-            } else {
-                obs_log(LOG_INFO, "%s: Frame rate divisor set to 1/%u", qUtf8Printable(name), fpsDivider);
-            }
-        }
-    }
-
-    obs_encoder_set_scaled_size(videoEncoder, 0, 0); // No scaling
-    obs_encoder_set_video(videoEncoder, videoOutput);
-
-    //--- Setup audio encoder ---//
-    auto audio_encoder_id = obs_data_get_string(settings, "audio_encoder");
-    auto audio_bitrate = obs_data_get_int(settings, "audio_bitrate");
-    OBSDataAutoRelease audio_encoder_settings = obs_encoder_defaults(audio_encoder_id);
-    obs_data_set_int(audio_encoder_settings, "bitrate", audio_bitrate);
-
-    for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-        auto audioContext = &audios[i];
-        if (!audioContext->audio) {
-            continue;
-        }
-
-        audioContext->encoder = obs_audio_encoder_create(
-            audio_encoder_id, qUtf8Printable(audioContext->name), audio_encoder_settings, audioContext->mixIndex,
-            nullptr
-        );
-        if (!audioContext->encoder) {
-            obs_log(LOG_ERROR, "%s: Audio encoder creation failed for track %d", qUtf8Printable(name), i + 1);
-            releaseInfrastructureIfIdle();
-            return false;
-        }
-        obs_encoder_set_audio(audioContext->encoder, audioContext->audio);
-    }
-
-    if (blankWhenHidden) {
-        bool visibleInProgram = sourceVisibleInProgram(parent);
-        setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
     }
 
     return true;
 }
 
-// Start all enabled outputs. User intent flags (streamingUserEnabled, etc.)
-// are intentionally respected: if the user has disabled a specific output type
-// via the status dock checkbox, it stays disabled even after a restartOutput()
-// triggered by settings changes.
-void BranchOutputFilter::startOutput(obs_data_t *settings)
+// Caller must hold outputMutex. Safe to call on a partially built video input.
+void BranchOutputFilter::teardownVideoInput()
 {
-    // Force release references
-    stopOutput();
-
-    pthread_mutex_lock(&outputMutex);
-    {
-        OBSMutexAutoUnlock locked(&outputMutex);
-
-        // Abort if outputs already active
-        if (countActiveStreamings() > 0 || recordingActive || replayBufferActive) {
-            obs_log(LOG_ERROR, "%s: Ignore unavailable filter", qUtf8Printable(name));
-            return;
-        }
-
-        // Skip infrastructure setup if the user has disabled all output types
-        // via the status dock checkboxes. Without this check, interlock modes like
-        // ALWAYS_ON would rebuild and immediately tear down infrastructure every tick.
-        // Note: isAnyStreamingUserEnabled(settings) only checks configured service
-        // slots (service_count), not all MAX_SERVICES, because unconfigured slots
-        // are not visible in the status dock and their checkboxes cannot be toggled.
-        if (!isAnyStreamingUserEnabled(settings) && !isRecordingUserEnabled() && !isReplayBufferUserEnabled()) {
-            return;
-        }
-
-        if (!ensureInfrastructure(settings)) {
-            return;
-        }
-
-        bool anyStarted = false;
-        if (isRecordingUserEnabled()) {
-            anyStarted |= createAndStartRecordingOutputChecked(settings);
-        }
-        if (isReplayBufferUserEnabled()) {
-            anyStarted |= createAndStartReplayBufferChecked(settings);
-        }
-        if (isAnyStreamingUserEnabled(settings)) {
-            anyStarted |= createAndStartStreamingOutputs(settings);
-        }
-
-        // Release infrastructure if all outputs failed to start
-        if (!anyStarted) {
-            releaseInfrastructureIfIdle();
-        }
-    }
-}
-
-void BranchOutputFilter::loadProfile(obs_data_t *settings)
-{
-    obs_log(LOG_DEBUG, "Profile settings loading");
-
-    auto config = obs_frontend_get_profile_config();
-
-    const char *videoEncoderId;
-    const char *audioEncoderId;
-    uint64_t audioBitrate;
-
-    if (isAdvancedMode(config)) {
-        videoEncoderId = config_get_string(config, "AdvOut", "Encoder");
-        audioEncoderId = config_get_string(config, "AdvOut", "AudioEncoder");
-        audioBitrate = config_get_uint(config, "AdvOut", "FFABitrate");
-
-        OBSString profilePath = obs_frontend_get_current_profile_path();
-        auto encoderJsonPath = QString("%1/%2").arg(QString(profilePath)).arg("streamEncoder.json");
-        OBSDataAutoRelease encoderSettings = obs_data_create_from_json_file(qUtf8Printable(encoderJsonPath));
-
-        if (encoderSettings) {
-            // Include video bitrate
-            obs_data_apply(settings, encoderSettings);
-        }
-
-    } else {
-        videoEncoderId = getSimpleVideoEncoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
-        audioEncoderId = getSimpleAudioEncoder(config_get_string(config, "SimpleOutput", "StreamAudioEncoder"));
-        audioBitrate = config_get_uint(config, "SimpleOutput", "ABitrate");
-
-        auto videoBitrate = config_get_uint(config, "SimpleOutput", "VBitrate");
-        obs_data_set_int(settings, "bitrate", videoBitrate);
-
-        auto preset = config_get_string(config, "SimpleOutput", "Preset");
-        obs_data_set_string(settings, "preset", preset);
-
-        auto preset2 = config_get_string(config, "SimpleOutput", "NVENCPreset2");
-        obs_data_set_string(settings, "preset2", preset2);
-    }
-
-    obs_data_set_string(settings, "audio_encoder", audioEncoderId);
-    obs_data_set_string(settings, "video_encoder", videoEncoderId);
-    obs_data_set_int(settings, "audio_bitrate", audioBitrate);
-
-    obs_log(LOG_INFO, "Profile settings loaded");
-}
-
-void BranchOutputFilter::loadRecently(obs_data_t *settings)
-{
-    obs_log(LOG_DEBUG, "Recently settings loading");
-    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
-    OBSDataAutoRelease recently_settings = obs_data_create_from_json_file(path);
-
-    if (recently_settings) {
-        for (size_t i = 0; i < MAX_SERVICES; i++) {
-            auto propNameFormat = getIndexedPropNameFormat(i);
-            obs_data_erase(recently_settings, qUtf8Printable(propNameFormat.arg("server")));
-            obs_data_erase(recently_settings, qUtf8Printable(propNameFormat.arg("key")));
-            obs_data_erase(recently_settings, qUtf8Printable(propNameFormat.arg("use_auth")));
-            obs_data_erase(recently_settings, qUtf8Printable(propNameFormat.arg("username")));
-            obs_data_erase(recently_settings, qUtf8Printable(propNameFormat.arg("password")));
-        }
-
-        obs_data_erase(recently_settings, "stream_recording");
-        obs_data_erase(recently_settings, "streaming_enabled");
-        obs_data_erase(recently_settings, "replay_buffer");
-        obs_data_erase(recently_settings, "custom_audio_source");
-        obs_data_erase(recently_settings, "multitrack_audio");
-
-        for (size_t n = 1; n <= MAX_AUDIO_MIXES; n++) {
-            auto propNameFormat = getIndexedPropNameFormat(n, 1);
-            obs_data_erase(recently_settings, qUtf8Printable(propNameFormat.arg("audio_source")));
-            obs_data_erase(recently_settings, qUtf8Printable(propNameFormat.arg("audio_track")));
-            obs_data_erase(recently_settings, qUtf8Printable(propNameFormat.arg("audio_dest")));
-        }
-
-        obs_data_erase(recently_settings, "resolution");
-        obs_data_erase(recently_settings, "custom_width");
-        obs_data_erase(recently_settings, "custom_height");
-        obs_data_erase(recently_settings, "downscale_filter");
-        obs_data_erase(recently_settings, "fps_divider");
-        obs_data_apply(settings, recently_settings);
-    }
-
-    obs_log(LOG_INFO, "Recently settings loaded");
-}
-
-// Caller must hold outputMutex.
-// Releases shared infrastructure (view, encoders, audio) if all outputs are idle.
-void BranchOutputFilter::releaseInfrastructureIfIdle()
-{
-    // Only release if all outputs are stopped
-    if (countActiveStreamings() > 0 || recordingActive || recordingPending || replayBufferActive) {
-        return;
-    }
-
-    pthread_mutex_lock(&audioMutex);
-    {
-        OBSMutexAutoUnlock audioLocked(&audioMutex);
-
-        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-            auto audioContext = &audios[i];
-            audioContext->encoder = nullptr;
-
-            if (audioContext->capture) {
-                delete audioContext->capture;
-                audioContext->capture = nullptr;
-            }
-        }
-    }
-
-    videoEncoder = nullptr;
-
     if (filterVideoCapture) {
         filterVideoCapture->setActive(false);
         delete filterVideoCapture;
@@ -864,84 +344,18 @@ void BranchOutputFilter::releaseInfrastructureIfIdle()
 
     cropScene = nullptr;
 
-    if (view) {
-        obs_view_set_source(view, 0, nullptr);
-        obs_view_remove(view);
-    }
-
-    view = nullptr;
-    videoOutput = nullptr;
     useFilterInput = false;
     blankingOutputActive = false;
     blankingAudioMuted = false;
 }
 
-void BranchOutputFilter::stopOutput()
-{
-    pthread_mutex_lock(&outputMutex);
-    {
-        OBSMutexAutoUnlock locked(&outputMutex);
-
-        stopRecordingOutput();
-        stopReplayBufferOutput();
-
-        for (size_t i = 0; i < MAX_SERVICES; i++) {
-            stopStreamingOutput(i);
-        }
-
-        // Reset individual stopping flag so it does not persist across
-        // full stop/restart cycles (e.g., filter eye-icon toggle while
-        // streamingIndividualStopping is still true).
-        streamingIndividualStopping = false;
-
-        releaseInfrastructureIfIdle();
-    }
-}
-
-void BranchOutputFilter::restartOutput()
-{
-    if (countActiveStreamings() > 0 || recordingActive || replayBufferActive) {
-        stopOutput();
-    }
-
-    OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-    if (isStreamingGroupEnabled(settings) || isRecordingEnabled(settings) || isReplayBufferEnabled(settings)) {
-        startOutput(settings);
-    }
-}
-
-void BranchOutputFilter::setAudioCapturesActive(bool active)
-{
-    pthread_mutex_lock(&audioMutex);
-    {
-        OBSMutexAutoUnlock locked(&audioMutex);
-
-        for (size_t i = 0; i < MAX_AUDIO_MIXES; i++) {
-            auto audioContext = &audios[i];
-            if (audioContext->capture) {
-                audioContext->capture->setActive(active);
-            }
-        }
-    }
-}
-
-void BranchOutputFilter::saveCallback(obs_data_t *settings)
-{
-    for (size_t i = 0; i < MAX_SERVICES; i++) {
-        auto key = QString("streaming_output_enabled_%1").arg(i);
-        obs_data_set_bool(settings, qUtf8Printable(key), isStreamingUserEnabled(i));
-    }
-    obs_data_set_bool(settings, "recording_output_enabled", isRecordingUserEnabled());
-    obs_data_set_bool(settings, "replay_buffer_output_enabled", isReplayBufferUserEnabled());
-}
-
 void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_source_t *parent)
 {
     if (!parent) {
-        parent = obs_filter_get_parent(filterSource);
+        parent = obs_filter_get_parent(contextSource);
     }
 
-    if (!view) {
+    if (!infrastructureReady) {
         blankingOutputActive = false;
         if (blankingAudioMuted) {
             setAudioCapturesActive(true);
@@ -989,496 +403,42 @@ void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_sour
     }
 }
 
-// Controlling output status here.
-// Start / Stop should only heppen in this function as possible because rapid manipulation caused crash easily.
-// NOTE: Becareful this function is called so offen.
-void BranchOutputFilter::onIntervalTimerTimeout()
+// Returns true while the input is hidden from Program and the output is blanked.
+bool BranchOutputFilter::evaluateBlanking(obs_data_t *settings)
 {
-    // Block output initiation until filter is active.
-    if (!initialized) {
-        return;
+    bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
+    if (!blankWhenHidden) {
+        return false;
     }
 
-    if (outputGracefullyStopping) {
-        stopOutputGracefully();
-        return;
-    }
+    bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
+    auto parent = obs_filter_get_parent(contextSource);
+    bool visibleInProgram = sourceVisibleInProgram(parent);
 
-    auto interlockType = statusDock ? statusDock->getInterlockType() : INTERLOCK_TYPE_ALWAYS_ON;
-    auto sourceEnabled = obs_source_enabled(filterSource);
-    auto streamingActive = countActiveStreamings() > 0;
-
-    if (!streamingActive && !recordingActive && !recordingPending && !replayBufferActive) {
-        // Evaluate start condition
-        auto parent = obs_filter_get_parent(filterSource);
-        if (!parent || !sourceInFrontend(parent)) {
-            // Ignore when source in no longer exists in frontend
-            return;
-        }
-
-        if (sourceEnabled) {
-            // Check interlock condition
-            if (interlockType == INTERLOCK_TYPE_ALWAYS_OFF) {
-                // Never start output
-            } else if (interlockType == INTERLOCK_TYPE_STREAMING) {
-                if (obs_frontend_streaming_active()) {
-                    restartOutput();
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_RECORDING) {
-                if (obs_frontend_recording_active()) {
-                    restartOutput();
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_STREAMING_RECORDING) {
-                if (obs_frontend_streaming_active() || obs_frontend_recording_active()) {
-                    restartOutput();
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
-                if (obs_frontend_virtualcam_active()) {
-                    restartOutput();
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_REPLAY_BUFFER) {
-                if (obs_frontend_replay_buffer_active()) {
-                    restartOutput();
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_INDIVIDUAL) {
-                // Individual start: follow OBS frontend state per output type.
-                // Check both the user toggle (dock checkbox) and the filter setting
-                // (whether the output type is configured) to avoid blocking subsequent
-                // outputs when an unconfigured type matches first.
-                OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-                bool anyStarted = false;
-                if (isAnyStreamingUserEnabled(settings) && obs_frontend_streaming_active() &&
-                    isStreamingGroupEnabled(settings)) {
-                    anyStarted |= startStreamingIndividual();
-                }
-                if (isRecordingUserEnabled() && obs_frontend_recording_active() && isRecordingEnabled(settings)) {
-                    anyStarted |= startRecordingIndividual();
-                }
-                if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() &&
-                    isReplayBufferEnabled(settings)) {
-                    anyStarted |= startReplayBufferIndividual();
-                }
-                if (anyStarted) {
-                    return;
-                }
-            } else {
-                restartOutput();
-                return;
-            }
-        }
-
-    } else {
-        // Evaluate stop or restart condition
-        auto streamingAlive = countAliveStreamings() > 0;
-        auto recordingAlive = recordingOutput && obs_output_active(recordingOutput);
-
-        if (sourceEnabled) {
-            if (someStreamingsStarting()) {
-                return;
-            }
-
-            OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
-
-            // Start all eligible streaming slots as a single output group.
-            // Returns true if any slot was started.
-            // Guarded by streamingIndividualStopping to prevent starting slots while
-            // a graceful stop is still in progress.
-            auto startEligibleStreamings = [&]() -> bool {
-                if (streamingIndividualStopping) {
-                    return false;
-                }
-                bool anyStarted = false;
-                for (size_t i = 0; i < MAX_SERVICES; i++) {
-                    if (isStreamingUserEnabled(i) && !streamings[i].active && isStreamingEnabled(settings, i) &&
-                        isStreamingGroupEnabled(settings)) {
-                        if (startSingleStreamingIndividual(i)) {
-                            anyStarted = true;
-                        }
-                    }
-                }
-                return anyStarted;
-            };
-            bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
-            bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
-
-            // Check interlock condition
-            if (interlockType == INTERLOCK_TYPE_ALWAYS_OFF) {
-                // Always OFF: Stop output immediately
-                stopOutputGracefully();
-                return;
-            } else if (interlockType == INTERLOCK_TYPE_STREAMING) {
-                if (!obs_frontend_streaming_active()) {
-                    // Stop output when streaming is not active
-                    stopOutputGracefully();
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_RECORDING) {
-                if (!obs_frontend_recording_active()) {
-                    // Stop output when recording is not active
-                    stopOutputGracefully();
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_STREAMING_RECORDING) {
-                if (!obs_frontend_streaming_active() && !obs_frontend_recording_active()) {
-                    // Stop output when streaming and recording are not active
-                    stopOutputGracefully();
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_VIRTUAL_CAM) {
-                if (!obs_frontend_virtualcam_active()) {
-                    // Stop output when virtual cam is not active
-                    stopOutputGracefully();
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_REPLAY_BUFFER) {
-                if (!obs_frontend_replay_buffer_active()) {
-                    // Stop output when replay buffer is not active
-                    stopOutputGracefully();
-                    return;
-                }
-            } else if (interlockType == INTERLOCK_TYPE_INDIVIDUAL) {
-                // Individual stop: follow OBS frontend state per output type.
-                // Only checks the OBS frontend state here; user toggle (per-output checkbox)
-                // is handled separately in the common per-output toggle block below.
-                {
-                    bool anyStopped = false;
-                    if (!obs_frontend_streaming_active() && streamingActive) {
-                        anyStopped |= stopStreamingIndividual();
-                    }
-                    if (!obs_frontend_recording_active() && (recordingActive || recordingPending)) {
-                        anyStopped |= stopRecordingIndividual();
-                    }
-                    if (!obs_frontend_replay_buffer_active() && replayBufferActive) {
-                        anyStopped |= stopReplayBufferIndividual();
-                    }
-                    if (anyStopped) {
-                        return;
-                    }
-                }
-
-                // Individual start for additional outputs while some are already active.
-                {
-                    bool anyStarted = false;
-                    if (obs_frontend_streaming_active()) {
-                        anyStarted |= startEligibleStreamings();
-                    }
-                    if (isRecordingUserEnabled() && obs_frontend_recording_active() && !recordingActive &&
-                        !recordingPending && isRecordingEnabled(settings)) {
-                        anyStarted |= startRecordingIndividual();
-                    }
-                    if (isReplayBufferUserEnabled() && obs_frontend_replay_buffer_active() && !replayBufferActive &&
-                        isReplayBufferEnabled(settings)) {
-                        anyStarted |= startReplayBufferIndividual();
-                    }
-                    if (anyStarted) {
-                        return;
-                    }
-                }
-            }
-
-            // Per-output toggle check (all interlock modes including non-Individual)
-            // Users can explicitly enable/disable each output type (streaming, recording,
-            // replay buffer) via the status dock's output column checkbox, regardless of
-            // the current interlock mode. This allows, for example, stopping recording
-            // while keeping streaming active even in "Always ON" mode.
-            // Only one start/stop per tick to avoid crash from rapid state transitions.
-            // Streaming slots are treated as a single output group.
-            {
-                bool anyStopped = false;
-                for (size_t i = 0; i < MAX_SERVICES; i++) {
-                    if (!isStreamingUserEnabled(i) && streamings[i].active) {
-                        anyStopped |= stopSingleStreamingIndividual(i);
-                    }
-                }
-                if (!isRecordingUserEnabled() && (recordingActive || recordingPending)) {
-                    anyStopped |= stopRecordingIndividual();
-                }
-                if (!isReplayBufferUserEnabled() && replayBufferActive) {
-                    anyStopped |= stopReplayBufferIndividual();
-                }
-                if (anyStopped) {
-                    return;
-                }
-            }
-
-            // Retry graceful streaming stop if still in progress.
-            // Placed after per-output toggle stops so recording/replay buffer stops
-            // are not blocked during streaming graceful stop.
-            if (streamingIndividualStopping) {
-                stopStreamingIndividual();
-                return;
-            }
-
-            // Per-output toggle re-enable check.
-            // Only re-enable an output if the current interlock condition is met.
-            // For ALWAYS_OFF, we never reach here (returned above).
-            // For INDIVIDUAL, per-output start is handled in the Individual block above.
-            // For other modes, re-enable only when the interlock condition is currently satisfied.
-            // Note: No explicit interlock recheck is needed here because this code is only
-            // reachable within the "outputs active" block, which means the interlock condition
-            // was already satisfied when outputs were started and has not been violated (the
-            // interlock stop checks above would have returned before reaching this point).
-            if (interlockType != INTERLOCK_TYPE_INDIVIDUAL) {
-                bool anyStarted = false;
-                anyStarted |= startEligibleStreamings();
-                if (isRecordingUserEnabled() && !recordingActive && !recordingPending && isRecordingEnabled(settings)) {
-                    anyStarted |= startRecordingIndividual();
-                }
-                if (isReplayBufferUserEnabled() && !replayBufferActive && isReplayBufferEnabled(settings)) {
-                    anyStarted |= startReplayBufferIndividual();
-                }
-                if (anyStarted) {
-                    return;
-                }
-            }
-
-            if (activeSettingsRev < storedSettingsRev) {
-                // Settings has been changed
-                obs_log(LOG_INFO, "%s: Settings change detected, Attempting restart", qUtf8Printable(name));
-                restartOutput();
-                return;
-            }
-
-            if (streamingAlive || recordingAlive || recordingPending || replayBufferActive) {
-                // Monitoring source
-                auto parent = obs_filter_get_parent(filterSource);
-
-                // Resolve input resolution based on video source type
-                uint32_t sourceWidth;
-                uint32_t sourceHeight;
-                getSourceResolution(sourceWidth, sourceHeight);
-
-                if (!sourceInFrontend(parent)) {
-                    // Stop output when source had been removed
-                    stopOutputGracefully();
-                    return;
-                }
-
-                bool visibleInProgram = true;
-                if (blankWhenHidden) {
-                    visibleInProgram = sourceVisibleInProgram(parent);
-                    pthread_mutex_lock(&outputMutex);
-                    {
-                        OBSMutexAutoUnlock outputLocked(&outputMutex);
-                        setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
-                    }
-                }
-
-                // When blanking because the source is not visible, some sources report unstable base sizes.
-                // Avoid restart storms while hidden; resolution will be re-evaluated when visible again.
-                bool skipResolutionRestart = blankWhenHidden && !visibleInProgram;
-
-                if (!skipResolutionRestart && (width != sourceWidth || height != sourceHeight)) {
-                    // Source resolution was changed
-                    bool sourceCollapsed = (sourceWidth == 0 || sourceHeight == 0);
-                    bool cropCollapse = !calculateCrop(sourceWidth, sourceHeight, settings);
-
-                    if (!sourceCollapsed && !cropCollapse) {
-                        if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
-                            // Restart output when source resolution was changed.
-                            obs_log(LOG_INFO, "%s: Attempting restart the streaming output", qUtf8Printable(name));
-                            startOutput(settings);
-                            return;
-                        }
-                    } else {
-                        // The source is collapsed or crop would produce 0x0
-                        if (!recordingPending && recordingActive &&
-                            obs_data_get_bool(settings, "suspend_recording_when_source_collapsed")) {
-                            if (!streamingActive) {
-                                // Recording only -> Pause the recording
-                                if (!obs_output_paused(recordingOutput)) {
-                                    // Don't pause when already paused manually
-                                    obs_log(
-                                        LOG_INFO,
-                                        "%s: The source resolution is corrupted, Attempting pause the recording output",
-                                        qUtf8Printable(name)
-                                    );
-                                    pauseRecording();
-                                    recordingPending = true;
-                                    return;
-                                }
-                            } else {
-                                // There are some streamings -> Suspend recording output
-                                obs_log(
-                                    LOG_INFO,
-                                    "%s: The source resolution is corrupted, Attempting suspend the recording output",
-                                    qUtf8Printable(name)
-                                );
-                                stopRecordingOutput(true);
-                                return;
-                            }
-                        } else {
-                            // Ignore source collapse
-                        }
-                    }
-                }
-
-                if (recordingPending && sourceWidth > 0 && sourceHeight > 0 &&
-                    !!calculateCrop(sourceWidth, sourceHeight, settings)) {
-                    // Source is uncollapsed
-                    // When recording output was pending
-                    if (recordingActive) {
-                        // If the recording output has already been created
-                        // Unpause recording
-                        obs_log(LOG_INFO, "%s: Attempting unpause the recording output", qUtf8Printable(name));
-                        unpauseRecording();
-                        return;
-                    } else {
-                        // If the output has not yet been created.
-                        // Create and start recording when recording output was pending.
-                        obs_log(LOG_INFO, "%s: Attempting resume the recording output", qUtf8Printable(name));
-                        OBSDataAutoRelease pendingSettings = obs_source_get_settings(filterSource);
-                        createAndStartRecordingOutput(pendingSettings);
-                        return;
-                    }
-                }
-            }
-
-            if (recordingSettingsOverridden) {
-                if (recordingActive && recordingAlive && recordingOutput && obs_output_paused(recordingOutput)) {
-                    // Recording is paused and alive: keep flag, restart will be triggered on unpause
-                } else {
-                    recordingSettingsOverridden = false;
-                    if (recordingActive) {
-                        if (recordingPending) {
-                            // Recording is pending (source collapsed): stop output so it will be
-                            // re-created with new settings when the source is uncollapsed.
-                            obs_log(
-                                LOG_INFO, "%s: Stopping recording output for settings override (pending)",
-                                qUtf8Printable(name)
-                            );
-                            stopRecordingOutput(true);
-                        } else {
-                            obs_log(
-                                LOG_INFO, "%s: Restarting recording for filename format change", qUtf8Printable(name)
-                            );
-                            restartRecordingOutput();
-                        }
-                    }
-                }
-            } else if (recordingActive && !recordingAlive) {
-                // Restart recording
-                obs_log(LOG_INFO, "%s: Attempting reactivate the recording output", qUtf8Printable(name));
-                restartRecordingOutput();
-            }
-
-            for (size_t i = 0; i < MAX_SERVICES; i++) {
-                if (streamings[i].active && streamings[i].output && !obs_output_active(streamings[i].output) &&
-                    !obs_output_reconnecting(streamings[i].output)) {
-                    // Restart streaming
-                    obs_log(LOG_INFO, "%s (%zu): Attempting reactivate the streaming output", qUtf8Printable(name), i);
-                    reconnectStreamingOutput(i);
-                }
-            }
-
-        } else {
-            if (streamingActive || recordingActive || recordingPending || replayBufferActive) {
-                // Clicked filter's "Eye" icon (Hide)
-                stopOutputGracefully();
-                return;
-            }
-        }
-    }
-}
-
-void BranchOutputFilter::stopOutputGracefully()
-{
-    outputGracefullyStopping = true;
-
-    // Lock out other output thread to prevent crash.
-    // Lock order: pluginMutex -> outputMutex (consistent with stopOutput() and Individual stop functions).
-    pthread_mutex_lock(&pluginMutex);
+    pthread_mutex_lock(&outputMutex);
     {
-        OBSMutexAutoUnlock pluginLocked(&pluginMutex);
-
-        pthread_mutex_lock(&outputMutex);
-        {
-            OBSMutexAutoUnlock outputLocked(&outputMutex);
-
-            // Stop recording and replay buffer immediately first (under outputMutex)
-            stopRecordingOutput();
-            stopReplayBufferOutput();
-
-            if (!stopAllStreamingOutputsGracefully()) {
-                return;
-            }
-        }
+        OBSMutexAutoUnlock outputLocked(&outputMutex);
+        setBlankingActive(!visibleInProgram, muteWhenHidden, parent);
     }
 
-    // All streaming has been stopped
-    outputGracefullyStopping = false;
-
-    // Finalize termination
-    stopOutput();
+    return !visibleInProgram;
 }
 
-std::optional<CropRect> BranchOutputFilter::calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings)
+BranchOutput::BlankingState BranchOutputFilter::getBlankingState() const
 {
-    auto cropType = obs_data_get_string(settings, "crop_type");
-
-    if (!cropType || !strcmp(cropType, "none")) {
-        return CropRect{0, 0, srcWidth, srcHeight};
+    if (!blankingOutputActive) {
+        return BLANKING_STATE_NONE;
     }
-
-    CropRect crop = {};
-
-    if (!strcmp(cropType, "relative")) {
-        auto top = (uint32_t)obs_data_get_int(settings, "crop_rel_top");
-        auto right = (uint32_t)obs_data_get_int(settings, "crop_rel_right");
-        auto bottom = (uint32_t)obs_data_get_int(settings, "crop_rel_bottom");
-        auto left = (uint32_t)obs_data_get_int(settings, "crop_rel_left");
-
-        if (left + right >= srcWidth || top + bottom >= srcHeight) {
-            return std::nullopt;
-        }
-
-        crop.left = left;
-        crop.top = top;
-        crop.width = srcWidth - left - right;
-        crop.height = srcHeight - top - bottom;
-
-    } else if (!strcmp(cropType, "absolute")) {
-        auto x = (uint32_t)obs_data_get_int(settings, "crop_abs_x");
-        auto y = (uint32_t)obs_data_get_int(settings, "crop_abs_y");
-        auto w = (uint32_t)obs_data_get_int(settings, "crop_abs_width");
-        auto h = (uint32_t)obs_data_get_int(settings, "crop_abs_height");
-
-        if (x >= srcWidth || y >= srcHeight) {
-            return std::nullopt;
-        }
-
-        crop.left = x;
-        crop.top = y;
-        crop.width = (x + w > srcWidth) ? (srcWidth - x) : w;
-        crop.height = (y + h > srcHeight) ? (srcHeight - y) : h;
-
-    } else {
-        return CropRect{0, 0, srcWidth, srcHeight};
+    if (blankingAudioMuted) {
+        return BLANKING_STATE_VIDEO_AND_AUDIO;
     }
-
-    // Round to multiples of 2 (encoder requirement)
-    crop.left += (crop.left & 1);
-    crop.top += (crop.top & 1);
-    crop.width &= ~1u;
-    crop.height &= ~1u;
-
-    // Rounding can reduce dimensions to 0
-    if (crop.width == 0 || crop.height == 0) {
-        return std::nullopt;
-    }
-
-    return crop;
+    return BLANKING_STATE_VIDEO;
 }
 
 void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHeight)
 {
     if (useFilterInput) {
-        obs_source_t *target = obs_filter_get_target(filterSource);
+        obs_source_t *target = obs_filter_get_target(contextSource);
         if (target) {
             outWidth = obs_source_get_base_width(target);
             outHeight = obs_source_get_base_height(target);
@@ -1487,81 +447,13 @@ void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHe
             outHeight = 0;
         }
     } else {
-        obs_source_t *parent = obs_filter_get_parent(filterSource);
+        obs_source_t *parent = obs_filter_get_parent(contextSource);
         outWidth = obs_source_get_width(parent);
         outHeight = obs_source_get_height(parent);
     }
     // Round up to a multiple of 2
     outWidth += (outWidth & 1);
     outHeight += (outHeight & 1);
-}
-
-void BranchOutputFilter::determineOutputResolution(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop)
-{
-    uint32_t baseWidth = crop.width;
-    uint32_t baseHeight = crop.height;
-
-    auto resolution = obs_data_get_string(settings, "resolution");
-    if (!strcmp(resolution, "custom")) {
-        // Custom resolution
-        ovi->output_width = (uint32_t)obs_data_get_int(settings, "custom_width");
-        ovi->output_height = (uint32_t)obs_data_get_int(settings, "custom_height");
-
-    } else if (!strcmp(resolution, "output")) {
-        // Nothing to do
-
-    } else if (!strcmp(resolution, "canvas")) {
-        // Copy canvas resolution
-        ovi->output_width = ovi->base_width;
-        ovi->output_height = ovi->base_height;
-
-    } else if (!strcmp(resolution, "three_quarters")) {
-        // Rescale source resolution
-        ovi->output_width = baseWidth * 3 / 4;
-        ovi->output_height = baseHeight * 3 / 4;
-
-    } else if (!strcmp(resolution, "half")) {
-        // Rescale source resolution
-        ovi->output_width = baseWidth / 2;
-        ovi->output_height = baseHeight / 2;
-
-    } else if (!strcmp(resolution, "quarter")) {
-        // Rescale source resolution
-        ovi->output_width = baseWidth / 4;
-        ovi->output_height = baseHeight / 4;
-
-    } else {
-        // Copy source resolution
-        ovi->output_width = baseWidth;
-        ovi->output_height = baseHeight;
-    }
-
-    // Round up to a multiple of 2
-    ovi->output_width += (ovi->output_width & 1);
-    ovi->output_height += (ovi->output_height & 1);
-
-    // Copy base resolution
-    ovi->base_width = baseWidth;
-    ovi->base_height = baseHeight;
-
-    auto downscaleFilter = obs_data_get_string(settings, "downscale_filter");
-    if (!strcmp(downscaleFilter, "bilinear")) {
-        ovi->scale_type = OBS_SCALE_BILINEAR;
-    } else if (!strcmp(downscaleFilter, "area")) {
-        ovi->scale_type = OBS_SCALE_AREA;
-    } else if (!strcmp(downscaleFilter, "bicubic")) {
-        ovi->scale_type = OBS_SCALE_BICUBIC;
-    } else if (!strcmp(downscaleFilter, "lanczos")) {
-        ovi->scale_type = OBS_SCALE_LANCZOS;
-    }
-}
-
-QString BranchOutputFilter::applyFilenameFormatArgs(const QString &format, bool noSpace)
-{
-    QString sourceName = obs_source_get_name(obs_filter_get_parent(filterSource));
-    QString filterName = qUtf8Printable(name);
-    auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
-    return QString(format).arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
 }
 
 void BranchOutputFilter::addCallback(obs_source_t *source)
@@ -1583,31 +475,55 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
     intervalTimer->start();
     connect(intervalTimer, SIGNAL(timeout()), this, SLOT(onIntervalTimerTimeout()));
 
+    parentRenamedSignal.Connect(
+        obs_source_get_signal_handler(source), "rename",
+        [](void *_data, calldata_t *cd) {
+            auto _filter = fromFilterCallbackData(_data);
+            emit _filter->inputNameChanged(QString::fromUtf8(calldata_string(cd, "new_name")));
+        },
+        toCallbackData()
+    );
+
     // Register to status dock
-    if (statusDock) {
+    if (auto *dock = statusDock.load()) {
         // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+        QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
     }
 
-    // Register hotkeys
-    registerHotkey();
+    OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
+    syncHotkeys(settings);
     // Track filter renames for name and hotkey settings
     filterRenamedSignal.Connect(
-        obs_source_get_signal_handler(filterSource), "rename",
+        obs_source_get_signal_handler(contextSource), "rename",
         [](void *_data, calldata_t *cd) {
-            auto _filter = static_cast<BranchOutputFilter *>(_data);
-            _filter->name = calldata_string(cd, "new_name");
-            _filter->registerHotkey();
+            auto _filter = fromFilterCallbackData(_data);
+            _filter->updateHotkeyDescriptions(calldata_string(cd, "new_name"));
         },
-        this
+        toCallbackData()
     );
 
     obs_log(LOG_INFO, "%s: Filter added to '%s'", qUtf8Printable(name), obs_source_get_name(source));
 }
 
+// FIXME: The parent is used without a null check or a reference. Resolve a weak reference to the
+// parent and return when it is gone. https://github.com/OPENSPHERE-Inc/branch-output/issues/204
+void BranchOutputFilter::openSettings()
+{
+    auto parent = obs_filter_get_parent(contextSource);
+    obs_log(LOG_DEBUG, "uuid=%s", obs_source_get_uuid(parent));
+    obs_frontend_open_source_filters(parent);
+}
+
 void BranchOutputFilter::updateCallback(obs_data_t *settings)
 {
-    auto source = obs_filter_get_parent(filterSource);
+    // Restarting here could interrupt a connection attempt, so only the snapshot advances;
+    // the interval timer restarts the output once it sees a newer snapshot.
+    // FIXME: the deferred update runs this on the graphics thread while the properties view edits
+    // the same live settings on the UI thread; obs_data has no lock, so replace() and the JSON save
+    // below walk the object unsynchronized. Confine live-settings traversal to the UI thread.
+    appliedSettings.replace(settings);
+
+    auto source = obs_filter_get_parent(contextSource);
 
     // Do not save settings for private sources
     if (sourceIsPrivate(source)) {
@@ -1619,24 +535,25 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
 
     obs_log(LOG_DEBUG, "%s: Filter updating", qUtf8Printable(name));
 
-    // It's unwelcome to do stopping output during attempting connect to service.
-    // So we just count up revision (Settings will be applied on videoTick())
-    storedSettingsRev++;
-
     // Save settings as default
     OBSString config_dir_path = obs_module_get_config_path(obs_current_module(), "");
     os_mkdirs(config_dir_path);
 
-    OBSString path = obs_module_get_config_path(obs_current_module(), SETTINGS_JSON_NAME);
-    obs_data_save_json_safe(settings, path, "tmp", "bak");
+    // Serializing swaps the JSON buffer of the serialized object without a lock, and this callback
+    // runs on both the graphics thread and the UI thread for the same settings object.
+    OBSDataAutoRelease snapshot = obs_data_create();
+    obs_data_apply(snapshot, settings);
 
-    // Re-register hotkeys (they depend on which outputs are enabled in settings).
-    registerHotkey();
+    OBSString path = obs_module_get_config_path(obs_current_module(), RECENTLY_SETTINGS_JSON_NAME);
+    obs_data_save_json_safe(snapshot, path, "tmp", "bak");
+
+    // The registered hotkey set depends on which outputs are enabled in settings.
+    syncHotkeys(settings);
 
     // Update status dock
-    if (statusDock) {
+    if (auto *dock = statusDock.load()) {
         // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(statusDock, "addFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+        QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
     }
 
     obs_log(LOG_INFO, "%s: Filter updated", qUtf8Printable(name));
@@ -1657,7 +574,7 @@ void BranchOutputFilter::videoTickCallback(float)
         uint32_t curW, curH;
         getSourceResolution(curW, curH);
         if (curW > 0 && curH > 0 && cropPreview.resolutionChanged(curW, curH)) {
-            OBSDataAutoRelease settings = obs_source_get_settings(filterSource);
+            OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
             cropPreview.updateResolution(curW, curH, calculateCrop(curW, curH, settings));
         }
     }
@@ -1675,11 +592,11 @@ void BranchOutputFilter::videoRenderCallback(gs_effect_t *)
             filterVideoCapture->drawCapturedTexture();
         } else {
             // Fallback: capture failed, pass through normally
-            obs_source_skip_video_filter(filterSource);
+            obs_source_skip_video_filter(contextSource);
         }
     } else {
         // Source output mode: pass through the filter chain as usual
-        obs_source_skip_video_filter(filterSource);
+        obs_source_skip_video_filter(contextSource);
     }
 
     // Draw crop preview rectangle overlay (main mix only, not encoded in branch output)
@@ -1698,9 +615,11 @@ void BranchOutputFilter::removeCallback()
 
     // Do not call stopOutput() here as this will cause a crash.
 
-    if (statusDock) {
+    parentRenamedSignal.Disconnect();
+
+    if (auto *dock = statusDock.load()) {
         // Unregister from output status dock (In proper thread)
-        QMetaObject::invokeMethod(statusDock, "removeFilter", Qt::QueuedConnection, Q_ARG(BranchOutputFilter *, this));
+        QMetaObject::invokeMethod(dock, "removeOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
     }
 
     // Unregister hotkeys
@@ -1713,6 +632,9 @@ void BranchOutputFilter::destroyCallback()
 {
     obs_log(LOG_DEBUG, "%s: BranchOutputFilter destroying", qUtf8Printable(name));
 
+    // FIXME: Hotkeys are unregistered only in removeCallback(); a sync pass racing the removal
+    // re-registers them and they outlive this instance. Serialize hotkey sync with filter removal.
+
     // Release all handles
     stopOutput();
 
@@ -1722,42 +644,10 @@ void BranchOutputFilter::destroyCallback()
     obs_log(LOG_INFO, "%s: BranchOutputFilter destroyed", qUtf8Printable(name));
 }
 
-bool BranchOutputFilter::onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
-{
-    if (!pressed) {
-        return false;
-    }
-
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
-    if (obs_source_enabled(filter->filterSource)) {
-        // Already enabled
-        return false;
-    }
-
-    obs_source_set_enabled(filter->filterSource, true);
-    return true;
-}
-
-bool BranchOutputFilter::onDisableFilterHotkeyPressed(void *data, obs_hotkey_pair_id, obs_hotkey *, bool pressed)
-{
-    if (!pressed) {
-        return false;
-    }
-
-    BranchOutputFilter *filter = static_cast<BranchOutputFilter *>(data);
-    if (!obs_source_enabled(filter->filterSource)) {
-        // Already disabled
-        return false;
-    }
-
-    obs_source_set_enabled(filter->filterSource, false);
-    return true;
-}
-
 // Callback from filter audio
 obs_audio_data *BranchOutputFilter::audioFilterCallback(void *param, obs_audio_data *audioData)
 {
-    auto filter = static_cast<BranchOutputFilter *>(param);
+    auto filter = fromFilterCallbackData(param);
 
     pthread_mutex_lock(&filter->audioMutex);
     {
@@ -1787,39 +677,40 @@ obs_source_info BranchOutputFilter::createFilterInfo()
     };
 
     info.create = [](obs_data_t *settings, obs_source_t *source) -> void * {
-        return new BranchOutputFilter(settings, source);
+        auto filter = new BranchOutputFilter(settings, source);
+        return filter->toCallbackData();
     };
     info.filter_add = [](void *data, obs_source_t *source) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromFilterCallbackData(data);
         filter->addCallback(source);
     };
     info.update = [](void *data, obs_data_t *settings) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromFilterCallbackData(data);
         filter->updateCallback(settings);
     };
     info.video_render = [](void *data, gs_effect_t *effect) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromFilterCallbackData(data);
         filter->videoRenderCallback(effect);
     };
     info.video_tick = [](void *data, float seconds) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromFilterCallbackData(data);
         filter->videoTickCallback(seconds);
     };
     info.filter_remove = [](void *data, obs_source_t *) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromFilterCallbackData(data);
         filter->removeCallback();
     };
     info.destroy = [](void *data) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromFilterCallbackData(data);
         filter->destroyCallback();
     };
 
     info.save = [](void *data, obs_data_t *settings) {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromFilterCallbackData(data);
         filter->saveCallback(settings);
     };
     info.get_properties = [](void *data) -> obs_properties_t * {
-        auto filter = static_cast<BranchOutputFilter *>(data);
+        auto filter = fromFilterCallbackData(data);
         return filter->getProperties();
     };
     info.get_defaults = BranchOutputFilter::getDefaults;
@@ -1850,11 +741,19 @@ bool obs_module_load()
 
 static void onGetFilterList(void *, calldata_t *cd)
 {
+    if (moduleUnloading.load(std::memory_order_acquire)) {
+        calldata_set_string(cd, "json", "{\"filters\":[]}");
+        return;
+    }
+
     OBSDataAutoRelease wrapper = obs_data_create();
     OBSDataArrayAutoRelease array = obs_data_array_create();
 
-    if (statusDock) {
-        for (const auto &info : statusDock->getFilterList()) {
+    // Read the UI-thread-published snapshot. The shared_ptr pins the QList
+    // for the duration of this call, so the worker never touches the dock
+    // QObject and cannot race obs_module_unload().
+    if (auto snapshot = loadFilterListSnapshot()) {
+        for (const auto &info : *snapshot) {
             OBSDataAutoRelease entry = obs_data_create();
             obs_data_set_string(entry, "source_name", qUtf8Printable(info.sourceName));
             obs_data_set_string(entry, "source_uuid", qUtf8Printable(info.sourceUuid));
@@ -1866,24 +765,52 @@ static void onGetFilterList(void *, calldata_t *cd)
 
     obs_data_set_array(wrapper, "filters", array);
 
-    calldata_set_string(cd, "json", obs_data_get_json(wrapper));
+    // calldata_set_string copies the buffer (via bstrdup); json pointer
+    // lifetime need not extend beyond this call.
+    // obs_data_get_json() may return NULL on allocation failure; fall back
+    // to a schema-consistent empty payload so clients can rely on the
+    // "filters" array being present regardless of error mode.
+    const char *json = obs_data_get_json(wrapper);
+    calldata_set_string(cd, "json", json ? json : "{\"filters\":[]}");
 }
 
 void obs_module_post_load()
 {
-    qRegisterMetaType<BranchOutputFilter *>();
+    qRegisterMetaType<BranchOutput *>();
 
-    statusDock = BranchOutputFilter::createOutputStatusDock();
+    // Publish an empty snapshot so onGetFilterList sees a defined empty state
+    // before the first addOutput republish, distinguishing pre-init from
+    // genuinely-no-filters.
+    publishFilterListSnapshot(QList<BranchOutputFilterInfo>{});
 
-    // Register global proc handler for script access (obs-websocket style)
+    statusDock.store(BranchOutputFilter::createOutputStatusDock());
+
+    // Register global proc handler for script access (obs-websocket style).
+    // data=nullptr: onGetFilterList reads the filter-list snapshot directly.
+    //
+    // FIXME: libobs has no removal API for the global proc table, so the
+    // function pointer outlives obs_module_unload(). The moduleUnloading
+    // atomic gates the proc body; callers should still avoid dispatching
+    // after unload as a defence-in-depth measure.
     proc_handler_t *ph = obs_get_proc_handler();
     proc_handler_add(ph, "void osi_branch_output_get_filter_list(out string json)", onGetFilterList, nullptr);
 }
 
 void obs_module_unload()
 {
-    // Remove and destroy status dock to avoid leaks (hotkeys, timers, widgets)
-    if (statusDock) {
+    // Publish the unload flag before tearing down module state so onGetFilterList
+    // (which outlives the module via the global proc handler) early-returns.
+    moduleUnloading.store(true, std::memory_order_release);
+
+    // Release the snapshot before destroying the dock so no dangling
+    // references to FilterInfo objects remain once the dock rows are freed.
+    pthread_mutex_lock(&filterListSnapshotMutex);
+    {
+        OBSMutexAutoUnlock locked(&filterListSnapshotMutex);
+        filterListSnapshot.reset();
+    }
+
+    if (statusDock.exchange(nullptr) != nullptr) {
         obs_frontend_remove_dock("BranchOutputStatusDock");
     }
 

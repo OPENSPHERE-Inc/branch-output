@@ -31,9 +31,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHBoxLayout>
 #include <QMouseEvent>
 #include <QDesktopServices>
-#include <QSet>
 
-#include "../plugin-main.hpp"
+#include "../branch-output.hpp"
 #include "output-status-dock.hpp"
 
 #define TIMER_INTERVAL 2000
@@ -52,7 +51,8 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
       sortingColumnIndex(0),
       sortingOrder(Qt::AscendingOrder),
       ascendingIcon(":/branch-output/images/sort-ascending.svg"),
-      descendingIcon(":/branch-output/images/sort-descending.svg")
+      descendingIcon(":/branch-output/images/sort-descending.svg"),
+      interlockTypeAtomic(BranchOutput::INTERLOCK_TYPE_ALWAYS_ON)
 {
     setMinimumWidth(320);
 
@@ -147,14 +147,17 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
 
     interlockLabel = new QLabel(QTStr("Interlock"), this);
     interlockComboBox = new QComboBox(this);
-    interlockComboBox->addItem(QTStr("AlwaysOn"), BranchOutputFilter::INTERLOCK_TYPE_ALWAYS_ON);
-    interlockComboBox->addItem(QTStr("Streaming"), BranchOutputFilter::INTERLOCK_TYPE_STREAMING);
-    interlockComboBox->addItem(QTStr("Recording"), BranchOutputFilter::INTERLOCK_TYPE_RECORDING);
-    interlockComboBox->addItem(QTStr("StreamingOrRecording"), BranchOutputFilter::INTERLOCK_TYPE_STREAMING_RECORDING);
-    interlockComboBox->addItem(QTStr("ReplayBuffer"), BranchOutputFilter::INTERLOCK_TYPE_REPLAY_BUFFER);
-    interlockComboBox->addItem(QTStr("VirtualCam"), BranchOutputFilter::INTERLOCK_TYPE_VIRTUAL_CAM);
-    interlockComboBox->addItem(QTStr("Individual"), BranchOutputFilter::INTERLOCK_TYPE_INDIVIDUAL);
-    interlockComboBox->addItem(QTStr("AlwaysOff"), BranchOutputFilter::INTERLOCK_TYPE_ALWAYS_OFF);
+    interlockComboBox->addItem(QTStr("AlwaysOn"), BranchOutput::INTERLOCK_TYPE_ALWAYS_ON);
+    interlockComboBox->addItem(QTStr("Streaming"), BranchOutput::INTERLOCK_TYPE_STREAMING);
+    interlockComboBox->addItem(QTStr("Recording"), BranchOutput::INTERLOCK_TYPE_RECORDING);
+    interlockComboBox->addItem(QTStr("StreamingOrRecording"), BranchOutput::INTERLOCK_TYPE_STREAMING_RECORDING);
+    interlockComboBox->addItem(QTStr("ReplayBuffer"), BranchOutput::INTERLOCK_TYPE_REPLAY_BUFFER);
+    interlockComboBox->addItem(QTStr("VirtualCam"), BranchOutput::INTERLOCK_TYPE_VIRTUAL_CAM);
+    interlockComboBox->addItem(QTStr("Individual"), BranchOutput::INTERLOCK_TYPE_INDIVIDUAL);
+    interlockComboBox->addItem(QTStr("AlwaysOff"), BranchOutput::INTERLOCK_TYPE_ALWAYS_OFF);
+    connect(interlockComboBox, &QComboBox::currentIndexChanged, this, [this](int) {
+        interlockTypeAtomic.store(interlockComboBox->currentData().toInt(), std::memory_order_relaxed);
+    });
 
     auto buttonsContainerLayout = new QHBoxLayout();
     buttonsContainerLayout->addWidget(applyToAllLabel);
@@ -204,13 +207,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     );
 
     loadSettings();
-    loadHotkey(enableAllHotkey, "EnableAllBranchOutputsHotkey");
-    loadHotkey(disableAllHotkey, "DisableAllBranchOutputsHotkey");
-    loadHotkey(splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
-    loadHotkey(pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
-    loadHotkey(unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
-    loadHotkey(addChapterToRecordingAllHotkey, "AddChapterToRecordingAllBranchOutputsHotkey");
-    loadHotkey(saveReplayBufferAllHotkey, "SaveReplayBufferAllBranchOutputsHotkey");
+    loadHotkeys();
 
     sort();
 
@@ -241,6 +238,23 @@ BranchOutputStatusDock::~BranchOutputStatusDock()
     obs_hotkey_unregister(saveReplayBufferAllHotkey);
 
     obs_log(LOG_DEBUG, "BranchOutputStatusDock destroyed");
+}
+
+void BranchOutputStatusDock::loadHotkeys()
+{
+    obs_hotkey_update_atomic(
+        [](void *context) {
+            auto *dock = static_cast<BranchOutputStatusDock *>(context);
+            loadHotkey(dock->enableAllHotkey, "EnableAllBranchOutputsHotkey");
+            loadHotkey(dock->disableAllHotkey, "DisableAllBranchOutputsHotkey");
+            loadHotkey(dock->splitRecordingAllHotkey, "SplitRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->pauseRecordingAllHotkey, "PauseRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->unpauseRecordingAllHotkey, "UnpauseRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->addChapterToRecordingAllHotkey, "AddChapterToRecordingAllBranchOutputsHotkey");
+            loadHotkey(dock->saveReplayBufferAllHotkey, "SaveReplayBufferAllBranchOutputsHotkey");
+        },
+        this
+    );
 }
 
 void BranchOutputStatusDock::loadSettings()
@@ -280,6 +294,7 @@ void BranchOutputStatusDock::applySettings(obs_data_t *settings)
     }
 
     interlockComboBox->setCurrentIndex(interlockComboBox->findData(obs_data_get_int(settings, "interlock")));
+    interlockTypeAtomic.store(interlockComboBox->currentData().toInt(), std::memory_order_relaxed);
 
     auto sortingColumn = QString(obs_data_get_string(settings, "sortingColumn"));
     for (int i = 0; i < outputTable->columnCount(); i++) {
@@ -341,6 +356,8 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
         dock->saveSettings();
         break;
     case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
+        dock->loadHotkeys();
+
         // Defer to ensure Qt event loop has finished processing the profile change
         QMetaObject::invokeMethod(
             dock,
@@ -357,64 +374,77 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
 }
 
 void BranchOutputStatusDock::addRow(
-    BranchOutputFilter *filter, size_t streamingIndex, RowOutputType outputType, size_t groupIndex
+    BranchOutput *output, size_t streamingIndex, RowOutputType outputType, size_t groupIndex
 )
 {
     auto row = (int)outputTableRows.size();
-    outputTableRows.push_back(new OutputTableRow(row, filter, streamingIndex, outputType, groupIndex, this));
+    outputTableRows.push_back(new OutputTableRow(row, output, streamingIndex, outputType, groupIndex, this));
 
     applyEnableAllButtonEnabled();
     applyDisableAllButtonEnabled();
 }
 
-void BranchOutputStatusDock::addFilter(BranchOutputFilter *filter)
+void BranchOutputStatusDock::addOutput(BranchOutput *output)
 {
-    // Ensure filter removed
-    removeFilter(filter);
+    // FIXME: `output` is a raw pointer queued from addCallback() / updateCallback() and may already
+    // be deleted, leaving no destroyed hook. Post an OBSWeakSource instead and resolve the output
+    // via obs_weak_source_get_source(), obs_obj_get_data() and BranchOutput::fromCallbackData().
+
+    // Ensure output removed
+    removeOutput(output);
 
     // Immediate checkbox sync when output user-enabled state changes (e.g. from hotkeys)
     connect(
-        filter, &BranchOutputFilter::outputUserEnabledChanged, this,
-        &BranchOutputStatusDock::onOutputUserEnabledChanged,
+        output, &BranchOutput::outputUserEnabledChanged, this, &BranchOutputStatusDock::onOutputUserEnabledChanged,
         static_cast<Qt::ConnectionType>(Qt::UniqueConnection | Qt::QueuedConnection)
     );
 
-    OBSDataAutoRelease settings = obs_source_get_settings(filter->filterSource);
+    // Drop the rows synchronously when the output QObject is deleted, so no row outlives its output
+    // even when the queued removeOutput() from removeCallback() runs after the deferred delete.
+    connect(output, &QObject::destroyed, this, &BranchOutputStatusDock::onOutputDestroyed, Qt::UniqueConnection);
+
+    OBSDataAutoRelease settings = output->getAppliedSettings();
 
     auto groupIndex = 0;
 
     // Recording row
-    if (filter->isRecordingEnabled(settings)) {
-        addRow(filter, 0, ROW_OUTPUT_RECORDING, groupIndex++);
+    if (output->isRecordingEnabled(settings)) {
+        addRow(output, 0, ROW_OUTPUT_RECORDING, groupIndex++);
     }
 
     // Replay buffer row
-    if (filter->isReplayBufferEnabled(settings)) {
-        addRow(filter, 0, ROW_OUTPUT_REPLAY_BUFFER, groupIndex++);
+    if (output->isReplayBufferEnabled(settings)) {
+        addRow(output, 0, ROW_OUTPUT_REPLAY_BUFFER, groupIndex++);
     }
 
     // Streaming rows
-    if (filter->isStreamingGroupEnabled(settings)) {
+    if (output->isStreamingGroupEnabled(settings)) {
         for (size_t i = 0; i < MAX_SERVICES; i++) {
-            if (filter->isStreamingEnabled(settings, i)) {
-                addRow(filter, i, ROW_OUTPUT_STREAMING, groupIndex++);
+            if (output->isStreamingEnabled(settings, i)) {
+                addRow(output, i, ROW_OUTPUT_STREAMING, groupIndex++);
             }
         }
     }
 
     if (groupIndex == 0) {
         // Add disabled row
-        addRow(filter, 0, ROW_OUTPUT_NONE, groupIndex++);
+        addRow(output, 0, ROW_OUTPUT_NONE, groupIndex++);
     }
 
     sort();
+    publishFilterListSnapshot();
 }
 
-void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
+void BranchOutputStatusDock::removeOutput(BranchOutput *output)
 {
-    // DO NOT access filter resources at this time (It may be already deleted)
+    // `output` is a comparison key only: it may already be deleted (queued from removeCallback(),
+    // or called from ~QObject via onOutputDestroyed()). Neither this function nor its callees
+    // (sort() / publishFilterListSnapshot()) may dereference any row->branchOutput.
     foreach (auto row, outputTableRows) {
-        if (row->filter == filter) {
+        if (row->branchOutput == output) {
+            // FIXME: removeRow() deletes the QTableWidgetItems at once while the cells only get
+            // deleteLater(), so an already posted rename metacall can write a freed item. Take the
+            // items over with takeItem() and let OutputTableRow own them.
             outputTable->removeRow(outputTable->row(row->filterCell->item()));
             outputTableRows.removeOne(row);
             row->deleteLater();
@@ -422,16 +452,24 @@ void BranchOutputStatusDock::removeFilter(BranchOutputFilter *filter)
     }
 
     sort();
+    publishFilterListSnapshot();
+}
+
+void BranchOutputStatusDock::onOutputDestroyed(QObject *obj)
+{
+    removeOutput(static_cast<BranchOutput *>(obj));
 }
 
 void BranchOutputStatusDock::update()
 {
     foreach (auto row, outputTableRows) {
-        if (!sourceInFrontend(obs_filter_get_parent(row->filter->filterSource))) {
-            // Remove filter that no longer exists in the frontend
-            removeFilter(row->filter);
+        OBSSourceAutoRelease contextSource = obs_weak_source_get_source(row->contextWeak);
+        if (!contextSource || !row->branchOutput->isInputAvailable()) {
+            // Remove output whose context source is released or whose input is no longer available
+            removeOutput(row->branchOutput);
             continue;
         }
+        // The strong ref defers the context source's destroy (stopOutput()) past row->update()
         row->update();
     }
 
@@ -445,10 +483,10 @@ void BranchOutputStatusDock::update()
     sort();
 }
 
-void BranchOutputStatusDock::updateOutputToggles(BranchOutputFilter *filter)
+void BranchOutputStatusDock::updateOutputToggles(BranchOutput *output)
 {
     foreach (auto row, outputTableRows) {
-        if (row->filter == filter) {
+        if (row->branchOutput == output) {
             row->updateOutputToggle();
         }
     }
@@ -456,9 +494,9 @@ void BranchOutputStatusDock::updateOutputToggles(BranchOutputFilter *filter)
 
 void BranchOutputStatusDock::onOutputUserEnabledChanged()
 {
-    auto filter = qobject_cast<BranchOutputFilter *>(sender());
-    if (filter) {
-        updateOutputToggles(filter);
+    auto output = qobject_cast<BranchOutput *>(sender());
+    if (output) {
+        updateOutputToggles(output);
     }
 }
 
@@ -554,7 +592,10 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
     foreach (auto row, outputTableRows) {
         if (row->groupIndex == 0) {
             // Do only once for each filters
-            obs_source_set_enabled(row->filter->filterSource, enabled);
+            OBSSourceAutoRelease contextSource = obs_weak_source_get_source(row->contextWeak);
+            if (contextSource) {
+                obs_source_set_enabled(contextSource, enabled);
+            }
         }
     }
 
@@ -562,11 +603,14 @@ void BranchOutputStatusDock::setEabnleAll(bool enabled)
     applyDisableAllButtonEnabled();
 }
 
+// Per-row button visibility is refreshed only by the dock timer, which
+// runs solely while the dock widget is visible; batch actions must not
+// gate on it. Each filter action self-guards under outputMutex.
 void BranchOutputStatusDock::splitRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isSplitRecordingButtonShow()) {
-            row->filter->splitRecording();
+        if (row->outputType == ROW_OUTPUT_RECORDING) {
+            row->branchOutput->splitRecording();
         }
     }
 }
@@ -574,8 +618,8 @@ void BranchOutputStatusDock::splitRecordingAll()
 void BranchOutputStatusDock::pauseRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isPauseRecordingButtonShow()) {
-            row->filter->pauseRecording();
+        if (row->outputType == ROW_OUTPUT_RECORDING) {
+            row->branchOutput->pauseRecording();
         }
     }
 }
@@ -583,8 +627,8 @@ void BranchOutputStatusDock::pauseRecordingAll()
 void BranchOutputStatusDock::unpauseRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isUnpauseRecordingButtonShow()) {
-            row->filter->unpauseRecording();
+        if (row->outputType == ROW_OUTPUT_RECORDING) {
+            row->branchOutput->unpauseRecording();
         }
     }
 }
@@ -592,8 +636,8 @@ void BranchOutputStatusDock::unpauseRecordingAll()
 void BranchOutputStatusDock::addChapterToRecordingAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_RECORDING && row->status->isAddChapterToRecordingButtonShow()) {
-            row->filter->addChapterToRecording();
+        if (row->outputType == ROW_OUTPUT_RECORDING) {
+            row->branchOutput->addChapterToRecording();
         }
     }
 }
@@ -601,8 +645,8 @@ void BranchOutputStatusDock::addChapterToRecordingAll()
 void BranchOutputStatusDock::saveReplayBufferAll()
 {
     foreach (auto row, outputTableRows) {
-        if (row->outputType == ROW_OUTPUT_REPLAY_BUFFER && row->status->isSaveReplayBufferButtonShow()) {
-            row->filter->saveReplayBuffer();
+        if (row->outputType == ROW_OUTPUT_REPLAY_BUFFER) {
+            row->branchOutput->saveReplayBuffer();
         }
     }
 }
@@ -732,41 +776,53 @@ void BranchOutputStatusDock::onHeaderPressed(int index)
 //--- OutputTableRow class ---//
 
 OutputTableRow::OutputTableRow(
-    int row, BranchOutputFilter *_filter, size_t _streamingIndex, RowOutputType _outputType, size_t _groupIndex,
+    int row, BranchOutput *_branchOutput, size_t _streamingIndex, RowOutputType _outputType, size_t _groupIndex,
     BranchOutputStatusDock *parent
 )
     : QObject(parent),
-      filter(_filter),
+      branchOutput(_branchOutput),
       streamingIndex(_streamingIndex),
       outputType(_outputType),
       groupIndex(_groupIndex)
 {
-    auto source = obs_filter_get_parent(filter->filterSource);
-    auto rowId = QString("%1_%2_%3").arg(obs_source_get_name(source)).arg(filter->name).arg(groupIndex);
+    parentCell = new ParentCell(QString(), QString(), parent);
 
-    filterCell = new FilterCell(rowId, filter->name, filter->filterSource, parent);
-    parentCell = new ParentCell(rowId, obs_source_get_name(source), source, parent);
+    // Connected before the input name is read so that no later rename is missed
+    connect(branchOutput, &BranchOutput::inputNameChanged, parentCell, &ParentCell::setTextValue, Qt::QueuedConnection);
+
+    filterInfo.sourceName = branchOutput->getInputName();
+    filterInfo.sourceUuid = branchOutput->getInputUuid();
+    filterInfo.filterName = QString(obs_source_get_name(branchOutput->contextSource));
+    filterInfo.filterUuid = QString(obs_source_get_uuid(branchOutput->contextSource));
+    contextIsFilter = obs_source_get_type(branchOutput->contextSource) == OBS_SOURCE_TYPE_FILTER;
+    contextWeak = obs_source_get_weak_source(branchOutput->contextSource);
+
+    auto rowId = QString("%1_%2_%3").arg(filterInfo.sourceName).arg(branchOutput->name).arg(groupIndex);
+
+    filterCell = new FilterCell(rowId, branchOutput->name, branchOutput->contextSource, parent);
+    parentCell->item()->setRowId(rowId);
+    parentCell->setTextValue(filterInfo.sourceName);
     status = new StatusCell(rowId, QTStr("Status.Inactive"), parent);
 
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
         outputName = new OutputCell(
-            rowId, QTStr("Streaming%1").arg(streamingIndex + 1), filter->isStreamingUserEnabled(streamingIndex),
+            rowId, QTStr("Streaming%1").arg(streamingIndex + 1), branchOutput->isStreamingUserEnabled(streamingIndex),
             ROW_OUTPUT_STREAMING, nullptr, parent
         );
         outputName->setToolTip(QTStr("StreamingToggleTooltip"));
         break;
     case ROW_OUTPUT_RECORDING:
         outputName = new OutputCell(
-            rowId, QTStr("Recording"), filter->isRecordingUserEnabled(), ROW_OUTPUT_RECORDING, filter->filterSource,
-            parent
+            rowId, QTStr("Recording"), branchOutput->isRecordingUserEnabled(), ROW_OUTPUT_RECORDING,
+            branchOutput->contextSource, parent
         );
         outputName->setToolTip(QTStr("RecordingToggleTooltip"));
         break;
     case ROW_OUTPUT_REPLAY_BUFFER:
         outputName = new OutputCell(
-            rowId, QTStr("ReplayBuffer"), filter->isReplayBufferUserEnabled(), ROW_OUTPUT_REPLAY_BUFFER,
-            filter->filterSource, parent
+            rowId, QTStr("ReplayBuffer"), branchOutput->isReplayBufferUserEnabled(), ROW_OUTPUT_REPLAY_BUFFER,
+            branchOutput->contextSource, parent
         );
         outputName->setToolTip(QTStr("ReplayBufferToggleTooltip"));
         break;
@@ -778,13 +834,13 @@ OutputTableRow::OutputTableRow(
     connect(outputName, &OutputCell::toggled, this, [this](bool checked) {
         switch (outputType) {
         case ROW_OUTPUT_STREAMING:
-            filter->setStreamingUserEnabled(streamingIndex, checked);
+            branchOutput->setStreamingUserEnabled(streamingIndex, checked);
             break;
         case ROW_OUTPUT_RECORDING:
-            filter->setRecordingUserEnabled(checked);
+            branchOutput->setRecordingUserEnabled(checked);
             break;
         case ROW_OUTPUT_REPLAY_BUFFER:
-            filter->setReplayBufferUserEnabled(checked);
+            branchOutput->setReplayBufferUserEnabled(checked);
             break;
         default:
             break;
@@ -821,7 +877,7 @@ OutputTableRow::OutputTableRow(
     buttonsContainer->setLayout(buttonsContainerLayout);
 
     auto resetButton = new QPushButton(QTStr("Reset"), parent);
-    connect(resetButton, &QPushButton::clicked, this, [parent, row]() { parent->outputTableRows[row]->reset(); });
+    connect(resetButton, &QPushButton::clicked, this, [this]() { reset(); });
     resetButton->setProperty("toolButton", true);  // Until OBS 30
     resetButton->setProperty("class", "btn-tool"); // Since OBS 31
     resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
@@ -834,16 +890,22 @@ OutputTableRow::OutputTableRow(
     connect(status, &StatusCell::pauseRecordingButtonClicked, this, [this]() { pauseRecording(); });
     connect(status, &StatusCell::unpauseRecordingButtonClicked, this, [this]() { unpauseRecording(); });
     connect(status, &StatusCell::addChapterToRecordingButtonClicked, this, [this]() { addChapterToRecording(); });
-    connect(status, &StatusCell::saveReplayBufferButtonClicked, this, [this]() { filter->saveReplayBuffer(); });
+    connect(status, &StatusCell::saveReplayBufferButtonClicked, this, [this]() { branchOutput->saveReplayBuffer(); });
+
+    connect(parentCell, &ParentCell::clicked, this, [this]() { openSettings(); });
 
     // Setup rename event
-    connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &) {
+    connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &newName) {
+        filterInfo.filterName = newName;
         updateRowId(); // Update row ID with new filter name
         parent->sort();
+        parent->publishFilterListSnapshot();
     });
-    connect(parentCell, &ParentCell::renamed, this, [this, parent](const QString &) {
+    connect(parentCell, &ParentCell::renamed, this, [this, parent](const QString &newName) {
+        filterInfo.sourceName = newName;
         updateRowId(); // Update row ID with new source name
         parent->sort();
+        parent->publishFilterListSnapshot();
     });
 }
 
@@ -860,13 +922,13 @@ void OutputTableRow::updateOutputToggle()
     bool desiredChecked = false;
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
-        desiredChecked = filter->isStreamingUserEnabled(streamingIndex);
+        desiredChecked = branchOutput->isStreamingUserEnabled(streamingIndex);
         break;
     case ROW_OUTPUT_RECORDING:
-        desiredChecked = filter->isRecordingUserEnabled();
+        desiredChecked = branchOutput->isRecordingUserEnabled();
         break;
     case ROW_OUTPUT_REPLAY_BUFFER:
-        desiredChecked = filter->isReplayBufferUserEnabled();
+        desiredChecked = branchOutput->isReplayBufferUserEnabled();
         break;
     default:
         break;
@@ -885,13 +947,13 @@ void OutputTableRow::update()
 
     switch (outputType) {
     case ROW_OUTPUT_STREAMING:
-        output = filter->streamings[streamingIndex].output.Get();
+        output = branchOutput->streamings[streamingIndex].output.Get();
         break;
     case ROW_OUTPUT_RECORDING:
-        output = filter->recordingOutput.Get();
+        output = branchOutput->recordingOutput.Get();
         break;
     case ROW_OUTPUT_REPLAY_BUFFER:
-        output = filter->replayBufferOutput.Get();
+        output = branchOutput->replayBufferOutput.Get();
         break;
     default:
         output = nullptr;
@@ -903,11 +965,11 @@ void OutputTableRow::update()
         bool reconnecting;
         bool stopping;
         // Only recording can be paused
-        bool paused = filter->recordingOutput.Get() && obs_output_paused(filter->recordingOutput.Get());
+        bool paused = branchOutput->recordingOutput.Get() && obs_output_paused(branchOutput->recordingOutput.Get());
 
         switch (outputType) {
         case ROW_OUTPUT_STREAMING:
-            stopping = filter->streamings[streamingIndex].stopping;
+            stopping = branchOutput->streamings[streamingIndex].stopping;
             reconnecting = output && !stopping ? !obs_output_active(output) || obs_output_reconnecting(output) : false;
             break;
         default:
@@ -929,9 +991,10 @@ void OutputTableRow::update()
         } else {
             // Blanking suffix for status text
             QString blankSuffix;
-            if (filter->blankingOutputActive && filter->blankingAudioMuted) {
+            auto blankingState = branchOutput->getBlankingState();
+            if (blankingState == BranchOutput::BLANKING_STATE_VIDEO_AND_AUDIO) {
                 blankSuffix = QTStr("Status.BlankMutedSuffix");
-            } else if (filter->blankingOutputActive) {
+            } else if (blankingState == BranchOutput::BLANKING_STATE_VIDEO) {
                 blankSuffix = QTStr("Status.BlankSuffix");
             }
 
@@ -963,10 +1026,10 @@ void OutputTableRow::update()
                     status->setTheme("good", "text-success");
                     status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_RECORDING);
                 }
-                status->setSplitRecordingButtonShow(filter->canSplitRecording());
-                status->setPauseRecordingButtonShow(!paused && filter->canPauseRecording());
-                status->setUnpauseRecordingButtonShow(paused && filter->canPauseRecording());
-                status->setAddChapterToRecordingButtonShow(filter->canAddChapterToRecording());
+                status->setSplitRecordingButtonShow(branchOutput->canSplitRecording());
+                status->setPauseRecordingButtonShow(!paused && branchOutput->canPauseRecording());
+                status->setUnpauseRecordingButtonShow(paused && branchOutput->canPauseRecording());
+                status->setAddChapterToRecordingButtonShow(branchOutput->canAddChapterToRecording());
                 status->setSaveReplayBufferButtonShow(false);
                 break;
             case ROW_OUTPUT_REPLAY_BUFFER:
@@ -977,7 +1040,7 @@ void OutputTableRow::update()
                 status->setPauseRecordingButtonShow(false);
                 status->setUnpauseRecordingButtonShow(false);
                 status->setAddChapterToRecordingButtonShow(false);
-                status->setSaveReplayBufferButtonShow(filter->replayBufferActive);
+                status->setSaveReplayBufferButtonShow(branchOutput->replayBufferActive);
                 break;
             default:
                 status->setTextValue(QTStr("Status.Inactive"));
@@ -991,7 +1054,7 @@ void OutputTableRow::update()
             }
         }
     } else {
-        if (outputType == ROW_OUTPUT_REPLAY_BUFFER && filter->replayBufferActive) {
+        if (outputType == ROW_OUTPUT_REPLAY_BUFFER && branchOutput->replayBufferActive) {
             status->setTextValue(QTStr("Status.ReplayBuffer"));
             status->setTheme("good", "text-success");
             status->setIconShow(StatusCell::StatusIcon::STATUS_ICON_REPLAY_BUFFER);
@@ -1002,7 +1065,7 @@ void OutputTableRow::update()
             status->setAddChapterToRecordingButtonShow(false);
             return;
         }
-        if (outputType == ROW_OUTPUT_RECORDING && filter->recordingPending) {
+        if (outputType == ROW_OUTPUT_RECORDING && branchOutput->recordingPending) {
             status->setTextValue(QTStr("Status.Pending"));
         } else {
             status->setTextValue(QTStr("Status.Inactive"));
@@ -1096,20 +1159,36 @@ void OutputTableRow::update()
 
 void OutputTableRow::reset()
 {
-    obs_output_t *output;
+    // The strong ref defers the context source's destroy (stopOutput()) past the output access below
+    OBSSourceAutoRelease contextSource = obs_weak_source_get_source(contextWeak);
+    if (!contextSource) {
+        droppedFrames->setTextValue("");
+        megabytesSent->setTextValue("");
+        bitrate->setTextValue("");
+        return;
+    }
 
-    switch (outputType) {
-    case ROW_OUTPUT_STREAMING:
-        output = streamingIndex < MAX_SERVICES ? filter->streamings[streamingIndex].output.Get() : nullptr;
-        break;
-    case ROW_OUTPUT_RECORDING:
-        output = filter->recordingOutput.Get();
-        break;
-    case ROW_OUTPUT_REPLAY_BUFFER:
-        output = filter->replayBufferOutput.Get();
-        break;
-    default:
-        output = nullptr;
+    OBSOutputAutoRelease output;
+
+    pthread_mutex_lock(&branchOutput->outputMutex);
+    {
+        OBSMutexAutoUnlock locked(&branchOutput->outputMutex);
+
+        switch (outputType) {
+        case ROW_OUTPUT_STREAMING:
+            if (streamingIndex < MAX_SERVICES) {
+                output = obs_output_get_ref(branchOutput->streamings[streamingIndex].output);
+            }
+            break;
+        case ROW_OUTPUT_RECORDING:
+            output = obs_output_get_ref(branchOutput->recordingOutput);
+            break;
+        case ROW_OUTPUT_REPLAY_BUFFER:
+            output = obs_output_get_ref(branchOutput->replayBufferOutput);
+            break;
+        default:
+            break;
+        }
     }
 
     if (!output) {
@@ -1137,7 +1216,7 @@ void OutputTableRow::splitRecording()
         return;
     }
 
-    filter->splitRecording();
+    branchOutput->splitRecording();
 }
 
 void OutputTableRow::pauseRecording()
@@ -1146,7 +1225,7 @@ void OutputTableRow::pauseRecording()
         return;
     }
 
-    filter->pauseRecording();
+    branchOutput->pauseRecording();
 }
 
 void OutputTableRow::unpauseRecording()
@@ -1155,7 +1234,7 @@ void OutputTableRow::unpauseRecording()
         return;
     }
 
-    filter->unpauseRecording();
+    branchOutput->unpauseRecording();
 }
 
 void OutputTableRow::addChapterToRecording()
@@ -1164,7 +1243,18 @@ void OutputTableRow::addChapterToRecording()
         return;
     }
 
-    filter->addChapterToRecording();
+    branchOutput->addChapterToRecording();
+}
+
+void OutputTableRow::openSettings()
+{
+    // The strong ref defers the context source's destroy past the hook call below
+    OBSSourceAutoRelease contextSource = obs_weak_source_get_source(contextWeak);
+    if (!contextSource) {
+        return;
+    }
+
+    branchOutput->openSettings();
 }
 
 void OutputTableRow::updateRowId()
@@ -1233,6 +1323,8 @@ FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_sourc
     visibilityCheckbox->setChecked(obs_source_enabled(source));
     visibilityCheckbox->setCursor(Qt::PointingHandCursor);
 
+    // FIXME: the captured `source` is a raw pointer that libobs may release before the row is removed.
+    // Hold an OBSWeakSource and resolve it before use, as OutputCell does.
     connect(visibilityCheckbox, &QCheckBox::clicked, this, [source](bool visible) {
         obs_source_set_enabled(source, visible);
     });
@@ -1270,41 +1362,36 @@ void FilterCell::setTextValue(const QString &textValue)
 void FilterCell::onFilterRenamed(void *data, calldata_t *cd)
 {
     auto cell = static_cast<FilterCell *>(data);
-    cell->setTextValue(calldata_string(cd, "new_name"));
+    // OBS rename signals may fire from non-UI threads; marshal the QLabel
+    // mutation (and the renamed signal cascade) onto the UI thread to keep
+    // outputTableRows / Qt widgets touched only from the UI thread.
+    QString newName = QString::fromUtf8(calldata_string(cd, "new_name"));
+    QMetaObject::invokeMethod(
+        cell, [cell, newName]() { cell->setTextValue(newName); }, Qt::QueuedConnection
+    );
 }
 
 void FilterCell::onVisibilityChanged(void *data, calldata_t *cd)
 {
-    auto item = static_cast<FilterCell *>(data);
+    auto cell = static_cast<FilterCell *>(data);
+    // OBS enable signals may fire from non-UI threads; marshal the QCheckBox
+    // mutation onto the UI thread (Qt forbids QWidget state changes from
+    // threads other than the GUI thread).
     auto enabled = calldata_bool(cd, "enabled");
-    item->visibilityCheckbox->setChecked(enabled);
+    QMetaObject::invokeMethod(
+        cell, [cell, enabled]() { cell->visibilityCheckbox->setChecked(enabled); }, Qt::QueuedConnection
+    );
 }
 
 //--- ParentCell class ---//
 
-ParentCell::ParentCell(const QString &rowId, const QString &textValue, obs_source_t *_source, QWidget *parent)
-    : LabelCell(rowId, parent),
-      source(_source)
+ParentCell::ParentCell(const QString &rowId, const QString &textValue, QWidget *parent) : LabelCell(rowId, parent)
 {
-    parentRenamedSignal.Connect(obs_source_get_signal_handler(source), "rename", ParentCell::onParentRenamed, this);
-
     // Markup as link
     setTextFormat(Qt::RichText);
     setCursor(Qt::PointingHandCursor);
 
     setTextValue(textValue);
-}
-
-ParentCell::~ParentCell()
-{
-    parentRenamedSignal.Disconnect();
-}
-
-void ParentCell::onParentRenamed(void *data, calldata_t *cd)
-{
-    auto cell = static_cast<ParentCell *>(data);
-    auto newName = calldata_string(cd, "new_name");
-    cell->setTextValue(newName);
 }
 
 void ParentCell::setTextValue(const QString &textValue)
@@ -1318,9 +1405,7 @@ void ParentCell::setTextValue(const QString &textValue)
 void ParentCell::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
-        // Open filter properties dialog
-        obs_log(LOG_DEBUG, "uuid=%s", obs_source_get_uuid(source));
-        obs_frontend_open_source_filters(source);
+        emit clicked();
     }
 }
 
@@ -1399,7 +1484,12 @@ void OutputCell::openOutputFolder()
     if (!source) {
         return;
     }
-    OBSDataAutoRelease settings = obs_source_get_settings(source);
+    // The strong reference above keeps info.destroy from running, so the filter stays alive here.
+    auto *filter = BranchOutput::fromCallbackData(obs_obj_get_data(source));
+    if (!filter) {
+        return;
+    }
+    OBSDataAutoRelease settings = filter->getAppliedSettings();
     const char *path = nullptr;
 
     if (outputType == ROW_OUTPUT_RECORDING) {
@@ -1551,30 +1641,38 @@ void StatusCell::setTextValue(const QString &textValue)
     _item->setData(Qt::UserRole, textValue);
 }
 
-QList<BranchOutputFilterInfo> BranchOutputStatusDock::getFilterList() const
+// Snapshot reflects the last state seen by the UI thread; it may lag live OBS
+// state until the next rename signal or add/remove event is processed.
+// Built from the rows' own copies only: this runs from removeOutput(), where the
+// output QObject and its obs_source_t may already be freed, so it must not
+// dereference row->branchOutput or call libobs.
+QList<BranchOutputFilterInfo> BranchOutputStatusDock::buildFilterListSnapshot() const
 {
     QList<BranchOutputFilterInfo> list;
-    QSet<obs_source_t *> seen;
 
     foreach (auto row, outputTableRows) {
-        auto filter = row->filter;
-        if (seen.contains(filter->filterSource)) {
-            continue;
-        }
-        seen.insert(filter->filterSource);
-
-        auto parent = obs_filter_get_parent(filter->filterSource);
-        if (!parent) {
+        // The script API get_filter_list lists filters only
+        if (!row->contextIsFilter) {
             continue;
         }
 
-        list.append({
-            QString(obs_source_get_name(parent)),
-            QString(obs_source_get_uuid(parent)),
-            QString(obs_source_get_name(filter->filterSource)),
-            QString(obs_source_get_uuid(filter->filterSource)),
-        });
+        // addOutput() creates exactly one row with groupIndex 0 per output
+        if (row->groupIndex != 0) {
+            continue;
+        }
+
+        // Row was created after the filter had already left its parent
+        if (row->filterInfo.sourceUuid.isEmpty()) {
+            continue;
+        }
+
+        list.append(row->filterInfo);
     }
 
     return list;
+}
+
+void BranchOutputStatusDock::publishFilterListSnapshot()
+{
+    ::publishFilterListSnapshot(buildFilterListSnapshot());
 }

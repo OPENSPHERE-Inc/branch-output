@@ -28,6 +28,8 @@ runs:
         echo ::group::Install Dependencies
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
         echo "/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin" >> $GITHUB_PATH
+        # Runner images ship an outdated Homebrew with auto-update off; current formulae fail without this.
+        brew update --quiet
         brew install --quiet zsh
         echo ::endgroup::
 

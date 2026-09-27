@@ -37,6 +37,8 @@ endif()
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE src/plugin-main.cpp
+          src/branch-output.cpp
+          src/plugin-hotkey.cpp
           src/plugin-streaming.cpp
           src/plugin-stream-recording.cpp
           src/plugin-replay-buffer.cpp
