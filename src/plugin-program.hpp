@@ -18,49 +18,31 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #pragma once
 
-//#define NO_AUDIO
-
 #include <obs-module.h>
 #include <obs.hpp>
-#include <util/deque.h>
-#include <util/threading.h>
 
 #include <atomic>
 
-#include <QObject>
-#include <QSet>
+#include <QTimer>
 
-#include "UI/output-status-dock.hpp"
-#include "audio/audio-capture.hpp"
-#include "video/filter-video-capture.hpp"
-#include "video/crop-rect-preview-renderer.hpp"
-#include "utils.hpp"
 #include "branch-output.hpp"
 
-class BranchOutputFilter : public BranchOutput {
+#define PROGRAM_SOURCE_ID "osi_branch_output_program"
+
+// Branch Output fed by the OBS program output, backed by a private context source.
+class BranchOutputProgram : public BranchOutput {
     Q_OBJECT
 
-    QTimer *intervalTimer;
-    bool blankingOutputActive;
-    bool blankingAudioMuted;
+    QTimer *intervalTimer;                // UI thread. Exists only while attached.
+    OBSWeakSourceAutoRelease contextWeak; // Weak reference to contextSource
+    OBSSourceAutoRelease outputProxy;     // Guarded by outputMutex
+    std::atomic<bool> attached;
+    std::atomic<bool> suspended;
+    std::atomic<int> openProperties; // Live obs_properties_t objects made by getProperties()
+    OBSSignal renamedSignal;
+    OBSSignal enabledSignal;
 
-    // Crop context
-    OBSSceneAutoRelease cropScene; // Source output mode crop scene
-
-    // Filter input mode flag
-    bool useFilterInput;
-
-    // Filter input video capture (captures filter input and provides proxy source for obs_view)
-    FilterVideoCapture *filterVideoCapture;
-
-    // Source the current sync pass registers its hotkeys against (not owned). Non-null only
-    // between beginHotkeyRegistration() and endHotkeyRegistration(), under the hotkey mutex.
-    obs_source_t *hotkeyRegistrationTarget;
-
-    OBSSignal filterRenamedSignal;
-    OBSSignal parentRenamedSignal;
-
-    // Input: the parent source this filter is attached to
+    // Input: the program output of OBS
     bool validateInput() override;
     bool isInputAvailable() const override;
     QString getInputName() const override;
@@ -78,7 +60,7 @@ class BranchOutputFilter : public BranchOutput {
     BlankingState getBlankingState() const override;
     bool hasFilterPipeline() const override;
 
-    // Hotkey registration against the parent source
+    // Hotkeys are not registered
     bool canRegisterHotkeys() override;
     bool beginHotkeyRegistration() override;
     void endHotkeyRegistration() override;
@@ -91,27 +73,30 @@ class BranchOutputFilter : public BranchOutput {
     void openSettings() override;
     void updateCallback(obs_data_t *settings) override;
 
-    void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
-
-    void addCallback(obs_source_t *source);
     void videoTickCallback(float seconds);
     void videoRenderCallback(gs_effect_t *effect);
     void destroyCallback();
     obs_properties_t *getProperties();
+    void onPropertiesDestroyed();
 
-    static obs_audio_data *audioFilterCallback(void *param, obs_audio_data *audioData);
-
-    // Valid only for callbacks registered with the toCallbackData() of a BranchOutputFilter
-    static BranchOutputFilter *fromFilterCallbackData(void *data)
+    // Valid only for callbacks registered with the toCallbackData() of a BranchOutputProgram
+    static BranchOutputProgram *fromProgramCallbackData(void *data)
     {
-        return static_cast<BranchOutputFilter *>(fromCallbackData(data));
+        return static_cast<BranchOutputProgram *>(fromCallbackData(data));
     }
+    static void getProgramDefaults(obs_data_t *defaults);
 
-private slots:
-    void removeCallback();
+signals:
+    void persistRequested();
 
 public:
-    explicit BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
+    explicit BranchOutputProgram(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
 
-    static obs_source_info createFilterInfo();
+    void attach();                   // UI thread. Idempotent.
+    void detach();                   // UI thread. Idempotent.
+    void setSuspended(bool suspend); // UI thread.
+
+    // Caller holds a strong reference to source. Null when source is not a main output.
+    static BranchOutputProgram *fromSource(obs_source_t *source);
+    static obs_source_info createProgramInfo();
 };

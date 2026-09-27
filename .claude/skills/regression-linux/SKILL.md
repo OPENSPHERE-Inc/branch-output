@@ -13,7 +13,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 - The plugin build under test: a folder in install layout (`lib64/obs-plugins/osi-branch-output.so`, `share/obs/obs-plugins/osi-branch-output/`). When omitted, build the current checkout (Step 1).
 - Case IDs to run (default all).
-- An existing report to resume: reuse the work folder, the build, and the OBS version recorded in the report, and run only the cases that have no result. When the work folder is gone, redo Step 1 at the recorded work folder path without creating a new report; if the deployed `osi-branch-output.so` then differs from the recorded SHA-256, stop and ask the user. In that rebuilt folder, before a case that relies on an earlier case's setup (R14 on R13's hotkey assignments), redo that setup.
+- An existing report to resume: reuse the work folder, the build, and the OBS version recorded in the report, and run only the cases that have no result. When the work folder is gone, redo Step 1 at the recorded work folder path without creating a new report; if the deployed `osi-branch-output.so` then differs from the recorded SHA-256, stop and ask the user. In that rebuilt folder, before a case that relies on an earlier case's setup (R14 on R13's hotkey assignments, the M cases on M01's main output), redo that setup.
 
 ## Layout
 
@@ -41,7 +41,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 - Virtual display: `.claude/skills/regression-linux/scripts/display.sh start|stop <work>` runs Xvfb `:99` (1280x800) with openbox. Prefix every X client command with `DISPLAY=:99`: the shell's own `DISPLAY` is the user's desktop.
 - GUI: xdotool and screenshots on `:99`.
-  - Required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button at the bottom of its scrolled properties), the "Branch Output Status" dock, Settings → Hotkeys, Tools → Scripts, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
+  - Required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button at the bottom of its scrolled properties), a main output's properties dialog where a case checks it, the "Branch Output Status" dock (including its "Add Main Output" button), Settings → Hotkeys, Tools → Scripts, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
   - Screenshot with `import -window root <work>/shots/{name}.png` and Read the file; its pixels are screen coordinates. Click with `xdotool mousemove X Y click 1` (`click 3` for a context menu), scroll with `click 4` / `click 5`, type with `xdotool type`.
   - Take a fresh screenshot before each click: windows move when they reopen, and dialogs re-lay out when a setting changes, so earlier coordinates can hit another control. OBS renders in software (llvmpipe): wait about 1 s after an action before the screenshot; a window that is still black has not painted yet.
   - Take a screenshot of an opened dropdown before choosing an item: Qt opens the list with the current item over the box, so item positions change with the current value.
@@ -68,7 +68,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 ## Step 2 — Run the cases
 
-- Run the selected cases in ID order; mark the others N/A.
+- Run the selected cases in the order of `cases.md` (R01–R19, then M01–M10); mark the others N/A.
 - Write each result into the report as soon as its case finishes.
 - Result values: PASS, FAIL, SKIP (a prerequisite is missing on this machine; give the reason), BLOCKED (an earlier failure prevents the case; name it), N/A.
 - When a missing prerequisite rules out only some items of a case, judge the case on the remaining items, and list the skipped items in the Notes column and under "Not covered".

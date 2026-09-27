@@ -235,3 +235,153 @@ Do and Pass:
 - Toggle the filter's eye icon five times quickly while every output runs: the filter ends in the last state, and no failure line is logged.
 - Switch to the scene collection `BORegression2` and back, once with outputs running and once with them stopped: no crash, and the dock lists only the current collection's filters.
 - Quit OBS once with outputs running and once with them stopped, each from a session launched for this item: shutdown completes, no new `OBS*.ips` appears in `~/Library/Logs/DiagnosticReports/`, and the log ends with `Number of memory leaks: 0`. Other sessions can end with leaks of OBS itself (the first session of an instance; on 30.1.2, one per SRT `Failed to open the url`).
+
+## Main output
+
+A main output is a Branch Output whose input is OBS's program output instead of a source. It belongs to a profile and is saved in `branchOutputPrograms.json` in the profile's folder, `<config>/basic/profiles/{profile}/`.
+
+- Add one with the "Add Main Output" button at the left end of the dock's bottom button row. It creates `Main Output {N}`, with the smallest number that no main output of the profile uses, and opens its properties in OBS's standard properties dialog. Its dock rows show the name in the Filter column and `Main Output` in the Source column; clicking the Source cell opens the dialog.
+- Change its settings through obs-websocket `SetInputSettings` with `inputUuid` set to its `uuid` in `outputs` of `branchOutputPrograms.json`, read from the file each time. The change applies at once, like the dialog's OK, with no Apply. A main output is a private source: obs-websocket finds it by UUID, not by name. Type no text or numbers into the dialog, for the reason in SKILL.md's "Avoid typing".
+- Use the dialog only in the steps a case marks "in the dialog", where the case checks the dialog itself. There too, operate only lists, checkboxes, and buttons.
+- Change no setting through obs-websocket while a main output's dialog is open: the dialog's Cancel restores and reapplies the settings it opened with.
+- Keep the default name.
+- Close with Cancel a dialog opened only to look.
+- Before M01, reduce the program picture to the four quadrants of `quad.png`, because state left by the R cases skews the color checks:
+  - Delete every filter the R cases left on the sources and scenes of `BORegression`, of any kind (Branch Output, Color Correction, and so on).
+  - Point `Quad` back at `quad.png`.
+  - Hide `Name` (obs-websocket `SetSceneItemEnabled`).
+- Defaults unless a case says otherwise: no filter in `BORegression` other than those the case adds; one main output, `Main Output 1` from M01, with x264, Stream Recording on, and Resolution at its default "Output (Stretch to fit)"; dock Interlock "Always ON", every dock checkbox on, `Main` in Program, and Studio Mode off.
+- Keep a main output's recordings and replay buffer saves in its default folder, the profile's recording path, where OBS's own recordings also go, and tell the files apart by name. The default file name format is `%1 %2 {the profile's format}`, where `%1` expands to `Main Output` and `%2` to the main output's name.
+- M02–M10 use M01's main output. When it is missing (for example on a resume in a rebuilt work folder), first create it as M01's Do does, with x264.
+- To remove a main output (to redo a case, or to resume R cases on the same version), delete its element from `outputs` in `branchOutputPrograms.json` while OBS is closed. To delete the whole file, also delete `branchOutputPrograms.json.bak` and any `branchOutputPrograms.json.tmp`: the plugin loads the `.bak` when it cannot read the file. The R cases assume that the profile has no main output.
+
+While #208 is open (checked as above), set `codec_type` to 0 through obs-websocket, by `inputUuid`, on each main output after its first dialog closes and before it records with an encoder other than Apple VT, and record the workaround under "Plugin, known issues". The items under the #208 paragraph above apply to main outputs as well.
+
+- M01: set `codec_type` to 0 in the same `SetInputSettings` call that switches to x264: a separate call restarts the output for `codec_type` alone and splits the Apple VT recording into two files.
+- M08: set it on both main outputs added there.
+
+The 30.1.2 ffmpeg-mux rule above applies to main output recordings too. In the M cases, keep the main output's recording the only one running: before M10, turn off the recording of the filter in the scene collection `BORegression2` if it is on.
+
+### M01 Add and configure — all
+
+Do: delete `recently.json` as in R01, and set the profile's streaming encoder to the hardware encoder of R01. Press "Add Main Output", check the items of the dialog it opens (turn Custom Audio Source on to see the audio source list, and off again), turn Stream Recording on in the dialog, and close it with OK without pressing the dialog's Apply. Record about 10 s. Then set the profile encoder back to x264, set the main output's `video_encoder` to x264, and record again.
+
+Pass:
+
+- The dock lists `Main Output 1`'s rows, with `Main Output 1` in the Filter column and `Main Output` in the Source column.
+- The recording starts within 5 s of the OK, and the dock's recording row shows "Recording" (unlike a filter, without the dialog's Apply).
+- The dialog has no "Video Source" list, no "Blank output when source is not in Main Output" or "Mute audio while blanked", and no "Filter Audio" among the audio sources. Resolution defaults to "Output (Stretch to fit)".
+- The new main output's Video Encoder is the profile's hardware encoder. Without a hardware encoder, use x264 and note it, as in R01.
+- Both recordings play, are 1280x720, and show the four quadrants of `quad.png` in the program's layout. Each has one audio stream carrying both the 1 kHz and the 440 Hz tone (the default audio is master track 1).
+- The file names expand `%1` to `Main Output` and `%2` to `Main Output 1`.
+- `branchOutputPrograms.json` in the profile's folder lists `Main Output 1`.
+- The source add menu has no "Branch Output Main Output" or "Branch Output Program Proxy", and no source derived from the main output appears in the Sources list or in any source picker (as R08 checks for "Branch Output Proxy").
+
+### M02 Apply semantics — all
+
+Do and Pass, every step in the dialog, with `Main Output 1` recording. Count restarts by the `Settings change detected, Attempting restart` lines.
+
+- Set Resolution to "Half of source (50%)" and press Cancel: no restart, and on reopening Resolution is "Output (Stretch to fit)".
+- Set Resolution to "Half of source (50%)" and press the dialog's Apply: one restart with the dialog still open, and the recording is 640x360. Then press OK: no restart.
+- Open the dialog and press OK without a change: no restart (unlike a filter's Apply without a change, #178).
+- Open the dialog, set Resolution back to "Output (Stretch to fit)", press the dialog's Apply (one restart), and then Cancel: one more restart, back to 640x360, the settings the dialog opened with. On reopening Resolution is "Half of source (50%)". Finally set "Output (Stretch to fit)" and press OK: one restart, back to 1280x720.
+- Turn Replay Buffer on without applying: no replay buffer starts. Press OK: one restart, then "Buffering". Afterwards turn Replay Buffer off through obs-websocket.
+
+### M03 Streaming, recording, and replay buffer — all
+
+Do: turn Streaming on with Stream Count 2 (each slot pointing at its own local RTMP receiver), Stream Recording on, and Replay Buffer on with Maximum Replay Time 10 s and the video encoder's keyframe interval 1 s. Wait more than 10 s, then save with the replay buffer row's Save button.
+
+Pass:
+
+- Both receivers get 1280x720 video and both tones. The dock shows both slots "Live" with growing Sent Size and Bitrate, the recording "Recording", and the replay buffer "Buffering".
+- Unchecking slot 2 in the dock stops only slot 2; checking it again resumes it.
+- The recording plays, and its duration meets R03's criterion.
+- The save meets R05's criteria: one file, about 10 s long and at most 11 s, with video and audio, and `Replay buffer saved` logged.
+
+Afterwards turn Streaming and Replay Buffer off, keeping Stream Recording on.
+
+### M04 Program output, transitions, and Studio Mode — all
+
+Do: `Main Output 1` records only. Through obs-websocket, set the transition to Fade with a duration of 2000 ms. While recording, switch Program from `Main` to `Other` and back to `Main`. Then turn Studio Mode on with `Main` in Program and `Other` in Preview, wait 3 s, open the dialog from the Source cell, check its preview, close it with Cancel, and transition `Other` to Program. Finally turn Studio Mode off, set the transition duration back to 300 ms, and put `Main` back in Program.
+
+Pass:
+
+- While `Main` is in Program the output shows the four quadrants, and while `Other` is in Program the solid color of `Other`. Frames during each 2 s fade blend the two (neither pure color).
+- Studio Mode: while `Other` is only in Preview the output shows `Main`; after the transition it shows `Other`.
+- The dialog's preview opened in Studio Mode shows the Program (`Main`).
+- No dock status ends with "(Blank)" or "(Blank+Mute)".
+
+### M05 Video output — all
+
+Do:
+
+1. Record about 5 s with each setting: Resolution "Half of source (50%)"; Custom 640x360 with Frame Rate Divider 1/2.
+2. Set Resolution back to "Output (Stretch to fit)" with no divider, set a Relative crop keeping only the top-left quadrant, and also set the Absolute crop values to the bottom-right quadrant, keeping `crop_type` Relative. Record about 5 s.
+3. With the recording running, open the dialog from the Source cell, turn "Preview Cropping Rect" on in the dialog, and check the preview. Switch Cropping to "Absolute (Region)" in the dialog, check the preview, wait about 5 s, close the dialog with OK, and record about 5 s.
+4. Reopen the dialog, turn only "Preview Cropping Rect" on in it, and close it with OK.
+5. Set `crop_type` back to no crop. Set the dock Interlock to "Always OFF"; once every row is "Inactive", set Settings → Video → Output (Scaled) Resolution to 640x360 and press OK. Set Interlock back to "Always ON" and record about 5 s. Finally restore 1280x720 the same way (Always OFF, every row "Inactive", 1280x720, Always ON).
+
+Pass:
+
+- Step 1: each output is 640x360. The divider recording runs at half the canvas frame rate (15 fps).
+- Step 2: the output is 1280x720 (OBS's output resolution, the cropped quadrant stretched to fit) and filled with the top-left quadrant's color. After the OK of step 3, it is filled with the bottom-right quadrant's color.
+- Step 3: the dialog's preview shows the whole uncropped program with a rectangle drawn over it, around the top-left quadrant once "Preview Cropping Rect" is on and around the bottom-right quadrant once "Absolute (Region)" is selected. Until the OK, the output stays on the top-left quadrant and does not restart. OBS's main preview shows no rectangle.
+- Step 4: on reopening, "Preview Cropping Rect" is off and the preview shows no rectangle. The OK after turning only it on causes no restart.
+- Step 5: the recording is 640x360, and changing the video settings does not crash OBS.
+
+### M06 Audio sources — latest
+
+Do: record about 10 s with each audio setting, Custom Audio Source on: source `Tone440`; Master Audio track 1; No Audio; Multitrack Audio with track 1 = Master Audio track 1, track 2 = `Tone440`, and track 3 = Disabled. Keep recording with the Multitrack setting, switch the scene collection to `BORegression2`, wait about 10 s, and switch back. Finally turn Custom Audio Source off.
+
+Pass (check the audio stream count and each stream's dominant frequency, as in R06):
+
+- `Tone440`: 440 Hz only. Master Audio: both tones. No Audio: one silent audio stream.
+- Multitrack: one audio stream per enabled track (both tones; 440 Hz); the Disabled track has no stream.
+- The recording file started while `BORegression2` is loaded has one audio stream (Master Audio), and the log shows `Ignore audio source for track 2`. The file started after returning to `BORegression` has two streams again, the second at 440 Hz.
+
+### M07 Status dock and interlock — all
+
+Do: add a Branch Output filter to `Media` with only Streaming on, pointing at its own local RTMP receiver, and Apply. On `Main Output 1`, turn Streaming on with one slot pointing at another receiver, Stream Recording on, Replay Buffer on, and Automatic File Splitting set to "Only split manually" (without a split setting, Split All does nothing).
+
+Pass:
+
+- Disabling `Main Output 1` with the eye icon in its Filter cell turns its rows "Inactive" within 5 s while the filter keeps running. Enabling it resumes its outputs.
+- "Deactivate All" and "Activate All" stop and resume both the filter and `Main Output 1`, and their eye icons follow.
+- "Split All" splits `Main Output 1`'s recording to a new file, and "Save All Replay Buffers" saves `Main Output 1`'s replay buffer.
+- A `Main Output 1` row's Reset sets only that row's dropped frames back to 0.
+- Clicking the folder cell of `Main Output 1`'s recording or replay buffer row opens its save folder in Finder, judged as in R12.
+- Clicking a `Main Output 1` Source cell opens its dialog, OBS's standard properties dialog. Close it with Cancel.
+- With Interlock set to Streaming, start and stop OBS's streaming: `Main Output 1`'s outputs run only while OBS streams, starting and stopping within 5 s, and OBS's own stream reaches the profile's receiver with video and audio.
+
+Afterwards set Interlock back to "Always ON", delete the filter on `Media`, and turn `Main Output 1`'s Streaming, Replay Buffer, and Automatic File Splitting off.
+
+### M08 Persistence — all
+
+Do and Pass, with Stream Recording and Replay Buffer on in `Main Output 1`:
+
+- Uncheck the replay buffer row in the dock, then restart OBS: `Main Output 1` is listed with its settings kept (Stream Recording and Replay Buffer on, x264), its recording runs again, and its replay buffer stays unchecked, without "Buffering". Check it again.
+- Disable `Main Output 1` with the eye icon in its Filter cell, then restart OBS: it is listed disabled and runs nothing. Enabling it starts its outputs.
+- While it records, switch the profile to `BORegression2`: `Main Output 1`'s rows leave the dock, its recording stops, and the file plays. In `BORegression2`, set the dock Interlock to "Always ON" and press "Add Main Output" twice, closing each dialog with Cancel: `Main Output 1` and `Main Output 2` appear. Turn only Replay Buffer on in `BORegression2`'s `Main Output 1`.
+  - Switch back to `BORegression`: only `BORegression`'s `Main Output 1` is listed, with its settings kept, and its recording runs again.
+  - Switch to `BORegression2` again: its two main outputs are listed, `Main Output 1` shows "Buffering", and `Main Output 2` runs nothing.
+  - Each profile's `branchOutputPrograms.json` lists only that profile's main outputs (two in `BORegression2`).
+  - Finally switch back to `BORegression`.
+
+Afterwards turn Replay Buffer off.
+
+### M09 Script filter list — all
+
+Do: add a Branch Output filter to `Media` and Apply. Load `recording-filename-from-text.lua` as R17's Do does, and open that script's filter list in Tools → Scripts.
+
+Pass: the list has the filter on `Media` and no `Main Output 1`.
+
+Afterwards remove the script and delete the filter on `Media`.
+
+### M10 Lifecycle and shutdown — all
+
+Do and Pass, where "outputs running" means `Main Output 1`'s Streaming, Stream Recording, and Replay Buffer all running:
+
+- Toggle the eye icon in `Main Output 1`'s Filter cell five times quickly while its outputs run: it ends in the last state, and no failure line is logged.
+- Switch the scene collection to `BORegression2` and back, once with outputs running and once with `Main Output 1` disabled by its eye icon: no crash, and after each switch the dock lists each of `Main Output 1`'s rows once (they may disappear during the switch). With outputs running, they stop during the switch and run again after it: each switch starts a new recording file, and the receiver gets data again.
+- Quit OBS from three sessions, each launched for this item: one with outputs running, one with them stopped, and one with outputs running after switching the profile to `BORegression2` and back and then the scene collection to `BORegression2` and back. Each shutdown completes with no crash evidence, and the log ends with `Number of memory leaks: 0` (crash evidence and allowed leaks as in R19).
+  - When only the session with the switches ends with leaks, repeat it with no main output, after moving `branchOutputPrograms.json` and its `.bak` of both `BORegression` and `BORegression2` aside while OBS is closed. If that session also leaks, record it under "OBS" in "Observations" and do not fail the item; otherwise fail the item. Finally move the files back.

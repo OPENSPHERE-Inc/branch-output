@@ -43,10 +43,13 @@ target_sources(
           src/plugin-stream-recording.cpp
           src/plugin-replay-buffer.cpp
           src/plugin-ui.cpp
+          src/plugin-program.cpp
+          src/program-manager.cpp
           src/utils.cpp
           src/audio/audio-capture.cpp
           src/video/filter-video-capture.cpp
           src/video/crop-rect-preview-renderer.cpp
+          src/video/main-texture-proxy.cpp
           src/UI/output-status-dock.cpp
           src/UI/resources.qrc)
 
