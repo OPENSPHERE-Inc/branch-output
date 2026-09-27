@@ -121,7 +121,7 @@ void BranchOutput::initializeSettings(obs_data_t *settings, bool initialCreation
         bool hasAnyServer = countEnabledStreamings(settings) > 0;
         obs_data_set_bool(settings, "streaming_enabled", hasAnyServer);
     }
-    pinOutputTypeSwitches(settings);
+    pinOutputLineup(settings);
 
     // FIXME: obs_save_source() / obs_source_duplicate() persist the live settings, so edits never
     // applied in the properties dialog arrive here and get published as applied. Store the
@@ -154,15 +154,39 @@ void BranchOutput::initializeSettings(obs_data_t *settings, bool initialCreation
     );
 }
 
-// Discard in the properties dialog restores only the keys that had a user value when it opened, so
-// the output type switches keep their current value as a user value.
-void BranchOutput::pinOutputTypeSwitches(obs_data_t *settings)
+// Discard in the properties dialog restores only the keys that had a user value when it opened,
+// so the keys that decide which outputs run and where they stream keep their current value as a
+// user value.
+void BranchOutput::pinOutputLineup(obs_data_t *settings)
 {
-    const char *switchKeys[] = {"streaming_enabled", "stream_recording", "replay_buffer"};
-    for (auto key : switchKeys) {
+    auto pinBool = [settings](const char *key) {
         if (!obs_data_has_user_value(settings, key)) {
             obs_data_set_bool(settings, key, obs_data_get_bool(settings, key));
         }
+    };
+    auto pinString = [settings](const char *key) {
+        if (!obs_data_has_user_value(settings, key)) {
+            // Copied first: writing the user value can invalidate the returned pointer
+            QByteArray value = obs_data_get_string(settings, key);
+            obs_data_set_string(settings, key, value.constData());
+        }
+    };
+
+    pinBool("streaming_enabled");
+    pinBool("stream_recording");
+    pinBool("replay_buffer");
+
+    if (!obs_data_has_user_value(settings, "service_count")) {
+        obs_data_set_int(settings, "service_count", obs_data_get_int(settings, "service_count"));
+    }
+
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        auto propNameFormat = getIndexedPropNameFormat(i);
+        pinString(qUtf8Printable(propNameFormat.arg("server")));
+        pinString(qUtf8Printable(propNameFormat.arg("key")));
+        pinBool(qUtf8Printable(propNameFormat.arg("use_auth")));
+        pinString(qUtf8Printable(propNameFormat.arg("username")));
+        pinString(qUtf8Printable(propNameFormat.arg("password")));
     }
 }
 
@@ -1329,13 +1353,6 @@ std::optional<CropRect> BranchOutput::calculateCrop(uint32_t srcWidth, uint32_t 
         return CropRect{0, 0, srcWidth, srcHeight};
     }
 
-    // Round to multiples of 2 (encoder requirement)
-    crop.left += (crop.left & 1);
-    crop.top += (crop.top & 1);
-    crop.width &= ~1u;
-    crop.height &= ~1u;
-
-    // Rounding can reduce dimensions to 0
     if (crop.width == 0 || crop.height == 0) {
         return std::nullopt;
     }
