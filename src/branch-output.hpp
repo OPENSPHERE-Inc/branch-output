@@ -402,7 +402,6 @@ protected:
     explicit BranchOutput(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
     // Completes construction from the settings handed to info.create. Calls no virtual hook.
     void initializeSettings(obs_data_t *settings, bool initialCreation, bool inheritRecentCrop);
-    static void pinOutputTypeSwitches(obs_data_t *settings);
 
 signals:
     void outputUserEnabledChanged();
@@ -415,6 +414,8 @@ public:
     ~BranchOutput();
 
     OBSDataAutoRelease getAppliedSettings() { return appliedSettings.get(); }
+
+    static void pinOutputLineup(obs_data_t *settings);
 
     // The only conversion between an instance and the data pointer handed to OBS callbacks
     static BranchOutput *fromCallbackData(void *data) { return static_cast<BranchOutput *>(data); }
