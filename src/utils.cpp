@@ -22,6 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 
 #include <QWidget>
+#include <QFileInfo>
 
 #include "utils.hpp"
 #include "plugin-support.h"
@@ -105,15 +106,9 @@ bool ensureOutputDirectory(const char *path)
         return true;
     }
 
-    // os_mkdirs() returns MKDIR_ERROR for an existing Windows drive root,
-    // so accept any folder that can be opened.
-    os_dir_t *dir = os_opendir(path);
-    if (!dir) {
-        return false;
-    }
-
-    os_closedir(dir);
-    return true;
+    // os_mkdirs() returns MKDIR_ERROR for an existing Windows drive root, and os_opendir()
+    // fails on an empty drive root, so check the directory attribute.
+    return QFileInfo(QString::fromUtf8(path)).isDir();
 }
 
 // Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1888
