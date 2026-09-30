@@ -326,7 +326,7 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
     auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
 
     // The encoder shares the passed settings object and writes into it (get_defaults, migrations).
-    OBSDataAutoRelease encoderSettings = duplicateSettings(settings);
+    OBSDataAutoRelease encoderSettings = createEncoderSettings(video_encoder_id, settings);
     videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), encoderSettings, nullptr);
     if (!videoEncoder) {
         obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));

@@ -26,6 +26,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/dstr.h>
 
 #include <optional>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 #include <QString>
 #include <QStringList>
@@ -218,6 +221,47 @@ inline OBSDataAutoRelease duplicateSettings(obs_data_t *src)
     applyDefaults(copy, defaults);
     obs_data_apply(copy, src);
     return copy;
+}
+
+inline void collectPropertyNames(obs_properties_t *props, std::unordered_set<std::string> &names)
+{
+    for (auto prop = obs_properties_first(props); prop; obs_property_next(&prop)) {
+        names.insert(obs_property_name(prop));
+        if (obs_property_get_type(prop) == OBS_PROPERTY_GROUP) {
+            collectPropertyNames(obs_property_group_content(prop), names);
+        }
+    }
+}
+
+// Carries only the user values of the keys the encoder declares (its defaults and properties),
+// leaving out the default layer and the undeclared keys of settings. settings is not modified.
+inline OBSDataAutoRelease createEncoderSettings(const char *encoderId, obs_data_t *settings)
+{
+    std::unordered_set<std::string> declaredKeys;
+
+    OBSDataAutoRelease defaults = obs_encoder_defaults(encoderId);
+    for (auto item = obs_data_first(defaults); item; obs_data_item_next(&item)) {
+        declaredKeys.insert(obs_data_item_get_name(item));
+    }
+
+    OBSProperties props = obs_get_encoder_properties(encoderId);
+    collectPropertyNames(props, declaredKeys);
+
+    OBSDataAutoRelease encoderSettings = obs_data_create();
+    obs_data_apply(encoderSettings, settings);
+
+    std::vector<std::string> undeclaredKeys;
+    for (auto item = obs_data_first(encoderSettings); item; obs_data_item_next(&item)) {
+        auto name = obs_data_item_get_name(item);
+        if (!declaredKeys.count(name)) {
+            undeclaredKeys.push_back(name);
+        }
+    }
+    for (const auto &key : undeclaredKeys) {
+        obs_data_erase(encoderSettings, key.c_str());
+    }
+
+    return encoderSettings;
 }
 
 // Default SRT listener accept timeout in microseconds (matches the unit of the
