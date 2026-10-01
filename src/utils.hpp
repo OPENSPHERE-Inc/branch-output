@@ -423,6 +423,26 @@ inline const char *getSimpleVideoEncoder(const char *encoder)
 }
 
 // Hardcoded in obs-studio/UI/window-basic-main-outputs.cpp
+inline const char *getSimplePresetConfigName(const char *encoder)
+{
+    if (!strcmp(encoder, SIMPLE_ENCODER_QSV) || !strcmp(encoder, SIMPLE_ENCODER_QSV_AV1)) {
+        return "QSVPreset";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD) || !strcmp(encoder, SIMPLE_ENCODER_AMD_HEVC)) {
+        return "AMDPreset";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_AMD_AV1)) {
+        return "AMDAV1Preset";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC)) {
+        return "NVENCPreset2";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC_HEVC)) {
+        return "NVENCPreset2";
+    } else if (!strcmp(encoder, SIMPLE_ENCODER_NVENC_AV1)) {
+        return "NVENCPreset2";
+    }
+
+    return "Preset";
+}
+
+// Hardcoded in obs-studio/UI/window-basic-main-outputs.cpp
 inline const char *getSimpleAudioEncoder(const char *encoder)
 {
     if (!strcmp(encoder, "opus")) {

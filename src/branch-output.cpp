@@ -480,15 +480,19 @@ void BranchOutput::loadProfile(obs_data_t *settings)
         }
 
     } else {
-        videoEncoderId = getSimpleVideoEncoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
+        auto streamEncoder = config_get_string(config, "SimpleOutput", "StreamEncoder");
+        videoEncoderId = getSimpleVideoEncoder(streamEncoder);
         audioEncoderId = getSimpleAudioEncoder(config_get_string(config, "SimpleOutput", "StreamAudioEncoder"));
         audioBitrate = config_get_uint(config, "SimpleOutput", "ABitrate");
 
         auto videoBitrate = config_get_uint(config, "SimpleOutput", "VBitrate");
         obs_data_set_int(settings, "bitrate", videoBitrate);
 
-        auto preset = config_get_string(config, "SimpleOutput", "Preset");
-        obs_data_set_string(settings, "preset", preset);
+        // The preset keys of some stream encoders have no value until the output settings are saved.
+        auto preset = config_get_string(config, "SimpleOutput", getSimplePresetConfigName(streamEncoder));
+        if (preset && *preset) {
+            obs_data_set_string(settings, "preset", preset);
+        }
 
         auto preset2 = config_get_string(config, "SimpleOutput", "NVENCPreset2");
         obs_data_set_string(settings, "preset2", preset2);
