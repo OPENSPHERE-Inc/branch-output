@@ -40,6 +40,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QCursor>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QScrollBar>
 
 #include <algorithm>
 
@@ -145,6 +146,13 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     rowDelegate = new OutputTableRowDelegate(outputTable);
     outputTable->setItemDelegate(rowDelegate);
     outputTable->viewport()->installEventFilter(this);
+    connect(outputTable->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]() {
+        auto viewport = outputTable->viewport();
+        if (!viewport->underMouse()) {
+            return;
+        }
+        rowDelegate->setHoveredRow(outputTable->rowAt(viewport->mapFromGlobal(QCursor::pos()).y()));
+    });
     outputTable->setColumnCount(8);
     outputTable->sortItems(sortingColumnIndex, sortingOrder);
 
