@@ -466,7 +466,7 @@ bool BranchOutput::createAndStartRecordingOutputChecked(obs_data_t *settings)
     uint32_t sourceHeight;
     getSourceResolution(sourceWidth, sourceHeight);
 
-    recordingPending = (sourceWidth == 0 || sourceHeight == 0) &&
+    recordingPending = (sourceWidth == 0 || sourceHeight == 0) && hasFilterPipeline() &&
                        obs_data_get_bool(settings, "suspend_recording_when_source_collapsed");
     if (!recordingPending) {
         createAndStartRecordingOutput(settings);

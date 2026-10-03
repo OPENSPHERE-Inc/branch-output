@@ -1085,7 +1085,7 @@ void BranchOutput::onIntervalTimerTimeout()
                         }
                     } else {
                         // The source is collapsed or crop would produce 0x0
-                        if (!recordingPending && recordingActive &&
+                        if (!recordingPending && recordingActive && hasFilterPipeline() &&
                             obs_data_get_bool(settings, "suspend_recording_when_source_collapsed")) {
                             if (!streamingActive) {
                                 // Recording only -> Pause the recording
