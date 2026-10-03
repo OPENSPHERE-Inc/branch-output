@@ -247,7 +247,7 @@ Pass:
 
 - The dock lists `Main Output 1`'s rows, with `Main Output 1` in the Filter column and `Main Output` in the Source column.
 - The recording starts within 5 s of the OK, and the dock's recording row shows "Recording" (unlike a filter, without the dialog's Apply).
-- The dialog has no "Video Source" list, no "Blank output when source is not in Main Output" or "Mute audio while blanked", and no "Filter Audio" among the audio sources. Resolution defaults to "Output (Stretch to fit)".
+- The dialog has no "Video Source" list, no "Blank output when source is not in Main Output" or "Mute audio while blanked", no "Suspend recording when source is not available" in Stream Recording, and no "Filter Audio" among the audio sources. Resolution defaults to "Output (Stretch to fit)".
 - The new main output's Video Encoder is the profile's hardware encoder. Without a hardware encoder, use x264 and note it, as in R01.
 - Both recordings play, are 1280x720, and show the four quadrants of `quad.png` in the program's layout. Each has one audio stream carrying both the 1 kHz and the 440 Hz tone (the default audio is master track 1).
 - The file names expand `%1` to `Main Output` and `%2` to `Main Output 1`.

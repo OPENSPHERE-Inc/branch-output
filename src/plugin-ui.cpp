@@ -430,13 +430,15 @@ void BranchOutput::addRecordingGroup(obs_properties_t *props)
     );
 
     // Pausing settings
-    auto suspendRecordingWhenSourceCollapsed = obs_properties_add_bool(
-        recordingGroup, "suspend_recording_when_source_collapsed",
-        obs_module_text("SuspendRecordingWhenSourceCollapsed")
-    );
-    obs_property_set_long_description(
-        suspendRecordingWhenSourceCollapsed, obs_module_text("SuspendRecordingWhenSourceCollapsedNote")
-    );
+    if (hasFilterPipeline()) {
+        auto suspendRecordingWhenSourceCollapsed = obs_properties_add_bool(
+            recordingGroup, "suspend_recording_when_source_collapsed",
+            obs_module_text("SuspendRecordingWhenSourceCollapsed")
+        );
+        obs_property_set_long_description(
+            suspendRecordingWhenSourceCollapsed, obs_module_text("SuspendRecordingWhenSourceCollapsedNote")
+        );
+    }
 
     // Group with checkable toggle (reuse stream_recording key for backward compat)
     auto recordingProp = obs_properties_add_group(
