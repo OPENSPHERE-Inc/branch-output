@@ -45,8 +45,7 @@ obs_data_t *BranchOutput::createReplayBufferSettings(obs_data_t *settings)
     }
 
     // Create directory
-    int ret = os_mkdirs(path);
-    if (ret == MKDIR_ERROR) {
+    if (!ensureOutputDirectory(path)) {
         obs_log(LOG_ERROR, "%s: Failed to create replay buffer directory: %s", qUtf8Printable(name), path);
         obs_data_release(replaySettings);
         return nullptr;

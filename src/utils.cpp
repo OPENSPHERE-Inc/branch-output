@@ -95,6 +95,27 @@ void findBestFilename(QString &strPath, bool noSpace)
     }
 }
 
+bool ensureOutputDirectory(const char *path)
+{
+    if (!path || !path[0]) {
+        return false;
+    }
+
+    if (os_mkdirs(path) != MKDIR_ERROR) {
+        return true;
+    }
+
+    // os_mkdirs() returns MKDIR_ERROR for an existing Windows drive root,
+    // so accept any folder that can be opened.
+    os_dir_t *dir = os_opendir(path);
+    if (!dir) {
+        return false;
+    }
+
+    os_closedir(dir);
+    return true;
+}
+
 // Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1888
 QString getOutputFilename(const char *path, const char *container, bool noSpace, bool overwrite, const char *format)
 {

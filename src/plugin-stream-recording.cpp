@@ -46,8 +46,7 @@ obs_data_t *BranchOutput::createRecordingSettings(obs_data_t *settings, bool cre
     }
 
     if (createFolder) {
-        int ret = os_mkdirs(path);
-        if (ret == MKDIR_ERROR) {
+        if (!ensureOutputDirectory(path)) {
             obs_log(LOG_ERROR, "%s: Failed to create recording directory: %s", qUtf8Printable(name), path);
             obs_data_release(recordingSettings);
             return nullptr;

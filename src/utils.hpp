@@ -39,6 +39,7 @@ struct CropRect {
     uint32_t height;
 };
 
+bool ensureOutputDirectory(const char *path);
 QString getOutputFilename(const char *path, const char *container, bool noSpace, bool overwrite, const char *format);
 QString getFormatExt(const char *container);
 
