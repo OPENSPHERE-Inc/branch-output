@@ -259,6 +259,8 @@ void BranchOutputProgram::openSettings()
     pinOutputLineup(settings);
     // The dialog detects unsaved changes by comparing JSON in key order, and a default added to
     // a key with a user value moves the key to the end: add the encoder defaults before it opens.
+    // FIXME: switching the encoder in the dialog adds its defaults and moves keys the same way,
+    // so Cancel prompts and Cancel on the prompt drops the switch. Keep key order across switches.
     applyVideoEncoderDefaults(settings);
 
     obs_frontend_open_source_properties(contextSource);
