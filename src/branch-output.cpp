@@ -325,8 +325,11 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
     //--- Setup video encoder ---//
     auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
 
-    // The encoder shares the passed settings object and writes into it (get_defaults, migrations).
-    OBSDataAutoRelease encoderSettings = createEncoderSettings(video_encoder_id, settings);
+    // The encoder shares the settings object it is given and writes into it (get_defaults, migrations).
+    // It gets the user values only: the default layer also holds the defaults of encoders selected
+    // earlier in the properties, and the encoder sets its own defaults.
+    OBSDataAutoRelease encoderSettings = obs_data_create();
+    obs_data_apply(encoderSettings, settings);
     videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), encoderSettings, nullptr);
     if (!videoEncoder) {
         obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));
@@ -480,19 +483,15 @@ void BranchOutput::loadProfile(obs_data_t *settings)
         }
 
     } else {
-        auto streamEncoder = config_get_string(config, "SimpleOutput", "StreamEncoder");
-        videoEncoderId = getSimpleVideoEncoder(streamEncoder);
+        videoEncoderId = getSimpleVideoEncoder(config_get_string(config, "SimpleOutput", "StreamEncoder"));
         audioEncoderId = getSimpleAudioEncoder(config_get_string(config, "SimpleOutput", "StreamAudioEncoder"));
         audioBitrate = config_get_uint(config, "SimpleOutput", "ABitrate");
 
         auto videoBitrate = config_get_uint(config, "SimpleOutput", "VBitrate");
         obs_data_set_int(settings, "bitrate", videoBitrate);
 
-        // The preset keys of some stream encoders have no value until the output settings are saved.
-        auto preset = config_get_string(config, "SimpleOutput", getSimplePresetConfigName(streamEncoder));
-        if (preset && *preset) {
-            obs_data_set_string(settings, "preset", preset);
-        }
+        auto preset = config_get_string(config, "SimpleOutput", "Preset");
+        obs_data_set_string(settings, "preset", preset);
 
         auto preset2 = config_get_string(config, "SimpleOutput", "NVENCPreset2");
         obs_data_set_string(settings, "preset2", preset2);
