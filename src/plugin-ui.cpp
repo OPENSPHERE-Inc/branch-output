@@ -1008,15 +1008,18 @@ static bool listContainsSettingsValue(obs_property_t *list, obs_data_t *settings
 }
 
 // Resets the setting of the first non-editable list in props (groups included) whose value is
-// not among the list items to the default, and returns whether a setting was reset.
+// not among the list items to the default, and returns whether a setting was reset. The reset
+// key is added to resetNames and skipped from then on, since an encoder may keep it unlisted.
 // Must stay on the properties side: an encoder migrates legacy values when it is created, so
 // resetting them before creation would lose values the encoder can still read.
-static bool resetFirstUnlistedListValue(obs_properties_t *props, obs_data_t *settings, const QString &logName)
+static bool resetFirstUnlistedListValue(
+    obs_properties_t *props, obs_data_t *settings, const QString &logName, QSet<QString> &resetNames
+)
 {
     for (auto prop = obs_properties_first(props); prop; obs_property_next(&prop)) {
         auto propType = obs_property_get_type(prop);
         if (propType == OBS_PROPERTY_GROUP) {
-            if (resetFirstUnlistedListValue(obs_property_group_content(prop), settings, logName)) {
+            if (resetFirstUnlistedListValue(obs_property_group_content(prop), settings, logName, resetNames)) {
                 return true;
             }
             continue;
@@ -1036,6 +1039,11 @@ static bool resetFirstUnlistedListValue(obs_properties_t *props, obs_data_t *set
         }
 
         auto name = obs_property_name(prop);
+        auto nameKey = QString::fromUtf8(name);
+        if (resetNames.contains(nameKey)) {
+            continue;
+        }
+
         obs_data_type itemType = OBS_DATA_NULL;
         if (!getSettingsItemType(settings, name, itemType)) {
             continue;
@@ -1056,12 +1064,14 @@ static bool resetFirstUnlistedListValue(obs_properties_t *props, obs_data_t *set
                 );
             }
             obs_data_erase(settings, name);
+            resetNames.insert(nameKey);
             return true;
         } else if (obs_data_has_user_value(settings, name) && !listContainsSettingsValue(prop, settings)) {
             obs_log(
                 LOG_INFO, "%s: Video encoder setting \"%s\" was reset to the default.", qUtf8Printable(logName), name
             );
             obs_data_unset_user_value(settings, name);
+            resetNames.insert(nameKey);
             return true;
         }
     }
@@ -1314,12 +1324,20 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 
                     // The encoder's modified callbacks may rebuild list items from other values,
                     // so the lists are checked again after each reset.
-                    for (int pass = 0; pass < ENCODER_LIST_RESET_MAX_PASSES; pass++) {
-                        if (!resetFirstUnlistedListValue(encoderProps, settings, filter->name)) {
+                    QSet<QString> resetNames;
+                    int pass = 0;
+                    for (; pass < ENCODER_LIST_RESET_MAX_PASSES; pass++) {
+                        if (!resetFirstUnlistedListValue(encoderProps, settings, filter->name, resetNames)) {
                             break;
                         }
                         applyDefaults(settings, encoderEefaults);
                         obs_properties_apply_settings(encoderProps, settings);
+                    }
+                    if (pass == ENCODER_LIST_RESET_MAX_PASSES) {
+                        obs_log(
+                            LOG_WARNING, "%s: Stopped checking the video encoder lists after %d resets.",
+                            qUtf8Printable(filter->name), ENCODER_LIST_RESET_MAX_PASSES
+                        );
                     }
                 }
             }
