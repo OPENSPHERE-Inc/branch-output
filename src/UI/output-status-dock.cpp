@@ -33,6 +33,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QDesktopServices>
 #include <QAccessible>
 #include <QAccessibleWidget>
+#include <QMenu>
+#include <QCursor>
+#include <QInputDialog>
+#include <QMessageBox>
+
+#include <algorithm>
 
 #include "../branch-output.hpp"
 #include "output-status-dock.hpp"
@@ -100,6 +106,13 @@ bool OutputStatusTable::isSorted(int column, Qt::SortOrder order) const
     return true;
 }
 
+// Qt's standard button texts stay in English because OBS does not load Qt's translations
+static QString frontendText(const char *lookupVal)
+{
+    auto text = obs_frontend_get_locale_string(lookupVal);
+    return QString::fromUtf8(text ? text : lookupVal);
+}
+
 //--- BranchOutputStatusDock class ---//
 
 BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
@@ -150,6 +163,11 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     connect(
         outputTable->horizontalHeader(), &QHeaderView::sectionPressed, this, &BranchOutputStatusDock::onHeaderPressed
     );
+    outputTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(
+        outputTable, &QTableWidget::customContextMenuRequested, this,
+        &BranchOutputStatusDock::onTableContextMenuRequested
+    );
     connect(&timer, &QTimer::timeout, this, &BranchOutputStatusDock::update);
 
     timer.setInterval(TIMER_INTERVAL);
@@ -158,11 +176,11 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     }
 
     // Tool buttons
-    addMainOutputButton = new QPushButton(QTStr("AddMainOutput"), this);
-    addMainOutputButton->setToolTip(QTStr("AddMainOutput"));
-    addMainOutputButton->setProperty("toolButton", true);  // Until OBS 30
-    addMainOutputButton->setProperty("class", "btn-tool"); // Since OBS 31
-    connect(addMainOutputButton, &QPushButton::clicked, this, &BranchOutputStatusDock::addMainOutputRequested);
+    addButton = new QToolButton(this);
+    addButton->setText("+"); // Shown when the theme provides no icon
+    addButton->setToolTip(QTStr("AddBranchOutput"));
+    setThemeID(addButton, "addIconSmall", "icon-plus");
+    connect(addButton, &QToolButton::clicked, this, [this]() { showAddMenu(); });
 
     applyToAllLabel = new QLabel(QTStr("ApplyToAll"), this);
 
@@ -223,7 +241,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     });
 
     auto buttonsContainerLayout = new QHBoxLayout();
-    buttonsContainerLayout->addWidget(addMainOutputButton);
+    buttonsContainerLayout->addWidget(addButton);
     buttonsContainerLayout->addSpacing(10);
     buttonsContainerLayout->addWidget(applyToAllLabel);
     buttonsContainerLayout->addSpacing(5);
@@ -843,6 +861,265 @@ void BranchOutputStatusDock::onHeaderPressed(int index)
     }
 }
 
+void BranchOutputStatusDock::showAddMenu()
+{
+    QList<OBSSource> sources;
+    {
+        QList<OBSSource> enumerated;
+        obs_enum_sources(
+            [](void *param, obs_source_t *source) {
+                static_cast<QList<OBSSource> *>(param)->append(OBSSource(source));
+                return true;
+            },
+            &enumerated
+        );
+
+        // Checked outside obs_enum_sources(), which holds the libobs source list lock during the callback
+        foreach (auto source, enumerated) {
+            if (source && (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) && sourceInFrontend(source)) {
+                sources.append(source);
+            }
+        }
+    }
+    std::sort(sources.begin(), sources.end(), [](const OBSSource &a, const OBSSource &b) {
+        auto nameA = QString::fromUtf8(obs_source_get_name(a));
+        auto nameB = QString::fromUtf8(obs_source_get_name(b));
+        return QString::compare(nameA, nameB, Qt::CaseInsensitive) < 0;
+    });
+
+    auto menuText = [](obs_source_t *source) {
+        return QString::fromUtf8(obs_source_get_name(source)).replace("&", "&&");
+    };
+
+    QMenu menu(this);
+    auto mainOutputAction = menu.addAction(QTStr("MainOutput"));
+    menu.addSeparator();
+
+    auto sourcesMenu = menu.addMenu(QTStr("AddMenu.Sources"));
+    foreach (auto source, sources) {
+        auto action = sourcesMenu->addAction(menuText(source));
+        action->setData(QString::fromUtf8(obs_source_get_uuid(source)));
+    }
+    if (sourcesMenu->isEmpty()) {
+        sourcesMenu->addAction(QTStr("None"))->setEnabled(false);
+    }
+    // The actions hold UUIDs; holding the sources through exec() would delay their destruction
+    sources.clear();
+
+    auto scenesMenu = menu.addMenu(QTStr("AddMenu.Scenes"));
+    obs_frontend_source_list scenes = {};
+    obs_frontend_get_scenes(&scenes);
+    for (size_t i = 0; i < scenes.sources.num; i++) {
+        auto action = scenesMenu->addAction(menuText(scenes.sources.array[i]));
+        action->setData(QString::fromUtf8(obs_source_get_uuid(scenes.sources.array[i])));
+    }
+    obs_frontend_source_list_free(&scenes);
+    if (scenesMenu->isEmpty()) {
+        scenesMenu->addAction(QTStr("None"))->setEnabled(false);
+    }
+
+    auto selected = menu.exec(QCursor::pos());
+    if (!selected) {
+        return;
+    }
+
+    if (selected == mainOutputAction) {
+        emit addMainOutputRequested();
+        return;
+    }
+
+    auto uuid = selected->data().toString();
+    if (uuid.isEmpty()) {
+        return;
+    }
+
+    OBSSourceAutoRelease target = obs_get_source_by_uuid(qUtf8Printable(uuid));
+    if (!target || obs_source_removed(target)) {
+        return;
+    }
+
+    addBranchOutputFilter(target);
+}
+
+void BranchOutputStatusDock::addBranchOutputFilter(obs_source_t *target)
+{
+    auto displayName = obs_source_get_display_name(FILTER_ID);
+    auto baseName = QString::fromUtf8(displayName ? displayName : "Branch Output");
+
+    // Same naming as OBS's filters dialog
+    auto filterName = baseName;
+    for (int suffix = 2;; suffix++) {
+        OBSSourceAutoRelease existing = obs_source_get_filter_by_name(target, qUtf8Printable(filterName));
+        if (!existing) {
+            break;
+        }
+        filterName = QString("%1 %2").arg(baseName, QString::number(suffix));
+    }
+
+    OBSSourceAutoRelease filter = obs_source_create(FILTER_ID, qUtf8Printable(filterName), nullptr, nullptr);
+    if (!filter) {
+        obs_log(LOG_ERROR, "Failed to create Branch Output filter for '%s'", obs_source_get_name(target));
+        return;
+    }
+
+    obs_source_filter_add(target, filter);
+    obs_log(
+        LOG_INFO, "Added Branch Output filter '%s' to '%s'", qUtf8Printable(filterName), obs_source_get_name(target)
+    );
+
+    obs_frontend_open_source_filters(target);
+}
+
+void BranchOutputStatusDock::onTableContextMenuRequested(const QPoint &pos)
+{
+    auto tableRow = outputTable->rowAt(pos.y());
+    if (tableRow < 0) {
+        return;
+    }
+
+    OutputTableRow *row = nullptr;
+    foreach (auto candidate, outputTableRows) {
+        if (outputTable->row(candidate->filterCell->item()) == tableRow) {
+            row = candidate;
+            break;
+        }
+    }
+    if (!row || obs_weak_source_expired(row->contextWeak)) {
+        return;
+    }
+
+    // The dock timer can delete the row during the nested event loops below: touch no row after this
+    OBSWeakSource weak = row->contextWeak.Get();
+    auto isMainOutput = !row->contextIsFilter;
+    auto currentName = row->filterInfo.filterName;
+
+    QMenu menu(this);
+    auto openSettingsAction = menu.addAction(QTStr("RowMenu.OpenSettings"));
+    QAction *renameAction = nullptr;
+    QAction *removeAction = nullptr;
+    if (isMainOutput) {
+        menu.addSeparator();
+        renameAction = menu.addAction(QTStr("RowMenu.Rename"));
+        removeAction = menu.addAction(QTStr("RowMenu.Remove"));
+    }
+
+    auto selected = menu.exec(outputTable->viewport()->mapToGlobal(pos));
+    if (!selected) {
+        return;
+    }
+
+    if (selected == openSettingsAction) {
+        OBSSourceAutoRelease source = obs_weak_source_get_source(weak);
+        if (!source) {
+            return;
+        }
+        // The strong reference above keeps info.destroy from running, so the output stays alive here.
+        auto output = BranchOutput::fromCallbackData(obs_obj_get_data(source));
+        if (output) {
+            output->openSettings();
+        }
+    } else if (selected == renameAction) {
+        renameMainOutput(weak, currentName);
+    } else if (selected == removeAction) {
+        removeMainOutput(weak, currentName);
+    }
+}
+
+void BranchOutputStatusDock::renameMainOutput(obs_weak_source_t *weak, const QString &currentName)
+{
+    auto input = currentName;
+
+    while (true) {
+        QInputDialog dialog(this);
+        dialog.setInputMode(QInputDialog::TextInput);
+        dialog.setWindowTitle(QTStr("RenameMainOutput.Title"));
+        dialog.setLabelText(QTStr("RenameMainOutput.Text"));
+        dialog.setTextValue(input);
+        dialog.setOkButtonText(frontendText("OK"));
+        dialog.setCancelButtonText(frontendText("Cancel"));
+        if (dialog.exec() != QDialog::Accepted) {
+            return;
+        }
+
+        input = dialog.textValue();
+        auto newName = input.trimmed();
+        if (newName == currentName) {
+            return;
+        }
+        if (newName.isEmpty()) {
+            showWarning(QTStr("RenameMainOutput.Title"), QTStr("RenameMainOutput.EmptyName"));
+            continue;
+        }
+
+        QString uuid;
+        bool used = false;
+        {
+            OBSSourceAutoRelease source = obs_weak_source_get_source(weak);
+            if (!source) {
+                return;
+            }
+            used = isMainOutputNameUsed(newName, source);
+            uuid = QString::fromUtf8(obs_source_get_uuid(source));
+        }
+        if (used) {
+            showWarning(QTStr("RenameMainOutput.Title"), QTStr("RenameMainOutput.NameExists").arg(newName));
+            continue;
+        }
+
+        emit renameMainOutputRequested(uuid, newName);
+        return;
+    }
+}
+
+void BranchOutputStatusDock::removeMainOutput(obs_weak_source_t *weak, const QString &currentName)
+{
+    QMessageBox box(
+        QMessageBox::Question, QTStr("RemoveMainOutput.Title"), QTStr("RemoveMainOutput.Text").arg(currentName),
+        QMessageBox::NoButton, this
+    );
+    box.setTextFormat(Qt::PlainText);
+    auto yesButton = box.addButton(frontendText("Yes"), QMessageBox::YesRole);
+    auto noButton = box.addButton(frontendText("No"), QMessageBox::NoRole);
+    box.setDefaultButton(noButton);
+    box.setEscapeButton(noButton);
+    box.exec();
+    if (box.clickedButton() != yesButton) {
+        return;
+    }
+
+    QString uuid;
+    {
+        OBSSourceAutoRelease source = obs_weak_source_get_source(weak);
+        if (!source) {
+            return;
+        }
+        uuid = QString::fromUtf8(obs_source_get_uuid(source));
+    }
+
+    emit removeMainOutputRequested(uuid);
+}
+
+bool BranchOutputStatusDock::isMainOutputNameUsed(const QString &filterName, obs_source_t *except) const
+{
+    foreach (auto row, outputTableRows) {
+        if (row->contextIsFilter || obs_weak_source_references_source(row->contextWeak, except)) {
+            continue;
+        }
+        if (row->filterInfo.filterName == filterName) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void BranchOutputStatusDock::showWarning(const QString &title, const QString &text)
+{
+    QMessageBox box(QMessageBox::Warning, title, text, QMessageBox::NoButton, this);
+    box.setTextFormat(Qt::PlainText);
+    box.addButton(frontendText("OK"), QMessageBox::AcceptRole);
+    box.exec();
+}
+
 //--- OutputTableRow class ---//
 
 OutputTableRow::OutputTableRow(
@@ -1400,6 +1677,7 @@ FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_sourc
     });
 
     name = new QLabel(this);
+    name->setTextFormat(Qt::PlainText);
 
     auto checkboxLayout = new QHBoxLayout();
     checkboxLayout->setContentsMargins(0, 0, 0, 0);
@@ -1460,6 +1738,8 @@ ParentCell::ParentCell(const QString &rowId, const QString &textValue, QWidget *
     // Markup as link
     setTextFormat(Qt::RichText);
     setCursor(Qt::PointingHandCursor);
+    // A rich text label opens its own Copy menu; leave the context menu to the table
+    setContextMenuPolicy(Qt::NoContextMenu);
 
     setTextValue(textValue);
 }
@@ -1514,6 +1794,8 @@ OutputCell::OutputCell(
     if (outputType == ROW_OUTPUT_RECORDING || outputType == ROW_OUTPUT_REPLAY_BUFFER) {
         name->setTextFormat(Qt::RichText);
         name->setCursor(Qt::PointingHandCursor);
+        // A rich text label opens its own Copy menu; leave the context menu to the table
+        name->setContextMenuPolicy(Qt::NoContextMenu);
         name->installEventFilter(this);
     }
 

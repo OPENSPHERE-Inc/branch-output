@@ -29,14 +29,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define PROGRAMS_JSON_VERSION 1
 
 class BranchOutputStatusDock;
+class BranchOutputProgram;
 
 // Owns the main outputs of the current profile and persists them to PROGRAMS_JSON_NAME.
 // Used from the UI thread only.
 class BranchOutputProgramManager : public QObject {
     Q_OBJECT
 
-    QList<OBSSource> programs;     // Strong references; the only owner of main outputs
-    bool persistenceReady = false; // The current profile's file has been read and may be written
+    QList<OBSSource> programs;         // Strong references; the only owner of main outputs
+    QList<OBSSource> removingPrograms; // Strong references of main outputs stopping for removal
+    bool persistenceReady = false;     // The current profile's file has been read and may be written
     bool collectionSwitching = false;
     bool eventCallbackRegistered = false;
 
@@ -46,6 +48,8 @@ class BranchOutputProgramManager : public QObject {
     void onProfileChanged();
     void releasePrograms(bool drain);
     bool adopt(obs_source_t *source);
+    int findProgram(const QString &uuid) const; // Index in programs, or -1
+    void finishRemoval(BranchOutputProgram *program);
     QString nextDefaultName() const;
     static QString programsJsonPath();
     static void onFrontendEvent(enum obs_frontend_event event, void *param);
@@ -56,5 +60,7 @@ public:
 
 public slots:
     void addProgram();
+    void renameProgram(const QString &uuid, const QString &newName);
+    void removeProgram(const QString &uuid);
     void savePrograms();
 };

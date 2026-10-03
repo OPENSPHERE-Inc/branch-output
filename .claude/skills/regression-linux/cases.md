@@ -227,11 +227,11 @@ Do and Pass:
 
 A main output is a Branch Output whose input is OBS's program output instead of a source. It belongs to a profile and is saved in `branchOutputPrograms.json` in the profile's folder, `<config>/basic/profiles/{profile}/`.
 
-- Add one with the "Add Main Output" button at the left end of the dock's bottom button row. It creates `Main Output {N}`, with the smallest number that no main output of the profile uses, and opens its properties in OBS's standard properties dialog. Its dock rows show the name in the Filter column and `Main Output` in the Source column; clicking the Source cell opens the dialog.
+- Add one with the "+" button at the left end of the dock's bottom button row, choosing "Main Output" in its menu. It creates `Main Output {N}`, with the smallest number that no main output of the profile uses, and opens its properties in OBS's standard properties dialog. Its dock rows show the name in the Filter column and `Main Output` in the Source column; clicking the Source cell opens the dialog.
 - Change its settings through obs-websocket `SetInputSettings` with `inputUuid` set to its `uuid` in `outputs` of `branchOutputPrograms.json`, read from the file each time. The change applies at once, like the dialog's OK, with no Apply. A main output is a private source: obs-websocket finds it by UUID, not by name. Type no text or numbers into the dialog, so that every platform uses the same means.
 - Use the dialog only in the steps a case marks "in the dialog", where the case checks the dialog itself. There too, operate only lists, checkboxes, and buttons.
 - Change no setting through obs-websocket while a main output's dialog is open: the dialog's Cancel restores and reapplies the settings it opened with.
-- Keep the default name.
+- Keep the default name, except for M11's rename.
 - Close with Cancel a dialog opened only to look.
 - Before M01, reduce the program picture to the four quadrants of `quad.png`, because state left by the R cases skews the color checks:
   - Delete every filter the R cases left on the sources and scenes of `BORegression`, of any kind (Branch Output, Color Correction, and so on).
@@ -239,12 +239,12 @@ A main output is a Branch Output whose input is OBS's program output instead of 
   - Hide `Name` (obs-websocket `SetSceneItemEnabled`).
 - Defaults unless a case says otherwise: no filter in `BORegression` other than those the case adds; one main output, `Main Output 1` from M01, with x264, Stream Recording on, and Resolution at its default "Output (Stretch to fit)"; dock Interlock "Always ON", every dock checkbox on, `Main` in Program, and Studio Mode off.
 - Keep a main output's recordings and replay buffer saves in its default folder, the profile's recording path, where OBS's own recordings also go, and tell the files apart by name. The default file name format is `%1 %2 {the profile's format}`, where `%1` expands to `Main Output` and `%2` to the main output's name.
-- M02–M10 use M01's main output. When it is missing (for example on a resume in a rebuilt work folder), first create it as M01's Do does, with x264.
-- To remove a main output (to redo a case, or to resume R cases on the same version), delete its element from `outputs` in `branchOutputPrograms.json` while OBS is closed. To delete the whole file, also delete `branchOutputPrograms.json.bak` and any `branchOutputPrograms.json.tmp`: the plugin loads the `.bak` when it cannot read the file. The R cases assume that the profile has no main output.
+- M02–M11 use M01's main output. When it is missing (for example on a resume in a rebuilt work folder), first create it as M01's Do does, with x264.
+- To remove a main output (to redo a case, or to resume R cases on the same version), choose "Remove" in the menu that right-clicking one of its dock rows opens, and answer Yes. Its rows leave the dock at once, and `Removed main output '{name}'` is logged once its outputs have stopped. While OBS is closed, delete its element from `outputs` in `branchOutputPrograms.json` instead. To delete the whole file, also delete `branchOutputPrograms.json.bak` and any `branchOutputPrograms.json.tmp`: the plugin loads the `.bak` when it cannot read the file. The R cases assume that the profile has no main output.
 
 ### M01 Add and configure
 
-Do: delete `recently.json` as in R01, and set the profile's streaming encoder to the hardware encoder of R01. Press "Add Main Output", check the items of the dialog it opens (turn Custom Audio Source on to see the audio source list, and off again), turn Stream Recording on in the dialog, and close it with OK without pressing the dialog's Apply. Record about 10 s. Then set the profile encoder back to x264, set the main output's `video_encoder` to x264, and record again.
+Do: delete `recently.json` as in R01, and set the profile's streaming encoder to the hardware encoder of R01. Choose "+" → "Main Output" in the dock, check the items of the dialog it opens (turn Custom Audio Source on to see the audio source list, and off again), turn Stream Recording on in the dialog, and close it with OK without pressing the dialog's Apply. Record about 10 s. Then set the profile encoder back to x264, set the main output's `video_encoder` to x264, and record again.
 
 Pass:
 
@@ -255,7 +255,7 @@ Pass:
 - Both recordings play, are 1280x720, and show the four quadrants of `quad.png` in the program's layout. Each has one audio stream carrying both the 1 kHz and the 440 Hz tone (the default audio is master track 1).
 - The file names expand `%1` to `Main Output` and `%2` to `Main Output 1`.
 - `branchOutputPrograms.json` in the profile's folder lists `Main Output 1`.
-- The source add menu has no "Branch Output Main Output" or "Branch Output Program Proxy", and no source derived from the main output appears in the Sources list or in any source picker (as R08 checks for "Branch Output Proxy").
+- OBS's source add menu (the "+" below the Sources list) has no "Branch Output Main Output" or "Branch Output Program Proxy", and no source derived from the main output appears in the Sources list or in any source picker (as R08 checks for "Branch Output Proxy").
 
 ### M02 Apply semantics
 
@@ -342,7 +342,7 @@ Do and Pass, with Stream Recording and Replay Buffer on in `Main Output 1`:
 
 - Uncheck the replay buffer row in the dock, then restart OBS: `Main Output 1` is listed with its settings kept (Stream Recording and Replay Buffer on, x264), its recording runs again, and its replay buffer stays unchecked, without "Buffering". Check it again.
 - Disable `Main Output 1` with the eye icon in its Filter cell, then restart OBS: it is listed disabled and runs nothing. Enabling it starts its outputs.
-- While it records, switch the profile to `BORegression2`: `Main Output 1`'s rows leave the dock, its recording stops, and the file plays. In `BORegression2`, set the dock Interlock to "Always ON" and press "Add Main Output" twice, closing each dialog with Cancel without a change: each closes without OBS's unsaved-changes prompt (M02), and `Main Output 1` and `Main Output 2` appear. Turn only Replay Buffer on in `BORegression2`'s `Main Output 1`.
+- While it records, switch the profile to `BORegression2`: `Main Output 1`'s rows leave the dock, its recording stops, and the file plays. In `BORegression2`, set the dock Interlock to "Always ON" and choose "+" → "Main Output" twice, closing each dialog with Cancel without a change: each closes without OBS's unsaved-changes prompt (M02), and `Main Output 1` and `Main Output 2` appear. Turn only Replay Buffer on in `BORegression2`'s `Main Output 1`.
   - Switch back to `BORegression`: only `BORegression`'s `Main Output 1` is listed, with its settings kept, and its recording runs again.
   - Switch to `BORegression2` again: its two main outputs are listed, `Main Output 1` shows "Buffering", and `Main Output 2` runs nothing.
   - Each profile's `branchOutputPrograms.json` lists only that profile's main outputs (two in `BORegression2`).
@@ -366,3 +366,23 @@ Do and Pass, where "outputs running" means `Main Output 1`'s Streaming, Stream R
 - Switch the scene collection to `BORegression2` and back, once with outputs running and once with `Main Output 1` disabled by its eye icon: no crash, and after each switch the dock lists each of `Main Output 1`'s rows once (they may disappear during the switch). With outputs running, they stop during the switch and run again after it: each switch starts a new recording file, and the receiver gets data again.
 - Quit OBS from three sessions, each launched for this item: one with outputs running, one with them stopped, and one with outputs running after switching the profile to `BORegression2` and back and then the scene collection to `BORegression2` and back. Each shutdown completes with no crash evidence, and the log ends with `Number of memory leaks: 0` (crash evidence and allowed leaks as in R19).
   - When only the session with the switches ends with leaks, repeat it with no main output, after moving `branchOutputPrograms.json` and its `.bak` of both `BORegression` and `BORegression2` aside while OBS is closed. If that session also leaks, record it under "OBS" in "Observations" and do not fail the item; otherwise fail the item. Finally move the files back.
+
+### M11 Context menu, rename, and removal
+
+Do and Pass, with `Main Output 1` recording. Rename and remove main outputs only through the dock's menus: obs-websocket `SetInputName` and `RemoveInput` bypass the code under test. To enter a name in the rename dialog, select the field's text with Ctrl+A and type the name with `xdotool type`; clear the field with Ctrl+A and Delete.
+
+- The "+" button shows a plus icon, or the text "+" where the theme has none; note which. Its tooltip is "Add Branch Output", and its menu has "Main Output", "Sources", and "Scenes". "Sources" lists the sources placed in `Main` and `Other` (`Media`, `Name`, `Quad`, `Tone440`, and the color source of `Other`) in name order, ignoring case, and no main output; "Scenes" lists `Main` and `Other`.
+- "+" → "Sources" → `Media` adds a filter `Branch Output` to `Media`, logs `Added Branch Output filter 'Branch Output' to 'Media'`, opens `Media`'s filters dialog with the filter in it, and adds dock rows with `Branch Output` in the Filter column and `Media` in the Source column. Choosing `Media` again adds `Branch Output 2`. "+" → "Scenes" → `Other` adds a filter whose rows show `Other` in the Source column. Close each filters dialog. The new filters' rows stay "Inactive" (no Apply yet).
+- Right-clicking a filter's row opens a menu with only "Open Settings", which opens that source's filters dialog. Close it, then delete the three filters.
+- Right-clicking `Main Output 1`'s rows opens a menu with "Open Settings", "Rename", and "Remove", on every column: the eye icon, the Source link, the recording row's Output link, the Status cell, and the Reset button. The right-click has no other effect (the eye icon keeps its state, and `<work>/xdg-open.log` gets no new line). "Open Settings" opens its properties dialog; close it with Cancel.
+- Rename: add a main output with "+" → "Main Output" and close its dialog with Cancel; it is `Main Output 2`. Choose "Rename" on its row: the dialog's field holds `Main Output 2`.
+  - Enter `Main Output 1` and press OK: a warning says that another main output uses the name, the rename dialog reopens, and Cancel there leaves the name unchanged.
+  - Clear the field and press OK: a warning asks for a name.
+  - Enter `Renamed Output` and press OK: its Filter cells show `Renamed Output`, its element in `branchOutputPrograms.json` has the name `Renamed Output`, and the log has `Renamed main output 'Main Output 2' to 'Renamed Output'`. After an OBS restart it is still `Renamed Output`.
+- Removal: turn Stream Recording on in `Renamed Output`, and wait for "Recording". Choose "Remove" on its row: the confirmation names `Renamed Output`, and No changes nothing. Choose "Remove" again and answer Yes: its rows leave the dock at once; within 5 s its recording stops and `Removed main output 'Renamed Output'` is logged; its file plays; `branchOutputPrograms.json` no longer lists it; and `Main Output 1` keeps recording to the same file.
+- Removal while reconnecting: add a main output (`Main Output 2`), closing its dialog with Cancel, turn its Streaming on with one slot pointing at a local RTMP receiver, and wait for "Live". Stop the receiver and its restart loop, and once the row shows "Reconnecting", remove the main output with Yes: OBS stays responsive and does not crash, its rows leave the dock at once, and `Removed main output 'Main Output 2'` is logged within 30 s (the stop waits until 2 s after the last reconnect attempt, #214).
+- Removal with the dialog open, in the dialog: add a main output (`Main Output 2`) and close its dialog with Cancel. Open the dialog again from its Source cell, set Resolution to "Half of canvas (50%)" without OK, and remove the main output from the dock with Yes: OBS's unsaved-changes prompt appears. Choose "Discard": the dialog closes, and `Removed main output 'Main Output 2'` is logged.
+- Undo, in the dialog: add a main output (`Main Output 2`), set Resolution to "Half of canvas (50%)" in its dialog, and press OK. Set Program to `Other` through obs-websocket, remove the main output with Yes, and choose Edit → Undo: Program returns to `Main`, OBS does not crash, and the main output returns neither to the dock nor to `branchOutputPrograms.json`. Between the OK and the Undo, do no other GUI operation that OBS can undo (for example adding or deleting a filter). Do not judge by `Null 'source' parameter`: libobs logs it only with `--verbose`.
+- Quit OBS: the log ends with `Number of memory leaks: 0` (allowed leaks as in R19). Launch it again: the dock and `branchOutputPrograms.json` have only `Main Output 1`.
+
+Afterwards make sure that `Main` is in Program and that `Main Output 1` is the only main output, removing any other that a failed step left.

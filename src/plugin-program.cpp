@@ -81,6 +81,7 @@ BranchOutputProgram::BranchOutputProgram(obs_data_t *settings, obs_source_t *sou
       intervalTimer(nullptr),
       attached(false),
       suspended(false),
+      removing(false),
       openProperties(0)
 {
     obs_log(LOG_DEBUG, "%s: BranchOutputProgram creating", qUtf8Printable(name));
@@ -126,12 +127,17 @@ bool BranchOutputProgram::validateInput()
         return false;
     }
 
+    if (removing) {
+        obs_log(LOG_DEBUG, "%s: Ignore while removing", qUtf8Printable(name));
+        return false;
+    }
+
     return true;
 }
 
 bool BranchOutputProgram::isInputAvailable() const
 {
-    return !suspended;
+    return !suspended && !removing;
 }
 
 QString BranchOutputProgram::getInputName() const
@@ -284,7 +290,7 @@ void BranchOutputProgram::updateCallback(obs_data_t *settings)
 
     syncHotkeys(settings);
 
-    if (attached) {
+    if (attached && !removing) {
         if (auto *dock = loadStatusDock()) {
             QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
         }
@@ -431,12 +437,42 @@ void BranchOutputProgram::setSuspended(bool suspend)
     if (suspend) {
         // A pending stop is continued by the interval timer, which never starts while suspended.
         stopOutputGracefully();
-    } else if (wasSuspended && attached) {
+    } else if (wasSuspended && attached && !removing) {
         // The dock drops the rows of an unavailable input, so register again.
         if (auto *dock = loadStatusDock()) {
             QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
         }
     }
+}
+
+void BranchOutputProgram::beginRemoval()
+{
+    if (removing.exchange(true)) {
+        return;
+    }
+
+    obs_log(LOG_INFO, "%s: Stopping outputs for removal", qUtf8Printable(name));
+
+    if (auto *dock = loadStatusDock()) {
+        QMetaObject::invokeMethod(dock, "removeOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
+    }
+
+    // Runs after onIntervalTimerTimeout(), which continues the graceful stop on each tick.
+    if (intervalTimer) {
+        connect(intervalTimer, &QTimer::timeout, this, &BranchOutputProgram::onRemovalTick);
+    }
+    stopOutputGracefully();
+    onRemovalTick();
+}
+
+void BranchOutputProgram::onRemovalTick()
+{
+    if (outputGracefullyStopping || removalReadyEmitted) {
+        return;
+    }
+
+    removalReadyEmitted = true;
+    emit removalReady();
 }
 
 BranchOutputProgram *BranchOutputProgram::fromSource(obs_source_t *source)

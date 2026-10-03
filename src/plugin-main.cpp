@@ -40,7 +40,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "program-manager.hpp"
 #include "utils.hpp"
 
-#define FILTER_ID "osi_branch_output"
 #define AVAILAVILITY_CHECK_INTERVAL_NS 1000000000ULL
 
 OBS_DECLARE_MODULE()

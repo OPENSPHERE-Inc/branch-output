@@ -38,7 +38,9 @@ class BranchOutputProgram : public BranchOutput {
     OBSSourceAutoRelease outputProxy;     // Guarded by outputMutex
     std::atomic<bool> attached;
     std::atomic<bool> suspended;
-    std::atomic<int> openProperties; // Live obs_properties_t objects made by getProperties()
+    std::atomic<bool> removing;       // Set once by beginRemoval(); never cleared
+    bool removalReadyEmitted = false; // UI thread
+    std::atomic<int> openProperties;  // Live obs_properties_t objects made by getProperties()
     OBSSignal renamedSignal;
     OBSSignal enabledSignal;
 
@@ -85,8 +87,12 @@ class BranchOutputProgram : public BranchOutput {
     }
     static void getProgramDefaults(obs_data_t *defaults);
 
+private slots:
+    void onRemovalTick();
+
 signals:
     void persistRequested();
+    void removalReady(); // Outputs have stopped after beginRemoval(). Emitted once.
 
 public:
     explicit BranchOutputProgram(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
@@ -94,6 +100,7 @@ public:
     void attach();                   // UI thread. Idempotent.
     void detach();                   // UI thread. Idempotent.
     void setSuspended(bool suspend); // UI thread.
+    void beginRemoval();             // UI thread. Idempotent. Precondition: attached.
     void openSettings() override;    // UI thread.
 
     // Caller holds a strong reference to source. Null when source is not a main output.

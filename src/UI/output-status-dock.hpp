@@ -38,7 +38,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "../utils.hpp"
 
 class QString;
-class QPushButton;
 class BranchOutput;
 class OutputTableRow;
 
@@ -241,7 +240,7 @@ class BranchOutputStatusDock : public QFrame {
     // Same-thread calls (e.g. removeOutput from the update() timer slot) also
     // exist and are intentional.
     QList<OutputTableRow *> outputTableRows;
-    QPushButton *addMainOutputButton = nullptr;
+    QToolButton *addButton = nullptr;
     QLabel *applyToAllLabel = nullptr;
     QToolButton *enableAllButton = nullptr;
     QToolButton *disableAllButton = nullptr;
@@ -284,6 +283,12 @@ class BranchOutputStatusDock : public QFrame {
     void loadSettings();
     void loadHotkeys();
     void applySettings(obs_data_t *settings);
+    void showAddMenu();
+    void addBranchOutputFilter(obs_source_t *target);
+    void renameMainOutput(obs_weak_source_t *weak, const QString &currentName);
+    void removeMainOutput(obs_weak_source_t *weak, const QString &currentName);
+    bool isMainOutputNameUsed(const QString &filterName, obs_source_t *except) const;
+    void showWarning(const QString &title, const QString &text);
 
     static void onOBSFrontendEvent(enum obs_frontend_event event, void *param);
     static void onEanbleAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
@@ -296,9 +301,12 @@ class BranchOutputStatusDock : public QFrame {
 
 signals:
     void addMainOutputRequested();
+    void renameMainOutputRequested(const QString &uuid, const QString &newName);
+    void removeMainOutputRequested(const QString &uuid);
 
 private slots:
     void onHeaderPressed(int index);
+    void onTableContextMenuRequested(const QPoint &pos);
     void onOutputUserEnabledChanged();
     void onOutputDestroyed(QObject *obj);
 

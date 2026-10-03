@@ -40,6 +40,12 @@ BranchOutputProgramManager::BranchOutputProgramManager(BranchOutputStatusDock *d
 
     if (dock) {
         connect(dock, &BranchOutputStatusDock::addMainOutputRequested, this, &BranchOutputProgramManager::addProgram);
+        connect(
+            dock, &BranchOutputStatusDock::renameMainOutputRequested, this, &BranchOutputProgramManager::renameProgram
+        );
+        connect(
+            dock, &BranchOutputStatusDock::removeMainOutputRequested, this, &BranchOutputProgramManager::removeProgram
+        );
     }
 }
 
@@ -93,7 +99,7 @@ BranchOutputProgramManager::ReadResult BranchOutputProgramManager::readProgramsF
 
 void BranchOutputProgramManager::loadPrograms()
 {
-    if (!programs.isEmpty()) {
+    if (!programs.isEmpty() || !removingPrograms.isEmpty()) {
         releasePrograms(false);
     }
     persistenceReady = false;
@@ -199,12 +205,15 @@ void BranchOutputProgramManager::releasePrograms(bool drain)
 {
     // FIXME: An open properties dialog keeps its source alive: edits there are lost, and reloading
     // the profile reassigns the UUID. Close the dialogs first, handling a canceled save prompt.
-    for (const auto &source : std::as_const(programs)) {
-        if (auto *program = BranchOutputProgram::fromSource(source)) {
-            program->detach();
+    for (const auto *list : {&programs, &removingPrograms}) {
+        for (const auto &source : *list) {
+            if (auto *program = BranchOutputProgram::fromSource(source)) {
+                program->detach();
+            }
         }
     }
     programs.clear();
+    removingPrograms.clear();
     persistenceReady = false;
 
     // Let the graphics and destroy threads drop the released sources, so their UUIDs are free
@@ -285,6 +294,93 @@ void BranchOutputProgramManager::addProgram()
     savePrograms();
 
     BranchOutputProgram::fromSource(source)->openSettings();
+}
+
+int BranchOutputProgramManager::findProgram(const QString &uuid) const
+{
+    for (int i = 0; i < programs.size(); i++) {
+        if (QString::fromUtf8(obs_source_get_uuid(programs.at(i))) == uuid) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+void BranchOutputProgramManager::renameProgram(const QString &uuid, const QString &newName)
+{
+    auto name = newName.trimmed();
+    if (name.isEmpty()) {
+        obs_log(LOG_WARNING, "Cannot rename main output: the name is empty");
+        return;
+    }
+
+    auto index = findProgram(uuid);
+    if (index < 0) {
+        obs_log(LOG_DEBUG, "Ignore renaming main output %s: not held", qUtf8Printable(uuid));
+        return;
+    }
+
+    OBSSource source = programs.at(index);
+    auto currentName = QString::fromUtf8(obs_source_get_name(source));
+
+    for (int i = 0; i < programs.size(); i++) {
+        if (i != index && QString::fromUtf8(obs_source_get_name(programs.at(i))) == name) {
+            obs_log(
+                LOG_WARNING, "Cannot rename main output '%s': '%s' is in use", qUtf8Printable(currentName),
+                qUtf8Printable(name)
+            );
+            return;
+        }
+    }
+
+    if (currentName == name) {
+        return;
+    }
+
+    obs_log(LOG_INFO, "Renamed main output '%s' to '%s'", qUtf8Printable(currentName), qUtf8Printable(name));
+    obs_source_set_name(source, qUtf8Printable(name));
+}
+
+void BranchOutputProgramManager::removeProgram(const QString &uuid)
+{
+    auto index = findProgram(uuid);
+    if (index < 0) {
+        obs_log(LOG_DEBUG, "Ignore removing main output %s: not held", qUtf8Printable(uuid));
+        return;
+    }
+
+    OBSSource source = programs.takeAt(index);
+    removingPrograms.append(source);
+
+    auto *program = BranchOutputProgram::fromSource(source);
+    obs_log(LOG_INFO, "Removing main output '%s'", obs_source_get_name(source));
+
+    // Connected first: beginRemoval() emits removalReady at once when no output is running
+    connect(
+        program, &BranchOutputProgram::removalReady, this, [this, program]() { finishRemoval(program); },
+        Qt::QueuedConnection
+    );
+    program->beginRemoval();
+    savePrograms();
+
+    // Last: closing an open properties dialog may run a nested event loop (unsaved-changes prompt)
+    obs_source_remove(source);
+}
+
+// The program pointer is compared only: a match is alive because removingPrograms holds its source.
+void BranchOutputProgramManager::finishRemoval(BranchOutputProgram *program)
+{
+    for (int i = 0; i < removingPrograms.size(); i++) {
+        if (BranchOutputProgram::fromSource(removingPrograms.at(i)) != program) {
+            continue;
+        }
+
+        OBSSource source = removingPrograms.takeAt(i);
+        program->detach();
+        obs_log(LOG_INFO, "Removed main output '%s'", obs_source_get_name(source));
+        return;
+    }
 }
 
 void BranchOutputProgramManager::onFrontendEvent(enum obs_frontend_event event, void *param)

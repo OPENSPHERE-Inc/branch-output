@@ -33,6 +33,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "video/crop-rect-preview-renderer.hpp"
 #include "utils.hpp"
 
+#define FILTER_ID "osi_branch_output"
 #define MAX_SERVICES 8
 #define TASK_INTERVAL_MS 1000
 #define HOTKEY_BINDINGS_KEY "hotkey_bindings"

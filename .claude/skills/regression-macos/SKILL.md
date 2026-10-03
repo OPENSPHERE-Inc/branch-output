@@ -45,13 +45,13 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 - GitHub releases: `gh` against `obsproject/obs-studio` (release list, asset names, sizes and digests, download).
 - GUI: computer use.
-  - Required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button), a main output's properties dialog where a case checks it, the "Branch Output Status" dock (including its "Add Main Output" button), Settings → Hotkeys, Tools → Scripts, hotkey presses, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
+  - Required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button), a main output's properties dialog where a case checks it, the "Branch Output Status" dock (including its "+" menu and its rows' context menus), Settings → Hotkeys, Tools → Scripts, hotkey presses, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
   - Access: the bundle ID `com.obsproject.obs-studio` (one grant covers every version), and Finder for R12 and M07. Check the Finder window with computer use only: querying Finder with AppleScript (`tell application "Finder"`) makes macOS ask the user to allow automation of Finder, the Apple Event times out, and the prompt stays on screen over OBS.
-  - Prefer the background `app_*` tools. They cannot open context menus; open a source's filters with the Filters button of the toolbar below the preview (shown while the source is selected) instead of the context menu. Use the full-screen tools with OBS frontmost only for what `app_*` refuses.
+  - Prefer the background `app_*` tools. They cannot open context menus; open a source's filters with the Filters button of the toolbar below the preview (shown while the source is selected) instead of the context menu, and open the dock rows' context menus with the full-screen tools. Use the full-screen tools with OBS frontmost only for what `app_*` refuses.
   - Settings is OBS → Preferences in the app menu.
   - Take a fresh screenshot before each click in the filter properties and in a main output's properties dialog: the dialog re-lays out when a setting changes (notably on 31.1), and earlier coordinates can hit another control.
   - Widen the dock's Status column (Split / Pause / Unpause / Add chapter / Save) and last column (Reset) before clicking a row's buttons: at the default widths clicks miss them.
-  - Avoid typing: typed text passes through the IME and can be altered. Set names through obs-websocket, and paths in the config files under `<config>` while OBS is closed.
+  - Avoid typing: typed text passes through the IME and can be altered. Set names through obs-websocket, and paths in the config files under `<config>` while OBS is closed. The exception is the dock's rename dialog for main outputs, where `cases.md` M11 pastes the name from the clipboard.
   - Hotkeys: macOS modifiers are Control, Option, Shift, and Command. Without the input monitoring permission OBS registers no global hotkeys (it logs `No event permissions, could not add global hotkeys`), so a key acts only while OBS is frontmost with its main window focused. Confirm with the first key press that keys reach OBS; if none do, use `TriggerHotkeyByName` (within the 30.1.2 limit below) and note it in the report.
 - obs-websocket: when a client is available, allowed for any other change or observation it supports (for example main streaming / recording / replay buffer, scene switching, Studio Mode, source and filter settings, `GetSourceActive`, `GetHotkeyList`).
   - Enable its server while OBS is closed: `<config>/plugin_config/obs-websocket/config.json` on 31.1 and later, the `[OBSWebSocket]` section of `<config>/global.ini` on 30.1.2.
@@ -73,7 +73,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 ## Step 2 — Run the cases
 
-- Run 32.2 first, then 31.1, then 30.1.2, each with the selected cases in its scope, in the order of `cases.md` (R01–R19, then M01–M10); mark cells out of scope or not selected N/A.
+- Run 32.2 first, then 31.1, then 30.1.2, each with the selected cases in its scope, in the order of `cases.md` (R01–R19, then M01–M11); mark cells out of scope or not selected N/A.
 - Write each result into the report as soon as its case finishes.
 - Result values: PASS, FAIL, SKIP (a prerequisite is missing on this machine; give the reason), BLOCKED (an earlier failure prevents the case; name it), N/A.
 - When a missing prerequisite rules out only some items of a case, judge the case on the remaining items, and list the skipped items in the Notes column and under "Not covered".
