@@ -255,11 +255,6 @@ A main output is a Branch Output whose input is OBS's program output instead of 
 - M02–M10 use M01's main output. When it is missing (for example on a resume in a rebuilt work folder), first create it as M01's Do does, with x264.
 - To remove a main output (to redo a case, or to resume R cases on the same version), delete its element from `outputs` in `branchOutputPrograms.json` while OBS is closed. To delete the whole file, also delete `branchOutputPrograms.json.bak` and any `branchOutputPrograms.json.tmp`: the plugin loads the `.bak` when it cannot read the file. The R cases assume that the profile has no main output.
 
-While #208 is open (checked as above), set `codec_type` to 0 through obs-websocket, by `inputUuid`, on each main output after its first dialog closes and before it records with an encoder other than Apple VT, and record the workaround under "Plugin, known issues". The items under the #208 paragraph above apply to main outputs as well.
-
-- M01: set `codec_type` to 0 in the same `SetInputSettings` call that switches to x264: a separate call restarts the output for `codec_type` alone and splits the Apple VT recording into two files.
-- M08: set it on both main outputs added there.
-
 The 30.1.2 ffmpeg-mux rule above applies to main output recordings too. In the M cases, keep the main output's recording the only one running: before M10, turn off the recording of the filter in the scene collection `BORegression2` if it is on.
 
 ### M01 Add and configure — all
