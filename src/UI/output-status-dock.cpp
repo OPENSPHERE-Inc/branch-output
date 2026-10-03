@@ -30,6 +30,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QMouseEvent>
+#include <QHoverEvent>
+#include <QListWidget>
+#include <QPainter>
 #include <QDesktopServices>
 #include <QAccessible>
 #include <QAccessibleWidget>
@@ -132,11 +135,16 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     outputTable->horizontalHeader()->setSectionsClickable(true);
     outputTable->horizontalHeader()->setMinimumSectionSize(100);
     outputTable->horizontalHeader()->setStyleSheet("QHeaderView::section { padding: 0 8px; }");
-    outputTable->setGridStyle(Qt::NoPen);
+    // A grid shrinks every cell by 1px, which would split the row band at the column borders
+    outputTable->setShowGrid(false);
     outputTable->setHorizontalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
     outputTable->setVerticalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
     outputTable->setSelectionMode(QTableWidget::SelectionMode::NoSelection);
     outputTable->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+    outputTable->viewport()->setAttribute(Qt::WA_Hover, true);
+    rowDelegate = new OutputTableRowDelegate(outputTable);
+    outputTable->setItemDelegate(rowDelegate);
+    outputTable->viewport()->installEventFilter(this);
     outputTable->setColumnCount(8);
     outputTable->sortItems(sortingColumnIndex, sortingOrder);
 
@@ -670,6 +678,36 @@ void BranchOutputStatusDock::hideEvent(QHideEvent *)
     timer.stop();
 }
 
+bool BranchOutputStatusDock::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj != outputTable->viewport()) {
+        return QFrame::eventFilter(obj, event);
+    }
+
+    switch (event->type()) {
+    case QEvent::HoverEnter:
+    case QEvent::HoverMove: {
+        auto y = static_cast<QHoverEvent *>(event)->position().toPoint().y();
+        rowDelegate->setHoveredRow(outputTable->rowAt(y));
+        break;
+    }
+    case QEvent::HoverLeave:
+        rowDelegate->setHoveredRow(-1);
+        break;
+    case QEvent::MouseButtonPress: {
+        auto mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton || mouseEvent->button() == Qt::RightButton) {
+            rowDelegate->setSelectedRow(outputTable->rowAt(mouseEvent->position().toPoint().y()));
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    return false;
+}
+
 void BranchOutputStatusDock::setEabnleAll(bool enabled)
 {
     foreach (auto row, outputTableRows) {
@@ -1118,6 +1156,88 @@ void BranchOutputStatusDock::showWarning(const QString &title, const QString &te
     box.setTextFormat(Qt::PlainText);
     box.addButton(frontendText("OK"), QMessageBox::AcceptRole);
     box.exec();
+}
+
+//--- OutputTableRowDelegate class ---//
+
+OutputTableRowDelegate::OutputTableRowDelegate(QTableWidget *_table)
+    : QStyledItemDelegate(_table),
+      table(_table),
+      styleReference(new QListWidget(_table))
+{
+    styleReference->setVisible(false);
+}
+
+void OutputTableRowDelegate::setHoveredRow(int row)
+{
+    if (row == hoveredRow) {
+        return;
+    }
+
+    auto previous = hoveredRow;
+    hoveredRow = row;
+    updateRow(previous);
+    updateRow(row);
+}
+
+void OutputTableRowDelegate::setSelectedRow(int row)
+{
+    auto previous = selectedIndex.isValid() ? selectedIndex.row() : -1;
+    if (row < 0) {
+        row = -1;
+    }
+    if (row == previous) {
+        return;
+    }
+
+    if (row < 0) {
+        selectedIndex = QPersistentModelIndex();
+    } else {
+        selectedIndex = QPersistentModelIndex(table->model()->index(row, 0));
+    }
+    updateRow(previous);
+    updateRow(row);
+}
+
+void OutputTableRowDelegate::updateRow(int row)
+{
+    if (row < 0 || row >= table->rowCount()) {
+        return;
+    }
+
+    table->viewport()->update(
+        QRect(0, table->rowViewportPosition(row), table->viewport()->width(), table->rowHeight(row))
+    );
+}
+
+void OutputTableRowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
+{
+    auto hovered = index.row() == hoveredRow;
+    auto selected = selectedIndex.isValid() && index.row() == selectedIndex.row();
+    if (!hovered && !selected) {
+        return;
+    }
+
+    auto model = index.model();
+    QStyleOptionViewItem band(option);
+    band.rect = table->visualRect(model->index(index.row(), 0))
+                    .united(table->visualRect(model->index(index.row(), model->columnCount() - 1)));
+    band.state.setFlag(QStyle::State_Selected, selected);
+    band.state.setFlag(QStyle::State_MouseOver, hovered);
+    band.state.setFlag(QStyle::State_HasFocus, false);
+    band.features = QStyleOptionViewItem::None;
+    band.viewItemPosition = QStyleOptionViewItem::OnlyOne;
+    band.showDecorationSelected = true;
+    band.text.clear();
+    band.icon = QIcon();
+    band.backgroundBrush = Qt::NoBrush;
+    band.widget = styleReference;
+
+    painter->save();
+    painter->setClipRect(option.rect, Qt::IntersectClip);
+    // Themes define the hover and selected colors only for list items, so draw the band as a list item
+    styleReference->style()->drawPrimitive(QStyle::PE_PanelItemViewItem, &band, painter, styleReference);
+    painter->restore();
 }
 
 //--- OutputTableRow class ---//
@@ -1756,6 +1876,8 @@ void ParentCell::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         emit clicked();
+    } else {
+        event->ignore();
     }
 }
 

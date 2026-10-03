@@ -34,9 +34,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QComboBox>
 #include <QToolButton>
 #include <QCheckBox>
+#include <QStyledItemDelegate>
+#include <QPersistentModelIndex>
 
 #include "../utils.hpp"
 
+class QListWidget;
 class QString;
 class BranchOutput;
 class OutputTableRow;
@@ -225,6 +228,25 @@ public:
     static void removeAccessibilityFactory();
 };
 
+class OutputTableRowDelegate : public QStyledItemDelegate {
+    Q_OBJECT
+
+    QTableWidget *table;
+    QListWidget *styleReference;
+    int hoveredRow = -1;
+    QPersistentModelIndex selectedIndex;
+
+    void updateRow(int row);
+
+public:
+    explicit OutputTableRowDelegate(QTableWidget *table);
+
+    void setHoveredRow(int row);
+    void setSelectedRow(int row);
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override;
+};
+
 class BranchOutputStatusDock : public QFrame {
     Q_OBJECT
 
@@ -235,6 +257,7 @@ class BranchOutputStatusDock : public QFrame {
 
     QTimer timer;
     OutputStatusTable *outputTable = nullptr;
+    OutputTableRowDelegate *rowDelegate = nullptr;
     // Invariant: touched only from the Qt UI thread; no mutex is needed.
     // Cross-thread callers use QMetaObject::invokeMethod with QueuedConnection.
     // Same-thread calls (e.g. removeOutput from the update() timer slot) also
@@ -313,6 +336,7 @@ private slots:
 protected:
     virtual void showEvent(QShowEvent *event) override;
     virtual void hideEvent(QHideEvent *event) override;
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 public:
     explicit BranchOutputStatusDock(QWidget *parent = (QWidget *)nullptr);
