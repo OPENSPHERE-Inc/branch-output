@@ -31,6 +31,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHBoxLayout>
 #include <QMouseEvent>
 #include <QDesktopServices>
+#include <QAccessible>
+#include <QAccessibleWidget>
 
 #include "../branch-output.hpp"
 #include "output-status-dock.hpp"
@@ -41,6 +43,61 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // FIXME: Duplicated definition error with util/base.h
 extern "C" {
 extern void obs_log(int log_level, const char *format, ...);
+}
+
+//--- OutputStatusTable class ---//
+
+// FIXME: Qt 6.11 crashes when QAccessibleTable drops its cached cell interfaces on a model change
+// (QTBUG-149612). Remove this factory once the minimum supported OBS bundles a Qt with the fix.
+static QAccessibleInterface *outputStatusTableAccessibleFactory(const QString &key, QObject *object)
+{
+    if (key != QLatin1String(OutputStatusTable::staticMetaObject.className())) {
+        return nullptr;
+    }
+
+    auto table = qobject_cast<OutputStatusTable *>(object);
+    if (!table) {
+        return nullptr;
+    }
+
+    return new QAccessibleWidget(table, QAccessible::Grouping);
+}
+
+void OutputStatusTable::installAccessibilityFactory()
+{
+    QAccessible::installFactory(outputStatusTableAccessibleFactory);
+}
+
+void OutputStatusTable::removeAccessibilityFactory()
+{
+    QAccessible::removeFactory(outputStatusTableAccessibleFactory);
+}
+
+bool OutputStatusTable::isSorted(int column, Qt::SortOrder order) const
+{
+    const QTableWidgetItem *previous = nullptr;
+    bool emptyCellSeen = false;
+
+    for (int row = 0; row < rowCount(); row++) {
+        const QTableWidgetItem *current = item(row, column);
+        if (!current) {
+            emptyCellSeen = true;
+            continue;
+        }
+
+        // QTableModel::sort() moves rows with no item in the column to the end, in their current order.
+        if (emptyCellSeen) {
+            return false;
+        }
+
+        if (previous && (order == Qt::AscendingOrder ? *current < *previous : *previous < *current)) {
+            return false;
+        }
+
+        previous = current;
+    }
+
+    return true;
 }
 
 //--- BranchOutputStatusDock class ---//
@@ -57,7 +114,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     setMinimumWidth(320);
 
     // Setup statistics table
-    outputTable = new QTableWidget(this);
+    outputTable = new OutputStatusTable(this);
     outputTable->verticalHeader()->hide();
     outputTable->horizontalHeader()->setSectionsClickable(true);
     outputTable->horizontalHeader()->setMinimumSectionSize(100);
@@ -678,7 +735,12 @@ void BranchOutputStatusDock::sort()
         sortingColumnIndex = 0;
     }
 
-    outputTable->sortItems(sortingColumnIndex, sortingOrder);
+    // sortItems() emits layoutChanged even when no row moves.
+    if (outputTable->isSorted(sortingColumnIndex, sortingOrder)) {
+        header->setSortIndicator(sortingColumnIndex, sortingOrder);
+    } else {
+        outputTable->sortItems(sortingColumnIndex, sortingOrder);
+    }
 
     for (int i = 0; i < headerCount; i++) {
         if (i == sortingColumnIndex || i == resetColumnIndex) {
