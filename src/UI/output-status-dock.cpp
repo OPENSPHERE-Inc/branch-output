@@ -48,7 +48,7 @@ extern void obs_log(int log_level, const char *format, ...);
 //--- OutputStatusTable class ---//
 
 // FIXME: Qt 6.11 crashes when QAccessibleTable drops its cached cell interfaces on a model change
-// (QTBUG-149612). Remove this factory once OBS ships a Qt with the fix.
+// (QTBUG-149612). Remove this factory once the minimum supported OBS bundles a Qt with the fix.
 static QAccessibleInterface *outputStatusTableAccessibleFactory(const QString &key, QObject *object)
 {
     if (key != QLatin1String(OutputStatusTable::staticMetaObject.className())) {
