@@ -1351,13 +1351,12 @@ OutputTableRow::OutputTableRow(
     buttonsContainerLayout->setContentsMargins(0, 0, 0, 0);
     buttonsContainer->setLayout(buttonsContainerLayout);
 
-    auto resetButton = new QPushButton(QTStr("Reset"), parent);
-    connect(resetButton, &QPushButton::clicked, this, [this]() { reset(); });
-    resetButton->setProperty("toolButton", true);  // Until OBS 30
-    resetButton->setProperty("class", "btn-tool"); // Since OBS 31
-    resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
+    auto resetButton = new QToolButton(parent);
+    resetButton->setIcon(QIcon(":/branch-output/images/reset.svg"));
+    resetButton->setToolTip(QTStr("Reset"));
+    connect(resetButton, &QToolButton::clicked, this, [this]() { reset(); });
 
-    buttonsContainerLayout->addWidget(resetButton);
+    buttonsContainerLayout->addWidget(resetButton, 0, Qt::AlignCenter);
     parent->outputTable->setCellWidget(row, col, buttonsContainer);
 
     // Setup status buttons
@@ -1808,7 +1807,7 @@ FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_sourc
     name->setTextFormat(Qt::PlainText);
 
     auto checkboxLayout = new QHBoxLayout();
-    checkboxLayout->setContentsMargins(0, 0, 0, 0);
+    checkboxLayout->setContentsMargins(8, 0, 0, 0);
     checkboxLayout->addWidget(visibilityCheckbox);
     checkboxLayout->addWidget(name);
     setLayout(checkboxLayout);
