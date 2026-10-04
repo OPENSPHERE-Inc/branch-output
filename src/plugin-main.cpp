@@ -783,6 +783,8 @@ void obs_module_post_load()
     // genuinely-no-filters.
     publishFilterListSnapshot(QList<BranchOutputFilterInfo>{});
 
+    // Must precede the dock creation: the dock constructor can already query the table's interface.
+    OutputStatusTable::installAccessibilityFactory();
     statusDock.store(BranchOutputFilter::createOutputStatusDock());
 
     // Register global proc handler for script access (obs-websocket style).
@@ -813,6 +815,9 @@ void obs_module_unload()
     if (statusDock.exchange(nullptr) != nullptr) {
         obs_frontend_remove_dock("BranchOutputStatusDock");
     }
+
+    // Must follow the dock removal so no plugin function stays registered in Qt after unload.
+    OutputStatusTable::removeAccessibilityFactory();
 
     pthread_mutex_destroy(&pluginMutex);
 

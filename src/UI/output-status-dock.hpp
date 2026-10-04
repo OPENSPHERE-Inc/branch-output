@@ -28,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QPointer>
 #include <QList>
 #include <QTimer>
+#include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QLabel>
 #include <QComboBox>
@@ -36,7 +37,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "../utils.hpp"
 
-class QTableWidget;
 class QString;
 class QPushButton;
 class BranchOutput;
@@ -213,6 +213,19 @@ public:
     inline OutputTableCellItem *item() const { return _item; }
 };
 
+// Q_OBJECT gives this class its own class name, which the accessibility factory matches.
+class OutputStatusTable : public QTableWidget {
+    Q_OBJECT
+
+public:
+    explicit OutputStatusTable(QWidget *parent = nullptr) : QTableWidget(parent) {}
+
+    bool isSorted(int column, Qt::SortOrder order) const;
+
+    static void installAccessibilityFactory();
+    static void removeAccessibilityFactory();
+};
+
 class BranchOutputStatusDock : public QFrame {
     Q_OBJECT
 
@@ -222,7 +235,7 @@ class BranchOutputStatusDock : public QFrame {
     QIcon descendingIcon;
 
     QTimer timer;
-    QTableWidget *outputTable = nullptr;
+    OutputStatusTable *outputTable = nullptr;
     // Invariant: touched only from the Qt UI thread; no mutex is needed.
     // Cross-thread callers use QMetaObject::invokeMethod with QueuedConnection.
     // Same-thread calls (e.g. removeOutput from the update() timer slot) also
