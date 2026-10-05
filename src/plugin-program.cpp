@@ -236,26 +236,102 @@ bool BranchOutputProgram::hasFilterPipeline() const
 
 bool BranchOutputProgram::canRegisterHotkeys()
 {
-    return false;
+    return attached && !removing;
 }
 
+// Caller must hold the libobs hotkey mutex.
+// Checked again under the mutex so that no sync pass registers after detach() has unregistered.
 bool BranchOutputProgram::beginHotkeyRegistration()
 {
-    return false;
+    return attached && !removing;
 }
 
+// Caller must hold the libobs hotkey mutex.
 void BranchOutputProgram::endHotkeyRegistration() {}
 
-obs_hotkey_id BranchOutputProgram::registerHotkey(const QString &, const QString &, obs_hotkey_func)
+// FIXME: a binding changed in OBS Settings reaches hotkeyBindingsCache only at the next save of
+// the programs file, so a stale cache entry outranks [Hotkeys]. Save on "hotkey_bindings_changed".
+OBSDataArrayAutoRelease BranchOutputProgram::profileBindingsFor(const QString &fullName)
 {
-    return OBS_INVALID_HOTKEY_ID;
+    // Must match the condition under which registerHotkey*WithRestore() loads the cache.
+    if (hotkeyCacheOwnedNames.contains(fullName)) {
+        return nullptr;
+    }
+    OBSDataArrayAutoRelease cached = obs_data_get_array(hotkeyBindingsCache, qUtf8Printable(fullName));
+    if (obs_data_array_count(cached) > 0) {
+        return nullptr;
+    }
+
+    OBSDataAutoRelease data = loadHotkeyData(qUtf8Printable(fullName));
+    if (!data) {
+        return nullptr;
+    }
+
+    return obs_data_get_array(data, "bindings");
 }
 
+// Caller must hold the libobs hotkey mutex and run on the UI thread.
+// libobs restores no bindings for a frontend hotkey, so the profile's [Hotkeys] is loaded here.
+// FIXME: obs_reset_source_uuids() (OBS 30) changes the UUID these names are built from, so the next
+// save prunes the cache entries of unregistered groups. Re-key the cache before that save.
+obs_hotkey_id
+BranchOutputProgram::registerHotkey(const QString &fullName, const QString &description, obs_hotkey_func func)
+{
+    auto id =
+        obs_hotkey_register_frontend(qUtf8Printable(fullName), qUtf8Printable(description), func, toCallbackData());
+    if (id == OBS_INVALID_HOTKEY_ID) {
+        return id;
+    }
+
+    OBSDataArrayAutoRelease bindings = profileBindingsFor(fullName);
+    if (bindings) {
+        obs_hotkey_load(id, bindings);
+        obs_log(
+            LOG_DEBUG, "%s: Restored hotkey bindings for '%s' from the profile", qUtf8Printable(name),
+            qUtf8Printable(fullName)
+        );
+    }
+
+    return id;
+}
+
+// Caller must hold the libobs hotkey mutex and run on the UI thread.
 obs_hotkey_pair_id BranchOutputProgram::registerHotkeyPair(
-    const QString &, const QString &, const QString &, const QString &, obs_hotkey_active_func, obs_hotkey_active_func
+    const QString &fullName0, const QString &description0, const QString &fullName1, const QString &description1,
+    obs_hotkey_active_func func0, obs_hotkey_active_func func1
 )
 {
-    return OBS_INVALID_HOTKEY_PAIR_ID;
+    auto id = obs_hotkey_pair_register_frontend(
+        qUtf8Printable(fullName0), qUtf8Printable(description0), qUtf8Printable(fullName1),
+        qUtf8Printable(description1), func0, func1, toCallbackData(), toCallbackData()
+    );
+    if (id == OBS_INVALID_HOTKEY_PAIR_ID) {
+        return id;
+    }
+
+    OBSDataArrayAutoRelease bindings0 = profileBindingsFor(fullName0);
+    OBSDataArrayAutoRelease bindings1 = profileBindingsFor(fullName1);
+    if (!bindings0 && !bindings1) {
+        return id;
+    }
+
+    // A null side loads no bindings, which loses nothing right after registration.
+    obs_hotkey_pair_load(id, bindings0, bindings1);
+
+    if (bindings0) {
+        obs_log(
+            LOG_DEBUG, "%s: Restored hotkey bindings for '%s' from the profile", qUtf8Printable(name),
+            qUtf8Printable(fullName0)
+        );
+    }
+    if (bindings1) {
+        obs_log(
+            LOG_DEBUG, "%s: Restored hotkey bindings for '%s' from the profile", qUtf8Printable(name),
+            qUtf8Printable(fullName1)
+        );
+    }
+
+    return id;
 }
 
 void BranchOutputProgram::openSettings()
@@ -288,7 +364,10 @@ void BranchOutputProgram::updateCallback(obs_data_t *settings)
     // The interval timer restarts the output once it sees the new snapshot.
     appliedSettings.replace(settings);
 
-    syncHotkeys(settings);
+    // Registration reads the profile config, which only the UI thread may read.
+    QMetaObject::invokeMethod(
+        this, [this]() { syncHotkeys(appliedSettings.get()); }, Qt::QueuedConnection
+    );
 
     if (attached && !removing) {
         if (auto *dock = loadStatusDock()) {
@@ -417,6 +496,7 @@ void BranchOutputProgram::detach()
         intervalTimer = nullptr;
     }
 
+    // Before unregisterAllHotkeys(): beginHotkeyRegistration() then rejects any later sync pass.
     attached = false;
 
     // Synchronous: the caller may reset the video (obs_reset_video()) right after this returns,

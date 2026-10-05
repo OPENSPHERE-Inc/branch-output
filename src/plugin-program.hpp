@@ -62,7 +62,7 @@ class BranchOutputProgram : public BranchOutput {
     BlankingState getBlankingState() const override;
     bool hasFilterPipeline() const override;
 
-    // Hotkeys are not registered
+    // Hotkeys: frontend hotkeys, registered while attached and not removing
     bool canRegisterHotkeys() override;
     bool beginHotkeyRegistration() override;
     void endHotkeyRegistration() override;
@@ -71,6 +71,9 @@ class BranchOutputProgram : public BranchOutput {
         const QString &fullName0, const QString &description0, const QString &fullName1, const QString &description1,
         obs_hotkey_active_func func0, obs_hotkey_active_func func1
     ) override;
+    // The bindings of the profile's [Hotkeys] for fullName, or null where the cache restores it.
+    // Caller must hold the libobs hotkey mutex and run on the UI thread.
+    OBSDataArrayAutoRelease profileBindingsFor(const QString &fullName);
 
     void updateCallback(obs_data_t *settings) override;
 
