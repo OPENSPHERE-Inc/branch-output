@@ -47,7 +47,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
   - Access is granted per executable path and requested while that instance runs.
   - Take a fresh screenshot before each click in the filter properties and in a main output's properties dialog: the dialog re-lays out when a setting changes (notably on 31.1), and earlier coordinates can hit another control.
   - Widen the dock's Status column (Split / Pause / Unpause / Add chapter / Save) and last column (Reset) before clicking a row's buttons: at the default widths clicks miss them.
-  - Avoid typing: typed text passes through the IME and can be altered, and the file dialog's folder field rejects typing. Set names through obs-websocket, and paths in the config files under `<root>/config/obs-studio/` while OBS is closed. The exception is the dock's rename dialog for main outputs, where `cases.md` M11 pastes the name from the clipboard.
+  - Avoid typing: typed text passes through the IME and can be altered, and the file dialog's folder field rejects typing. Set names through obs-websocket, and paths in the config files under `<root>/config/obs-studio/` while OBS is closed. The exception is the dock's rename dialog for main outputs, where `cases.md` M11 and M12 paste the name from the clipboard.
 - obs-websocket: when a client is available, allowed for any other change or observation it supports (for example main streaming / recording / replay buffer / virtual camera, scene switching, Studio Mode, source and filter settings, `GetSourceActive`, `GetHotkeyList`).
   - Enable its server while OBS is closed: `plugin_config/obs-websocket/config.json` on 31.1 and later, the `[OBSWebSocket]` section of `global.ini` on 30.1.2, both under `<root>/config/obs-studio/`.
   - On 30.1.2, `TriggerHotkeyByName` on one half of a hotkey pair (Enable / Disable, Pause / Unpause) desyncs the pair: press the key or use the dock instead.
@@ -67,7 +67,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 ## Step 2 — Run the cases
 
-- Run 32.2 first, then 31.1, then 30.1.2, each with the selected cases in its scope, in the order of `cases.md` (R01–R19, then M01–M11); mark cells out of scope or not selected N/A.
+- Run 32.2 first, then 31.1, then 30.1.2, each with the selected cases in its scope, in the order of `cases.md` (R01–R19, then M01–M12); mark cells out of scope or not selected N/A.
 - Write each result into the report as soon as its case finishes.
 - Result values: PASS, FAIL, SKIP (a prerequisite is missing on this machine; give the reason), BLOCKED (an earlier failure prevents the case; name it), N/A.
 - When a missing prerequisite rules out only some items of a case, judge the case on the remaining items, and list the skipped items in the Notes column and under "Not covered".

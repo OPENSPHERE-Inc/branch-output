@@ -68,7 +68,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 ## Step 2 — Run the cases
 
-- Run the selected cases in the order of `cases.md` (R01–R19, then M01–M11); mark the others N/A.
+- Run the selected cases in the order of `cases.md` (R01–R19, then M01–M12); mark the others N/A.
 - Write each result into the report as soon as its case finishes.
 - Result values: PASS, FAIL, SKIP (a prerequisite is missing on this machine; give the reason), BLOCKED (an earlier failure prevents the case; name it), N/A.
 - When a missing prerequisite rules out only some items of a case, judge the case on the remaining items, and list the skipped items in the Notes column and under "Not covered".

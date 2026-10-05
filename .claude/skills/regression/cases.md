@@ -228,7 +228,7 @@ A main output is a Branch Output whose input is OBS's program output instead of 
 - Change its settings through obs-websocket `SetInputSettings` with `inputUuid` set to its `uuid` in `outputs` of `branchOutputPrograms.json`, read from the file each time. The change applies at once, like the dialog's OK, with no Apply. A main output is a private source: obs-websocket finds it by UUID, not by name. Type no text or numbers into the dialog, for the reason in SKILL.md's "Avoid typing".
 - Use the dialog only in the steps a case marks "in the dialog", where the case checks the dialog itself. There too, operate only lists, checkboxes, and buttons.
 - Change no setting through obs-websocket while a main output's dialog is open: the dialog's Cancel restores and reapplies the settings it opened with.
-- Keep the default name, except for M11's rename.
+- Keep the default name, except for the renames in M11 and M12.
 - Close with Cancel a dialog opened only to look.
 - Before M01, reduce the program picture to the four quadrants of `quad.png`, because state left by the R cases skews the color checks:
   - Delete every filter the R cases left on the sources and scenes of `BORegression`, of any kind (Branch Output, Color Correction, and so on).
@@ -236,7 +236,7 @@ A main output is a Branch Output whose input is OBS's program output instead of 
   - Hide `Name` (obs-websocket `SetSceneItemEnabled`).
 - Defaults unless a case says otherwise: no filter in `BORegression` other than those the case adds; one main output, `Main Output 1` from M01, with x264, Stream Recording on, and Resolution at its default "Output (Stretch to fit)"; dock Interlock "Always ON", every dock checkbox on, `Main` in Program, and Studio Mode off.
 - Keep a main output's recordings and replay buffer saves in its default folder, the profile's recording path, where OBS's own recordings also go, and tell the files apart by name. The default file name format is `%1 %2 {the profile's format}`, where `%1` expands to `Main Output` and `%2` to the main output's name.
-- M02–M11 use M01's main output. When it is missing (for example on a resume in a rebuilt work folder), first create it as M01's Do does, with x264.
+- M02–M12 use M01's main output. When it is missing (for example on a resume in a rebuilt work folder), first create it as M01's Do does, with x264.
 - To remove a main output (to redo a case, or to resume R cases on the same version), choose "Remove" in the menu that right-clicking one of its dock rows opens, and answer Yes. Its rows leave the dock at once, and `Removed main output '{name}'` is logged once its outputs have stopped. While OBS is closed, delete its element from `outputs` in `branchOutputPrograms.json` instead. To delete the whole file, also delete `branchOutputPrograms.json.bak` and any `branchOutputPrograms.json.tmp`: the plugin loads the `.bak` when it cannot read the file. The R cases assume that the profile has no main output.
 
 ### M01 Add and configure — all
@@ -389,3 +389,24 @@ Do and Pass, with `Main Output 1` recording. Rename and remove main outputs only
 - Quit OBS: the log ends with `Number of memory leaks: 0` (allowed leaks as in R19). Launch it again: the dock and `branchOutputPrograms.json` have only `Main Output 1`.
 
 Afterwards make sure that `Main` is in Program and that `Main Output 1` is the only main output, removing any other that a failed step left.
+
+### M12 Hotkeys — all
+
+A main output's hotkeys are OBS frontend hotkeys: Settings → Hotkeys lists them at the top among OBS's own hotkeys, under no source or scene, and each description names the main output (for example `Enable 'Main Output 1'`, `Split 'Main Output 1' Recording File`). OBS saves an assignment made there in `[Hotkeys]` of the profile's `basic.ini`, and the plugin keeps a copy in `hotkey_bindings` of the main output's `settings` in `branchOutputPrograms.json`. obs-websocket `GetHotkeyList` lists their names, which end in `.{uuid}` with the main output's `uuid`. Judge a hotkey list in Settings → Hotkeys opened after the operation.
+
+Do: with `Main Output 1` recording, set its Automatic File Splitting to "Only split manually" and its recording format to Hybrid MP4 (Matroska on 30.1.2, which lacks Hybrid MP4). Add `Main Output 2` with "+" → "Main Output", closing its dialog with Cancel, and through obs-websocket turn its Replay Buffer on and its Streaming and Stream Recording off.
+
+Do and Pass:
+
+- Registration by output type: Settings → Hotkeys lists, for `Main Output 1`, the Enable / Disable pair and the 6 recording items (Split, Pause, Unpause, Add chapter, Enable, Disable), and none for streaming or the replay buffer; for `Main Output 2`, the Enable / Disable pair and the 3 replay buffer items (Save, Enable, Disable). Then turn `Main Output 1`'s Streaming on with Stream Count 1, its slot pointing at a local RTMP receiver, and its Replay Buffer on, and wait for "Live" and "Buffering": `Main Output 1` now has 15 items, adding the all-streaming pair, the `Streaming 1` pair (no `Streaming 2`), and the 3 replay buffer items.
+- Key actions: assign unused combinations, none of them R13's, to the 15 items of `Main Output 1` and to `Save 'Main Output 2' Replay Buffer`. Press each of `Main Output 1`'s as R13 does, with its streaming off while testing Pause and Unpause; R13's notes on Split and Add chapter apply. Each key acts on `Main Output 1` only, and the dock checkboxes update immediately: `Main Output 2` stays enabled and "Buffering", and saves no replay buffer file. `Main Output 2`'s Save key saves only its own replay buffer. Finish with `Main Output 1`'s streaming turned off by its Disable All Streaming key, and stop the receiver.
+- Persistence: after each operation below, Settings → Hotkeys shows the 16 assignments.
+  - Turn `Main Output 1`'s Stream Recording off through obs-websocket: its 6 recording items leave the list. Turn it on again. Do the same with Replay Buffer (3 items) and Streaming (the all-streaming and `Streaming 1` pairs; its streaming stays off from the key).
+  - Rename `Main Output 2` to `Hotkey Output` with "Rename" in its row's menu, entering the name as M11 does: its 5 items name `Hotkey Output` (for example `Save 'Hotkey Output' Replay Buffer`).
+  - Restart OBS.
+  - Launch with `--safe-mode`, exit, and launch normally.
+  - Switch to the profile `BORegression2` and back. While in `BORegression2`, no item naming a main output has a key.
+  - Note the names that `GetHotkeyList` lists for `Main Output 1`, and quit OBS: `[Hotkeys]` in `BORegression`'s `basic.ini` has an entry with a non-empty `bindings` for each of them. Delete `hotkey_bindings` from `Main Output 1`'s `settings` in `BORegression`'s `branchOutputPrograms.json`, and launch OBS: the assignments come back from `[Hotkeys]`. Restart the receiver and press `Main Output 1`'s Enable All Streaming key: its slot goes "Live".
+- Removal, in the dialog: note `Hotkey Output`'s `uuid` in `branchOutputPrograms.json`. Open its dialog from its Source cell, set Resolution to "Half of canvas (50%)" without OK, and remove `Hotkey Output` from the dock with Yes as M11 does: OBS's unsaved-changes prompt appears. Keep it open until `Removed main output 'Hotkey Output'` is logged; `GetHotkeyList` then lists no name ending in its `uuid`. Choose "Save": `Hotkey Output: Main output updated` is logged, `GetHotkeyList` still lists none of its names, and Settings → Hotkeys has none of its items, while `Main Output 1`'s 15 keep their keys.
+
+Afterwards turn `Main Output 1`'s Streaming, Replay Buffer, and Automatic File Splitting off and its recording format back to its value before M12 through obs-websocket, stop the receiver, and make sure that `Main Output 1` is the only main output.
