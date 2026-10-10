@@ -289,7 +289,8 @@ void BranchOutputFilter::teardownVideoInput()
     blankingAudioMuted = false;
 }
 
-// The parent source's size is followed through getSourceResolution() instead.
+// FIXME: obs_reset_video() frees the view's mix as well, but no reset is detected for filters.
+// Move the video info comparison of BranchOutputProgram into BranchOutput (issue #216).
 bool BranchOutputFilter::isVideoInputOutdated() const
 {
     return false;

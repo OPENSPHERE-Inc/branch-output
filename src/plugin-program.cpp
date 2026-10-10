@@ -201,6 +201,8 @@ bool BranchOutputProgram::setupVideoInput(obs_data_t *, obs_video_info *ovi, con
     }
     builtVideoInfo = mainInfo;
 
+    // FIXME: Encoding on OBS's video thread lets a slow encoder make OBS's own outputs skip frames.
+    // Add a setting that disables the direct path (forcing the proxy path).
     if (canUseMainVideo(mainInfo, *ovi, crop)) {
         videoOutputOwned = false;
         videoOutput = obs_get_video();
@@ -252,7 +254,7 @@ bool BranchOutputProgram::isVideoInputOutdated() const
 
     obs_video_info current = {};
     if (!obs_get_video_info(&current)) {
-        return false;
+        return true;
     }
 
     return !sameVideoInfo(current, builtVideoInfo);
