@@ -282,6 +282,7 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - Verify that renaming the filter keeps its hotkey assignments and renders the new name in the hotkey descriptions.
 - Verify that deleting the filter and undoing the deletion restores its hotkey assignments.
 - Verify that hotkey assignments are restored in normal mode after OBS has been started and shut down in safe mode.
+- Verify on OBS 30.1–32.x that, while the replay buffer is running, Settings → Hotkeys shows no "Save Replay" entry under the filter name, and that the filter's own `Save '<filter name>' Replay Buffer` hotkey saves a replay.
 
 ---
 
@@ -336,6 +337,7 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - Settings creation is handled by `createReplayBufferSettings()`.
 - The status dock includes a save button per replay buffer row and a global "Save All Replay Buffers" button.
 - Replay buffer can be linked to filter activation via `INTERLOCK_TYPE_REPLAY_BUFFER` or `INTERLOCK_TYPE_INDIVIDUAL`.
+- In OBS 30.1–32.x, obs-ffmpeg registers a `ReplayBuffer.Save` hotkey on every `replay_buffer` output, and its assignments are never saved. `createAndStartReplayBuffer()` hands the output it creates back to the caller as a weak reference; once every lock is released, the caller passes it to `unregisterReplayBufferOutputHotkey()`, so only the filter's own Save hotkey remains. Any new path that creates a `replay_buffer` output must do the same.
 
 ### Modifying Filter Video Capture
 
