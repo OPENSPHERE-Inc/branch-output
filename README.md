@@ -35,7 +35,7 @@ More reliable and proper audio handling.
 - Can be interlinked with OBS Studio's streaming, recording, virtual camera, and replay buffer status
 - Manual splitting of recorded files (Since 1.0.5)
 - Pause/Unpause Recording (Since 1.0.5)
-- Adding chapter markers to recordings（Only on Hybrid MP4, requires OBS Studio 30.2 or later） (Since 1.0.5)
+- Adding chapter markers to recordings（On Hybrid MP4, requires OBS Studio 30.2 or later） (Since 1.0.5)
 - Replay buffer per filter (Since 1.0.8)
 - Filter input mode to capture and output video from the filter chain (Experimental, Since 1.0.8)
 - Blanking and muting when the source is not visible in the program output (Since 1.0.8)
