@@ -214,7 +214,7 @@ protected:
     // Returns true if any output was actually started.
     bool createAndStartStreamingOutputs(obs_data_t *settings);
     bool createAndStartRecordingOutputChecked(obs_data_t *settings);
-    bool createAndStartReplayBufferChecked(obs_data_t *settings);
+    bool createAndStartReplayBufferChecked(obs_data_t *settings, OBSWeakOutputAutoRelease &createdOutput);
     bool stopAllStreamingOutputsGracefully();
 
     // The start helpers take the caller's applied-settings snapshot so one tick uses one copy.
@@ -344,7 +344,11 @@ protected:
     bool addChapterToRecording(QString chapterName = QString());
 
     // Implemented in plugin-replay-buffer.cpp
-    void createAndStartReplayBuffer(obs_data_t *settings);
+    // createdOutput must be empty. It receives the output this call creates; once every lock is
+    // released, the caller passes it to unregisterReplayBufferOutputHotkey().
+    void createAndStartReplayBuffer(obs_data_t *settings, OBSWeakOutputAutoRelease &createdOutput);
+    // Caller must not hold pluginMutex, outputMutex, audioMutex or AppliedSettings::mutex.
+    void unregisterReplayBufferOutputHotkey(obs_weak_output_t *output);
     void stopReplayBufferOutput();
     obs_data_t *createReplayBufferSettings(obs_data_t *settings);
     bool isReplayBufferEnabled(obs_data_t *settings);

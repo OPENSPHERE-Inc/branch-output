@@ -20,11 +20,6 @@ Defaults unless a case says otherwise: one Branch Output filter on `Media` with 
 
 Press the properties' Apply once after adding a filter in any case (for example the filter on the scene `Main` in R09): a newly added filter, and a filter loaded with every output type off, starts no output until then, even when obs-websocket sets its settings and enables it. Settings changed through obs-websocket after that take effect.
 
-While OPENSPHERE-Inc/branch-output#208 is open (`gh issue view 208 --repo OPENSPHERE-Inc/branch-output --json state`), set `codec_type` to 0 through obs-websocket on every filter right after adding it, before its first Apply, and record this workaround under "Plugin, known issues" in the report. Once #208 is closed, skip the workaround.
-
-- Why: selecting a video encoder in the properties, or opening them while Apple VT is selected, leaves Apple VT's `codec_type` default (ProRes 422) in the filter settings. A filter without a `codec_type` user value then fails every recording through ffmpeg-mux (Matroska, MPEG-4) with another encoder until OBS restarts: `ffmpeg-mux: Error opening ...: Invalid data found when processing inputCouldn't initialize muxer`, a 0-byte file and a retry every 2 s, and OBS can exit by SIGPIPE (status 141, no crash report).
-- If that failure appears anyway with an encoder other than Apple VT, link #208 instead of marking it new.
-
 The hardware encoder in R01 and R08 is Apple VT H264 Hardware Encoder.
 
 On 30.1.2, never stop a recording that goes through ffmpeg-mux while another one that started later is still running, OBS's own recording included (every recording format of 30.1.2 uses ffmpeg-mux; a replay buffer spawns a muxer only for the duration of a save). 30.1.2 sets no `FD_CLOEXEC` on the muxer pipes, so each later `obs-ffmpeg-mux` process inherits the input pipes of the earlier ones, and stopping the earlier recording waits until the later muxers exit; the plugin's synchronous stop and its interlock turn that wait into a permanent deadlock.
@@ -35,12 +30,13 @@ On 30.1.2, never stop a recording that goes through ffmpeg-mux while another one
 
 ## R01 Startup and new filter — all
 
-Do: delete `recently.json` from `<config>/plugin_config/osi-branch-output/` if it exists, set the profile's streaming encoder to the hardware encoder, add a Branch Output filter to `Media`, turn Stream Recording on, and Apply. Afterwards set the profile encoder back to x264, and switch the filter to x264 and Apply (a new filter copies the last applied filter's settings from `recently.json`).
+Do: delete `recently.json` from `<config>/plugin_config/osi-branch-output/` if it exists, set the profile's streaming encoder to the hardware encoder, add a Branch Output filter to `Media`, turn Stream Recording on, and Apply. Afterwards set the profile encoder back to x264, switch the filter to x264 in its properties, and Apply (a new filter copies the last applied filter's settings from `recently.json`). Then record Matroska with it (Hybrid MP4 bypasses ffmpeg-mux, where #208 failed).
 
 Pass:
 
 - The Docks menu has "Branch Output Status", and it lists the new filter's rows.
-- The new filter's Video Encoder is the profile's hardware encoder, and the recording it writes plays. With no hardware encoder on the machine, use x264 and note it.
+- The new filter's Video Encoder is the profile's hardware encoder, and the recording it writes plays. With no hardware encoder on the machine, use x264, leave out the switch to x264 with its pass item, and note both.
+- After the switch to x264 (#208): the properties show the x264 preset `veryfast`, the log has the x264 encoder's `preset: veryfast` and no `Invalid preset` line, and the Matroska recording plays.
 
 ## R02 Streaming — all
 
@@ -181,11 +177,12 @@ Pass:
 
 - Each key acts on its target only, and the dock checkboxes update immediately.
 - The "all" hotkeys also work with the dock closed.
+- While the replay buffer runs, including after its Enable key restarts it, Settings → Hotkeys has no heading with the filter's name holding a "Save Replay" entry (#218). OBS's own "Save Replay" for the profile's replay buffer is a different entry.
 - Add chapter acts only on Hybrid MP4 recordings; on 30.1.2 it is expected to do nothing.
 
 ## R14 Hotkey persistence — all
 
-Do and Pass: after each operation below, Settings → Hotkeys shows the R13 assignments.
+Do and Pass: after each operation below, Settings → Hotkeys shows the R13 assignments and no filter-name heading with a "Save Replay" entry (R13).
 
 - Turn Stream Recording off, Apply, turn it on, Apply: the recording group has all 6 items (Split, Pause, Unpause, Add chapter, Enable, Disable) with their keys. Do the same for Replay Buffer: 3 items (Save, Enable, Disable).
 - Rename the filter: keys kept, and the descriptions show the new name.

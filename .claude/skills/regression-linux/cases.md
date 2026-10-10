@@ -22,12 +22,13 @@ The hardware encoder in R01 and R08 is an NVENC or VAAPI encoder that the profil
 
 ## R01 Startup and new filter
 
-Do: delete `recently.json` from `<config>/plugin_config/osi-branch-output/` if it exists, set the profile's streaming encoder to the hardware encoder, add a Branch Output filter to `Media`, turn Stream Recording on, and Apply. Afterwards set the profile encoder back to x264, and switch the filter to x264 and Apply (a new filter copies the last applied filter's settings from `recently.json`).
+Do: delete `recently.json` from `<config>/plugin_config/osi-branch-output/` if it exists, and set the profile's streaming encoder to the hardware encoder. Add a Branch Output filter to `Media`, turn Stream Recording on, and Apply. Afterwards set the profile encoder back to x264, switch the filter to x264 in its properties (a switch through obs-websocket does not reset a preset that x264 does not list), and Apply (a new filter copies the last applied filter's settings from `recently.json`). Then record Matroska with it (Hybrid MP4 bypasses ffmpeg-mux, where #208 failed).
 
 Pass:
 
 - The Docks menu has "Branch Output Status", and it lists the new filter's rows.
-- The new filter's Video Encoder is the profile's hardware encoder, and the recording it writes plays. With no hardware encoder offered, use x264 and note it.
+- The new filter's Video Encoder is the profile's hardware encoder, and the recording it writes plays. With no hardware encoder offered, use x264, leave out the switch to x264 with its pass item, and note both.
+- After the switch to x264 (#208): the properties show the x264 preset `veryfast`, the log has the x264 encoder's `preset: veryfast` and no `Invalid preset` line, and the Matroska recording plays.
 
 ## R02 Streaming
 
@@ -167,11 +168,12 @@ Pass:
 
 - Each key acts on its target only, and the dock checkboxes update immediately.
 - The "all" hotkeys also work with the dock closed.
+- While the replay buffer runs, including after its Enable key restarts it, Settings → Hotkeys has no heading with the filter's name holding a "Save Replay" entry (#218). OBS's own "Save Replay" for the profile's replay buffer is a different entry.
 - Add chapter acts only on Hybrid MP4 recordings.
 
 ## R14 Hotkey persistence
 
-Do and Pass: after each operation below, Settings → Hotkeys shows the R13 assignments.
+Do and Pass: after each operation below, Settings → Hotkeys shows the R13 assignments and no filter-name heading with a "Save Replay" entry (R13).
 
 - Turn Stream Recording off, Apply, turn it on, Apply: the recording group has all 6 items (Split, Pause, Unpause, Add chapter, Enable, Disable) with their keys. Do the same for Replay Buffer: 3 items (Save, Enable, Disable).
 - Rename the filter: keys kept, and the descriptions show the new name.

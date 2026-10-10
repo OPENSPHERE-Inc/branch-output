@@ -325,8 +325,11 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
     //--- Setup video encoder ---//
     auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
 
-    // The encoder shares the passed settings object and writes into it (get_defaults, migrations).
-    OBSDataAutoRelease encoderSettings = duplicateSettings(settings);
+    // The encoder shares the settings object it is given and writes into it (get_defaults, migrations).
+    // It gets the user values only: the default layer also holds the defaults of encoders selected
+    // earlier in the properties, and the encoder sets its own defaults.
+    OBSDataAutoRelease encoderSettings = obs_data_create();
+    obs_data_apply(encoderSettings, settings);
     videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), encoderSettings, nullptr);
     if (!videoEncoder) {
         obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));
@@ -408,6 +411,8 @@ void BranchOutput::startOutput(obs_data_t *settings, int interlockType)
     // Force release references
     stopOutput();
 
+    OBSWeakOutputAutoRelease createdReplayBuffer;
+
     pthread_mutex_lock(&outputMutex);
     {
         OBSMutexAutoUnlock locked(&outputMutex);
@@ -442,7 +447,7 @@ void BranchOutput::startOutput(obs_data_t *settings, int interlockType)
             anyStarted |= createAndStartRecordingOutputChecked(settings);
         }
         if (replayBufferEligible) {
-            anyStarted |= createAndStartReplayBufferChecked(settings);
+            anyStarted |= createAndStartReplayBufferChecked(settings, createdReplayBuffer);
         }
         if (streamingEligible) {
             anyStarted |= createAndStartStreamingOutputs(settings);
@@ -453,6 +458,8 @@ void BranchOutput::startOutput(obs_data_t *settings, int interlockType)
             releaseInfrastructureIfIdle();
         }
     }
+
+    unregisterReplayBufferOutputHotkey(createdReplayBuffer);
 }
 
 void BranchOutput::loadProfile(obs_data_t *settings)

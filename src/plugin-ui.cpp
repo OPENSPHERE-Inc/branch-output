@@ -916,6 +916,169 @@ void BranchOutput::addAudioEncoderGroup(obs_properties_t *props)
     );
 }
 
+#define ENCODER_LIST_RESET_MAX_PASSES 16
+
+static bool getSettingsItemType(obs_data_t *settings, const char *name, obs_data_type &type)
+{
+    auto item = obs_data_item_byname(settings, name);
+    if (!item) {
+        return false;
+    }
+
+    type = obs_data_item_gettype(item);
+    obs_data_item_release(&item);
+    return true;
+}
+
+static bool isComparableListFormat(obs_combo_format format)
+{
+    switch (format) {
+    case OBS_COMBO_FORMAT_STRING:
+    case OBS_COMBO_FORMAT_INT:
+    case OBS_COMBO_FORMAT_FLOAT:
+    case OBS_COMBO_FORMAT_BOOL:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool listFormatAcceptsType(obs_combo_format format, obs_data_type type)
+{
+    switch (format) {
+    case OBS_COMBO_FORMAT_STRING:
+        return type == OBS_DATA_STRING;
+    case OBS_COMBO_FORMAT_INT:
+    case OBS_COMBO_FORMAT_FLOAT:
+        return type == OBS_DATA_NUMBER;
+    case OBS_COMBO_FORMAT_BOOL:
+        return type == OBS_DATA_BOOLEAN;
+    default:
+        return false;
+    }
+}
+
+// Disabled items count as listed, the same as the properties view matches them.
+static bool listContainsSettingsValue(obs_property_t *list, obs_data_t *settings)
+{
+    auto name = obs_property_name(list);
+    auto count = obs_property_list_item_count(list);
+
+    switch (obs_property_list_format(list)) {
+    case OBS_COMBO_FORMAT_STRING: {
+        auto value = obs_data_get_string(settings, name);
+        for (size_t idx = 0; idx < count; idx++) {
+            auto itemValue = obs_property_list_item_string(list, idx);
+            if (!strcmp(value, itemValue ? itemValue : "")) {
+                return true;
+            }
+        }
+        return false;
+    }
+    case OBS_COMBO_FORMAT_INT: {
+        auto value = obs_data_get_int(settings, name);
+        for (size_t idx = 0; idx < count; idx++) {
+            if (obs_property_list_item_int(list, idx) == value) {
+                return true;
+            }
+        }
+        return false;
+    }
+    case OBS_COMBO_FORMAT_FLOAT: {
+        auto value = obs_data_get_double(settings, name);
+        for (size_t idx = 0; idx < count; idx++) {
+            if (obs_property_list_item_float(list, idx) == value) {
+                return true;
+            }
+        }
+        return false;
+    }
+    case OBS_COMBO_FORMAT_BOOL: {
+        auto value = obs_data_get_bool(settings, name);
+        for (size_t idx = 0; idx < count; idx++) {
+            if (obs_property_list_item_bool(list, idx) == value) {
+                return true;
+            }
+        }
+        return false;
+    }
+    default:
+        return false;
+    }
+}
+
+// Resets the setting of the first non-editable list in props (groups included) whose value is
+// not among the list items to the default, and returns whether a setting was reset. The reset
+// key is added to resetNames and skipped from then on, since an encoder may keep it unlisted.
+// Must stay on the properties side: an encoder migrates legacy values when it is created, so
+// resetting them before creation would lose values the encoder can still read.
+static bool resetFirstUnlistedListValue(
+    obs_properties_t *props, obs_data_t *settings, const QString &logName, QSet<QString> &resetNames
+)
+{
+    for (auto prop = obs_properties_first(props); prop; obs_property_next(&prop)) {
+        auto propType = obs_property_get_type(prop);
+        if (propType == OBS_PROPERTY_GROUP) {
+            if (resetFirstUnlistedListValue(obs_property_group_content(prop), settings, logName, resetNames)) {
+                return true;
+            }
+            continue;
+        }
+        if (propType != OBS_PROPERTY_LIST) {
+            continue;
+        }
+
+        auto comboType = obs_property_list_type(prop);
+        if (comboType != OBS_COMBO_TYPE_LIST && comboType != OBS_COMBO_TYPE_RADIO) {
+            continue;
+        }
+
+        auto format = obs_property_list_format(prop);
+        if (!isComparableListFormat(format) || obs_property_list_item_count(prop) == 0) {
+            continue;
+        }
+
+        auto name = obs_property_name(prop);
+        auto nameKey = QString::fromUtf8(name);
+        if (resetNames.contains(nameKey)) {
+            continue;
+        }
+
+        obs_data_type itemType = OBS_DATA_NULL;
+        if (!getSettingsItemType(settings, name, itemType)) {
+            continue;
+        }
+
+        if (!listFormatAcceptsType(format, itemType)) {
+            // An item keeps its type without a user value and rejects a default of another type,
+            // so the item itself has to go for the encoder default to be set.
+            if (obs_data_has_user_value(settings, name)) {
+                obs_log(
+                    LOG_INFO, "%s: Video encoder setting \"%s\" was reset to the default.", qUtf8Printable(logName),
+                    name
+                );
+            } else {
+                obs_log(
+                    LOG_DEBUG, "%s: Video encoder setting \"%s\" had a default of another type removed.",
+                    qUtf8Printable(logName), name
+                );
+            }
+            obs_data_erase(settings, name);
+            resetNames.insert(nameKey);
+            return true;
+        } else if (obs_data_has_user_value(settings, name) && !listContainsSettingsValue(prop, settings)) {
+            obs_log(
+                LOG_INFO, "%s: Video encoder setting \"%s\" was reset to the default.", qUtf8Printable(logName), name
+            );
+            obs_data_unset_user_value(settings, name);
+            resetNames.insert(nameKey);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 {
     auto videoEncoderGroup = obs_properties_create();
@@ -1146,13 +1309,37 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 
             auto encoderProps = obs_get_encoder_properties(_encoderId);
             if (encoderProps) {
-                obs_properties_add_group(
+                auto encoderSettingsGroup = obs_properties_add_group(
                     _videoEncoderGroup, "video_encoder_settings_group", obs_encoder_get_display_name(_encoderId),
                     OBS_GROUP_NORMAL, encoderProps
                 );
 
-                // Do not apply to _videoEncoderGroup because it will cause memoryleak.
-                obs_properties_apply_settings(encoderProps, settings);
+                if (!encoderSettingsGroup) {
+                    // A rejected group stays owned by the caller.
+                    obs_properties_destroy(encoderProps);
+                    obs_log(LOG_ERROR, "%s: Failed to add video encoder properties.", qUtf8Printable(filter->name));
+                } else {
+                    // Do not apply to _videoEncoderGroup because it will cause memoryleak.
+                    obs_properties_apply_settings(encoderProps, settings);
+
+                    // The encoder's modified callbacks may rebuild list items from other values,
+                    // so the lists are checked again after each reset.
+                    QSet<QString> resetNames;
+                    int pass = 0;
+                    for (; pass < ENCODER_LIST_RESET_MAX_PASSES; pass++) {
+                        if (!resetFirstUnlistedListValue(encoderProps, settings, filter->name, resetNames)) {
+                            break;
+                        }
+                        applyDefaults(settings, encoderEefaults);
+                        obs_properties_apply_settings(encoderProps, settings);
+                    }
+                    if (pass == ENCODER_LIST_RESET_MAX_PASSES) {
+                        obs_log(
+                            LOG_WARNING, "%s: Stopped checking the video encoder lists after %d resets.",
+                            qUtf8Printable(filter->name), ENCODER_LIST_RESET_MAX_PASSES
+                        );
+                    }
+                }
             }
 
             obs_log(LOG_INFO, "%s: Video encoder changed.", qUtf8Printable(filter->name));

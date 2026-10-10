@@ -23,9 +23,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include <obs.hpp>
 
+#include <cstring>
+#include <vector>
+
 #include "plugin-support.h"
 #include "branch-output.hpp"
 #include "utils.hpp"
+
+// Hotkey that obs-ffmpeg registers on every replay_buffer output in OBS 30.1 to 32.x.
+static const char *const OBS_REPLAY_BUFFER_SAVE_HOTKEY_NAME = "ReplayBuffer.Save";
 
 obs_data_t *BranchOutput::createReplayBufferSettings(obs_data_t *settings)
 {
@@ -45,8 +51,7 @@ obs_data_t *BranchOutput::createReplayBufferSettings(obs_data_t *settings)
     }
 
     // Create directory
-    int ret = os_mkdirs(path);
-    if (ret == MKDIR_ERROR) {
+    if (!ensureOutputDirectory(path)) {
         obs_log(LOG_ERROR, "%s: Failed to create replay buffer directory: %s", qUtf8Printable(name), path);
         obs_data_release(replaySettings);
         return nullptr;
@@ -73,7 +78,7 @@ obs_data_t *BranchOutput::createReplayBufferSettings(obs_data_t *settings)
     return replaySettings;
 }
 
-void BranchOutput::createAndStartReplayBuffer(obs_data_t *settings)
+void BranchOutput::createAndStartReplayBuffer(obs_data_t *settings, OBSWeakOutputAutoRelease &createdOutput)
 {
     if (!videoEncoder) {
         return;
@@ -90,6 +95,7 @@ void BranchOutput::createAndStartReplayBuffer(obs_data_t *settings)
         obs_log(LOG_ERROR, "%s: Replay buffer output creation failed", qUtf8Printable(name));
         return;
     }
+    createdOutput = obs_output_get_weak_output(replayBufferOutput);
 
     // Bind audio encoders (same logic as recording)
     size_t encIndex = 0;
@@ -265,7 +271,7 @@ void BranchOutput::onSaveReplayBufferHotkeyPressed(void *data, obs_hotkey_id, ob
 // Internal helper: caller must hold outputMutex.
 // Caller must call ensureInfrastructure() before this function to set up
 // the view, video/audio encoders, and related infrastructure.
-bool BranchOutput::createAndStartReplayBufferChecked(obs_data_t *settings)
+bool BranchOutput::createAndStartReplayBufferChecked(obs_data_t *settings, OBSWeakOutputAutoRelease &createdOutput)
 {
     if (!isReplayBufferEnabled(settings)) {
         return false;
@@ -274,13 +280,72 @@ bool BranchOutput::createAndStartReplayBufferChecked(obs_data_t *settings)
         return true;
     }
 
-    createAndStartReplayBuffer(settings);
+    createAndStartReplayBuffer(settings, createdOutput);
 
     return replayBufferActive;
 }
 
+void BranchOutput::unregisterReplayBufferOutputHotkey(obs_weak_output_t *output)
+{
+    if (!output) {
+        return;
+    }
+
+    struct UnregisterContext {
+        obs_weak_output_t *output;
+        size_t unregisteredCount;
+    };
+    UnregisterContext context{output, 0};
+
+    obs_hotkey_update_atomic(
+        [](void *param) {
+            auto ctx = static_cast<UnregisterContext *>(param);
+
+            struct EnumContext {
+                obs_weak_output_t *output;
+                std::vector<obs_hotkey_id> ids;
+            };
+            EnumContext enumContext{ctx->output, {}};
+
+            obs_enum_hotkeys(
+                [](void *data, obs_hotkey_id id, obs_hotkey_t *key) {
+                    auto enumCtx = static_cast<EnumContext *>(data);
+                    if (obs_hotkey_get_registerer_type(key) != OBS_HOTKEY_REGISTERER_OUTPUT) {
+                        return true;
+                    }
+                    if (obs_hotkey_get_registerer(key) != enumCtx->output) {
+                        return true;
+                    }
+                    auto hotkeyName = obs_hotkey_get_name(key);
+                    if (hotkeyName && strcmp(hotkeyName, OBS_REPLAY_BUFFER_SAVE_HOTKEY_NAME) == 0) {
+                        enumCtx->ids.push_back(id);
+                    }
+                    return true;
+                },
+                &enumContext
+            );
+
+            for (auto id : enumContext.ids) {
+                obs_hotkey_unregister(id);
+            }
+            ctx->unregisteredCount = enumContext.ids.size();
+        },
+        &context
+    );
+
+    if (context.unregisteredCount > 0) {
+        obs_log(
+            LOG_DEBUG, "%s: Unregistered %zu hotkey(s) of the replay buffer output", qUtf8Printable(name),
+            context.unregisteredCount
+        );
+    }
+}
+
 bool BranchOutput::startReplayBufferIndividual(obs_data_t *applied)
 {
+    bool started = false;
+    OBSWeakOutputAutoRelease createdOutput;
+
     pthread_mutex_lock(&pluginMutex);
     {
         OBSMutexAutoUnlock pluginLocked(&pluginMutex);
@@ -293,13 +358,15 @@ bool BranchOutput::startReplayBufferIndividual(obs_data_t *applied)
                 return false;
             }
 
-            bool started = createAndStartReplayBufferChecked(applied);
+            started = createAndStartReplayBufferChecked(applied, createdOutput);
             if (!started) {
                 releaseInfrastructureIfIdle();
             }
-            return started;
         }
     }
+
+    unregisterReplayBufferOutputHotkey(createdOutput);
+    return started;
 }
 
 bool BranchOutput::stopReplayBufferIndividual()
