@@ -241,6 +241,7 @@ class OutputTableRowDelegate : public QStyledItemDelegate {
 public:
     explicit OutputTableRowDelegate(QTableWidget *table);
 
+    inline int getHoveredRow() const { return hoveredRow; }
     void setHoveredRow(int row);
     void setSelectedRow(int row);
 
@@ -312,6 +313,9 @@ class BranchOutputStatusDock : public QFrame {
     void removeMainOutput(obs_weak_source_t *weak, const QString &currentName);
     bool isMainOutputNameUsed(const QString &filterName, obs_source_t *except) const;
     void showWarning(const QString &title, const QString &text);
+    int rowUnderPointer() const;
+    void retargetHoveredRow();
+    void resyncHoveredRow();
 
     static void onOBSFrontendEvent(enum obs_frontend_event event, void *param);
     static void onEanbleAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);

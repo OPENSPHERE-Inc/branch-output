@@ -41,6 +41,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QScrollBar>
+#include <QApplication>
+#include <QScopeGuard>
 
 #include <algorithm>
 
@@ -117,6 +119,13 @@ static QString frontendText(const char *lookupVal)
     return QString::fromUtf8(text ? text : lookupVal);
 }
 
+// Wayland reports neither the global pointer position nor the window under it, so hover tracking relies on the
+// viewport's enter/leave state there, and a resync only clears the band.
+static bool isWaylandPlatform()
+{
+    return QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
+}
+
 //--- BranchOutputStatusDock class ---//
 
 BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
@@ -146,13 +155,7 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     rowDelegate = new OutputTableRowDelegate(outputTable);
     outputTable->setItemDelegate(rowDelegate);
     outputTable->viewport()->installEventFilter(this);
-    connect(outputTable->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]() {
-        auto viewport = outputTable->viewport();
-        if (!viewport->underMouse()) {
-            return;
-        }
-        rowDelegate->setHoveredRow(outputTable->rowAt(viewport->mapFromGlobal(QCursor::pos()).y()));
-    });
+    connect(outputTable->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]() { retargetHoveredRow(); });
     outputTable->setColumnCount(8);
     outputTable->sortItems(sortingColumnIndex, sortingOrder);
 
@@ -814,6 +817,8 @@ void BranchOutputStatusDock::sort()
         outputTable->sortItems(sortingColumnIndex, sortingOrder);
     }
 
+    retargetHoveredRow();
+
     for (int i = 0; i < headerCount; i++) {
         if (i == sortingColumnIndex || i == resetColumnIndex) {
             continue;
@@ -1049,6 +1054,11 @@ void BranchOutputStatusDock::onTableContextMenuRequested(const QPoint &pos)
         removeAction = menu.addAction(QTStr("RowMenu.Remove"));
     }
 
+    // Qt sends the viewport no HoverLeave while the menu or a dialog opened from it is shown, so drop the hover
+    // band for the whole flow and derive it again from the pointer when the flow ends.
+    rowDelegate->setHoveredRow(-1);
+    auto resyncHover = qScopeGuard([this]() { resyncHoveredRow(); });
+
     auto selected = menu.exec(outputTable->viewport()->mapToGlobal(pos));
     if (!selected) {
         return;
@@ -1164,6 +1174,51 @@ void BranchOutputStatusDock::showWarning(const QString &title, const QString &te
     box.setTextFormat(Qt::PlainText);
     box.addButton(frontendText("OK"), QMessageBox::AcceptRole);
     box.exec();
+}
+
+int BranchOutputStatusDock::rowUnderPointer() const
+{
+    auto viewport = outputTable->viewport();
+    if (!viewport->isVisible()) {
+        return -1;
+    }
+
+    auto globalPos = QCursor::pos();
+    auto pos = viewport->mapFromGlobal(globalPos);
+    if (!viewport->rect().contains(pos)) {
+        return -1;
+    }
+
+    if (isWaylandPlatform()) {
+        if (!viewport->underMouse()) {
+            return -1;
+        }
+    } else {
+        // Cell widgets are children of the viewport
+        auto widget = QApplication::widgetAt(globalPos);
+        if (widget != viewport && !viewport->isAncestorOf(widget)) {
+            return -1;
+        }
+    }
+
+    return outputTable->rowAt(pos.y());
+}
+
+void BranchOutputStatusDock::retargetHoveredRow()
+{
+    if (rowDelegate->getHoveredRow() < 0) {
+        return;
+    }
+    rowDelegate->setHoveredRow(rowUnderPointer());
+}
+
+void BranchOutputStatusDock::resyncHoveredRow()
+{
+    if (isWaylandPlatform()) {
+        rowDelegate->setHoveredRow(-1);
+        return;
+    }
+    rowDelegate->setHoveredRow(rowUnderPointer());
 }
 
 //--- OutputTableRowDelegate class ---//
