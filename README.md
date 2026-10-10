@@ -50,7 +50,7 @@ More reliable and proper audio handling.
   - Enable/Disable the filter
   - Manual recording splitting, Pause/Unpause, Adding chapters (Since 1.0.5)
   - Enable/Disable all
-  - Split all recordings, Pause/Unpause all recordings, Add chapter to all reacordings (Since 1.0.5)
+  - Split all recordings, Pause/Unpause all recordings, Add chapter to all recordings (Since 1.0.5)
   - Save replay buffer, Save all replay buffers (Since 1.0.8)
   - Per-output enable/disable for streaming (all slots / per-slot), recording, and replay buffer (Since 1.0.9)
 - Also available in Studio Mode
