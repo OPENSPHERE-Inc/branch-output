@@ -411,6 +411,8 @@ void BranchOutput::startOutput(obs_data_t *settings, int interlockType)
     // Force release references
     stopOutput();
 
+    OBSWeakOutputAutoRelease createdReplayBuffer;
+
     pthread_mutex_lock(&outputMutex);
     {
         OBSMutexAutoUnlock locked(&outputMutex);
@@ -445,7 +447,7 @@ void BranchOutput::startOutput(obs_data_t *settings, int interlockType)
             anyStarted |= createAndStartRecordingOutputChecked(settings);
         }
         if (replayBufferEligible) {
-            anyStarted |= createAndStartReplayBufferChecked(settings);
+            anyStarted |= createAndStartReplayBufferChecked(settings, createdReplayBuffer);
         }
         if (streamingEligible) {
             anyStarted |= createAndStartStreamingOutputs(settings);
@@ -456,6 +458,8 @@ void BranchOutput::startOutput(obs_data_t *settings, int interlockType)
             releaseInfrastructureIfIdle();
         }
     }
+
+    unregisterReplayBufferOutputHotkey(createdReplayBuffer);
 }
 
 void BranchOutput::loadProfile(obs_data_t *settings)
