@@ -273,7 +273,7 @@ OBSDataArrayAutoRelease BranchOutputProgram::profileBindingsFor(const QString &f
 // Caller must hold the libobs hotkey mutex and run on the UI thread.
 // libobs restores no bindings for a frontend hotkey, so the profile's [Hotkeys] is loaded here.
 // FIXME: obs_reset_source_uuids() (OBS 30) changes the UUID these names are built from, so the next
-// save prunes the cache entries of unregistered groups. Re-key the cache before that save.
+// save prunes the cache entries of unregistered groups. Re-key the cache before that save (issue #228).
 obs_hotkey_id
 BranchOutputProgram::registerHotkey(const QString &fullName, const QString &description, obs_hotkey_func func)
 {
