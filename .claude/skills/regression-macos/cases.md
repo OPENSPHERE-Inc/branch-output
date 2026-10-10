@@ -177,11 +177,12 @@ Pass:
 
 - Each key acts on its target only, and the dock checkboxes update immediately.
 - The "all" hotkeys also work with the dock closed.
+- While the replay buffer runs, including after its Enable key restarts it, Settings → Hotkeys has no heading with the filter's name holding a "Save Replay" entry (#218). OBS's own "Save Replay" for the profile's replay buffer is a different entry.
 - Add chapter acts only on Hybrid MP4 recordings; on 30.1.2 it is expected to do nothing.
 
 ## R14 Hotkey persistence — all
 
-Do and Pass: after each operation below, Settings → Hotkeys shows the R13 assignments.
+Do and Pass: after each operation below, Settings → Hotkeys shows the R13 assignments and no filter-name heading with a "Save Replay" entry (R13).
 
 - Turn Stream Recording off, Apply, turn it on, Apply: the recording group has all 6 items (Split, Pause, Unpause, Add chapter, Enable, Disable) with their keys. Do the same for Replay Buffer: 3 items (Save, Enable, Disable).
 - Rename the filter: keys kept, and the descriptions show the new name.
