@@ -35,7 +35,7 @@ More reliable and proper audio handling.
 - Can be interlinked with OBS Studio's streaming, recording, virtual camera, and replay buffer status
 - Manual splitting of recorded files (Since 1.0.5)
 - Pause/Unpause Recording (Since 1.0.5)
-- Adding chapter markers to recordings（Only on Hybrid MP4） (Since 1.0.5)
+- Adding chapter markers to recordings（On Hybrid MP4, requires OBS Studio 30.2 or later） (Since 1.0.5)
 - Replay buffer per filter (Since 1.0.8)
 - Filter input mode to capture and output video from the filter chain (Experimental, Since 1.0.8)
 - Blanking and muting when the source is not visible in the program output (Since 1.0.8)
@@ -45,11 +45,12 @@ More reliable and proper audio handling.
 - Individual start/stop control per output type via "Individual" interlock mode and per-output enable/disable checkboxes in the Status Dock (Since 1.0.9)
 - Proc handler to override recording save file name format from scripts ([API reference](./API.md)) (Since 1.0.9)
 - Proc handler to override replay buffer save file name format from scripts ([API reference](./API.md)) (Since 1.0.9)
+- Hybrid MOV recording format with chapter marker support (Requires OBS Studio 32.0 or later) (Since 1.0.14)
 - Various hotkeys
   - Enable/Disable the filter
   - Manual recording splitting, Pause/Unpause, Adding chapters (Since 1.0.5)
   - Enable/Disable all
-  - Split all recordings, Pause/Unpause all recordings, Add chapter to all reacordings (Since 1.0.5)
+  - Split all recordings, Pause/Unpause all recordings, Add chapter to all recordings (Since 1.0.5)
   - Save replay buffer, Save all replay buffers (Since 1.0.8)
   - Per-output enable/disable for streaming (all slots / per-slot), recording, and replay buffer (Since 1.0.9)
 - Also available in Studio Mode

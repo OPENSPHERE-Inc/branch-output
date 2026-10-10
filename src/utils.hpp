@@ -42,6 +42,11 @@ struct CropRect {
 bool ensureOutputDirectory(const char *path);
 QString getOutputFilename(const char *path, const char *container, bool noSpace, bool overwrite, const char *format);
 QString getFormatExt(const char *container);
+// "hybrid_mp4" -> "mp4_output", "hybrid_mov" -> "mov_output", others -> nullptr
+const char *getNativeMuxerOutputId(const char *container);
+bool isOutputTypeRegistered(const char *outputId);
+// false only when the format has a codec allowlist and codec is not in it
+bool formatAcceptsCodec(const char *container, const char *codec);
 
 using OBSProperties = OBSPtr<obs_properties_t *, obs_properties_destroy>;
 using OBSAudio = OBSPtr<audio_t *, audio_output_close>;

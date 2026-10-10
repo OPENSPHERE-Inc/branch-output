@@ -29,6 +29,20 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "branch-output.hpp"
 #include "utils.hpp"
 
+static bool recordingFormatAcceptsEncoder(const QString &name, const char *recFormat, const char *encoderId)
+{
+    auto codec = obs_get_encoder_codec(encoderId);
+    if (formatAcceptsCodec(recFormat, codec)) {
+        return true;
+    }
+
+    obs_log(
+        LOG_ERROR, "%s: Recording format '%s' does not support codec '%s' (encoder '%s')", qUtf8Printable(name),
+        recFormat, codec ? codec : "", encoderId
+    );
+    return false;
+}
+
 obs_data_t *BranchOutput::createRecordingSettings(obs_data_t *settings, bool createFolder)
 {
     auto recordingSettings = obs_data_create();
@@ -105,18 +119,41 @@ obs_data_t *BranchOutput::createRecordingSettings(obs_data_t *settings, bool cre
     return recordingSettings;
 }
 
+bool BranchOutput::validateRecordingFormat(obs_data_t *settings)
+{
+    auto recFormat = obs_data_get_string(settings, "rec_format");
+    auto nativeMuxerOutputId = getNativeMuxerOutputId(recFormat);
+    if (nativeMuxerOutputId && !isOutputTypeRegistered(nativeMuxerOutputId)) {
+        obs_log(
+            LOG_ERROR, "%s: Recording format '%s' requires output type '%s', which this OBS does not provide",
+            qUtf8Printable(name), recFormat, nativeMuxerOutputId
+        );
+        return false;
+    }
+
+    // Every audio track's encoder is created from the single audio_encoder setting
+    auto videoEncoderId = obs_data_get_string(settings, "video_encoder");
+    auto audioEncoderId = obs_data_get_string(settings, "audio_encoder");
+    return recordingFormatAcceptsEncoder(name, recFormat, videoEncoderId) &&
+           recordingFormatAcceptsEncoder(name, recFormat, audioEncoderId);
+}
+
 void BranchOutput::createAndStartRecordingOutput(obs_data_t *settings)
 {
     if (!videoEncoder) {
         return;
     }
 
-    auto recFormat = obs_data_get_string(settings, "rec_format");
-    const char *outputId = !strcmp(recFormat, "hybrid_mp4") ? "mp4_output" : "ffmpeg_muxer";
+    if (!validateRecordingFormat(settings)) {
+        return;
+    }
 
-    // Dtermine chapter marker capability
-    // Chapter maker is only available for hybrid MP4
-    addChapterToRecordingEnabled = !strcmp(recFormat, "hybrid_mp4");
+    auto recFormat = obs_data_get_string(settings, "rec_format");
+    auto nativeMuxerOutputId = getNativeMuxerOutputId(recFormat);
+    const char *outputId = nativeMuxerOutputId ? nativeMuxerOutputId : "ffmpeg_muxer";
+
+    // Chapter markers are only available on native muxer outputs (mp4_output / mov_output)
+    addChapterToRecordingEnabled = !!nativeMuxerOutputId;
 
     // Ensure base path exists
     OBSDataAutoRelease recordingSettings = createRecordingSettings(settings, true);
@@ -486,6 +523,10 @@ bool BranchOutput::startRecordingIndividual(obs_data_t *applied)
         pthread_mutex_lock(&outputMutex);
         {
             OBSMutexAutoUnlock outputLocked(&outputMutex);
+
+            if (!validateRecordingFormat(applied)) {
+                return false;
+            }
 
             // ensureInfrastructure() may fail gracefully if the source is collapsed
             // (calculateCrop returns nullopt). This is acceptable — the interval timer

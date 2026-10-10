@@ -47,24 +47,30 @@ Edge:
 
 ## R03 Recording — all
 
-Do: Streaming off, Stream Recording on, a file name format containing `%1` and `%2`. Record Matroska, then Hybrid MP4 (skip Hybrid MP4 on 30.1.2, which lacks it). Then turn "Use profile's recording path" on and record once more.
+Do: Streaming off, Stream Recording on, a file name format containing `%1` and `%2`. Record Matroska, then Hybrid MP4 (not on 30.1.2), then Hybrid MOV (32.2 only). Then turn "Use profile's recording path" on and record once more.
 
 Pass:
 
 - Each file's name expands `%1` to the source name and `%2` to the filter name.
 - ffprobe: 1280x720 video, one audio stream carrying the 1 kHz tone, duration within 1 s of the time between the recording's start and stop log lines (1.5 s on 30.1.2, whose own recordings fall short by as much).
+- Hybrid MOV: the file ends in `.mov`, and ffprobe shows the major brand `qt  `.
 - With "Use profile's recording path", the file is written to the profile's recording path instead of the Save Path.
+
+Edge:
+
+- 31.1 and 30.1.2 lack Hybrid MOV's output type, and 30.1.2 also Hybrid MP4's: the properties list such a format grayed out and unselectable. Set `rec_format` to `hybrid_mov` through obs-websocket: no recording starts, the log has `Recording format 'hybrid_mov' requires output type 'mov_output', which this OBS does not provide` (repeated each second while the setting stays), and opening and closing the properties leaves `rec_format` at `hybrid_mov`. On 30.1.2, do the same with `hybrid_mp4` (`mp4_output`).
+- 32.2, Hybrid MOV with the filter's `audio_encoder` set to `ffmpeg_opus`: no recording starts, and the log has `Recording format 'hybrid_mov' does not support codec 'opus'`. With `ffmpeg_pcm_s16le` it records, and the file's audio carries the 1 kHz tone. Hybrid MP4 with `ffmpeg_opus` still records. Restore the AAC encoder afterwards.
 
 ## R04 Recording control — all
 
-Do: record Matroska with "Generate File Name without Space" on and a file name format containing spaces. First use "Split by Size" with a small size (for example 2 MB). Then use "Only split manually" and operate the dock: the row's Split / Pause / Unpause buttons and the Split All / Pause All / Unpause All buttons. On Hybrid MP4 (not 30.1.2), also add a chapter from the dock.
+Do: record Matroska with "Generate File Name without Space" on and a file name format containing spaces. First use "Split by Size" with a small size (for example 2 MB). Then use "Only split manually" and operate the dock: the row's Split / Pause / Unpause buttons and the Split All / Pause All / Unpause All buttons. On Hybrid MP4 (not 30.1.2) and Hybrid MOV (32.2 only), also split once and add a chapter from the dock.
 
 Pass:
 
 - Split by size produces several consecutive playable files, and no file name contains a space.
 - Each manual split starts a new file.
 - Pause shows "Paused" and Unpause returns to "Recording"; the file's duration excludes the paused time.
-- Hybrid MP4: the chapter appears in `ffprobe -show_chapters`.
+- Hybrid MP4 and Hybrid MOV: the file after the split keeps the format's extension (`.mp4` / `.mov`), and the chapter appears in `ffprobe -show_chapters`.
 
 Edge: split within the first second after the recording starts. No empty file results, and the first file's audio decodes (#191).
 
@@ -77,6 +83,8 @@ Pass:
 - The dock shows "Buffering", and the properties show an estimated memory usage in MB.
 - Each save writes one file per saved filter, about 10 s long and at most 11 s (a save keeps whole keyframe intervals, so it can exceed the maximum by one interval), with video and audio, and logs `Replay buffer saved`.
 - The saved file names expand `%1` and `%2` as in R03.
+
+Edge, 32.2 only: with OBS closed, set `RecFormat2=hybrid_mov` under `[SimpleOutput]` in the profile's `basic.ini`, and delete `recently.json` (R01). Add a new filter, turn Replay Buffer on, and Apply: the properties show Hybrid MOV as the recording format and MOV as the replay buffer format, and a save writes a `.mov` file with video and audio. Restore `RecFormat2` the same way afterwards.
 
 ## R06 Audio sources — latest
 
@@ -162,7 +170,7 @@ Pass:
 - Each key acts on its target only, and the dock checkboxes update immediately.
 - The "all" hotkeys also work with the dock closed.
 - While the replay buffer runs, including after its Enable key restarts it, Settings → Hotkeys has no heading with the filter's name holding a "Save Replay" entry (#218). OBS's own "Save Replay" for the profile's replay buffer is a different entry.
-- Add chapter acts only on Hybrid MP4 recordings; on 30.1.2 it is expected to do nothing.
+- Add chapter acts only on Hybrid MP4 and Hybrid MOV recordings (on 32.2, press it on one recording of each); on 30.1.2 it is expected to do nothing.
 
 ## R14 Hotkey persistence — all
 

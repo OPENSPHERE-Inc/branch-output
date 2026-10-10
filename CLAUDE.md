@@ -367,6 +367,7 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - Stream recording logic is implemented in `src/plugin-stream-recording.cpp`.
 - Supports individual start/stop via `startRecordingIndividual()` / `stopRecordingIndividual()`.
 - Proc handlers for file name format override are registered here (`override_recording_file_name_format`, `clear_recording_file_name_format_override`).
+- Native muxer formats map to their output types in `getNativeMuxerOutputId()` (`hybrid_mp4` → `mp4_output`, `hybrid_mov` → `mov_output`). When adding a hybrid format, also update `getFormatExt()` and `formatAcceptsCodec()` in `utils.cpp`.
 
 ### Modifying Hotkeys
 
@@ -391,6 +392,7 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - **Never call a libobs hotkey API (including `obs_hotkey_update_atomic()`) while holding `pluginMutex` / `outputMutex` / `audioMutex` / `AppliedSettings::mutex`.** libobs invokes hotkey callbacks while holding the hotkey mutex, and some of them take `outputMutex`. Lock order: hotkey mutex → `pluginMutex` → `outputMutex` → `audioMutex` → `AppliedSettings::mutex`. `AppliedSettings::replace()` / `get()` run under the hotkey mutex and under `outputMutex`, so they must not take any other mutex or call a libobs hotkey API.
 - **Hotkey register/unregister/save/load/description updates and every access to `hotkeyBindingsCache` must run inside an `obs_hotkey_update_atomic()` callback.** `obs_hotkey_set_description()` and `obs_hotkey_pair_set_descriptions()` take no lock of their own.
 - **`syncHotkeys()` registers hotkeys only against a public parent source.** Do not remove its `sourceIsPrivate()` early return: `obs_hotkey_register_source()` rejects a private parent while `obs_hotkey_pair_register_source()` accepts one, which would break the representative-ID registration check.
+- **Recording format check comes first** — Every path that starts a recording calls `validateRecordingFormat()` before `ensureInfrastructure()` and before creating the recording output. It rejects a native muxer format whose output type this OBS does not register, and Hybrid MOV with a codec `mov_output` cannot write (it writes a broken file without an error). It reads the codecs from the `video_encoder` / `audio_encoder` IDs in the settings, so it assumes every encoder bound to the recording is created from those two settings.
 - **Status table accessibility factory** — Call `OutputStatusTable::installAccessibilityFactory()` in `obs_module_post_load()` before the status dock is created, and `OutputStatusTable::removeAccessibilityFactory()` in `obs_module_unload()` after the dock is removed, so the status table never gets Qt's `QAccessibleTable` (QTBUG-149612 crash) and no plugin function stays registered in Qt after unload. Keep `Q_OBJECT` on `OutputStatusTable`: the factory matches its class name.
 
 ---
