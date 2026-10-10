@@ -175,7 +175,14 @@ void BranchOutput::getDefaults(obs_data_t *defaults)
     obs_data_set_default_string(defaults, "replay_buffer_path", path);
     obs_data_set_default_string(defaults, "replay_buffer_filename_formatting", qUtf8Printable(filenameFormatting));
     obs_data_set_default_bool(defaults, "replay_buffer_no_space_filename", fileNameWithoutSpace);
-    obs_data_set_default_string(defaults, "replay_buffer_format", recFormat);
+    // The replay_buffer output is ffmpeg based, so hybrid formats fall back to their plain container
+    const char *rbFormat = recFormat;
+    if (rbFormat && !strcmp(rbFormat, "hybrid_mp4")) {
+        rbFormat = "mp4";
+    } else if (rbFormat && !strcmp(rbFormat, "hybrid_mov")) {
+        rbFormat = "mov";
+    }
+    obs_data_set_default_string(defaults, "replay_buffer_format", rbFormat);
 
     // Per-output user intent defaults (not shown in UI, persisted in settings)
     for (size_t i = 0; i < MAX_SERVICES; i++) {
@@ -402,8 +409,17 @@ void BranchOutput::addRecordingGroup(obs_properties_t *props)
     obs_property_list_add_string(fileFormatList, obs_module_text("hMP4"), "hybrid_mp4"); // beta
     obs_property_list_add_string(fileFormatList, obs_module_text("MOV"), "mov");
     obs_property_list_add_string(fileFormatList, obs_module_text("fMOV"), "fragmented_mov");
+    obs_property_list_add_string(fileFormatList, obs_module_text("hMOV"), "hybrid_mov");
     obs_property_list_add_string(fileFormatList, obs_module_text("TS"), "mpegts");
     obs_property_set_long_description(fileFormatList, obs_module_text("VideoFormatNote"));
+
+    // Disable instead of hiding: an unlisted saved value would be overwritten with the first item
+    for (size_t i = 0; i < obs_property_list_item_count(fileFormatList); i++) {
+        auto outputId = getNativeMuxerOutputId(obs_property_list_item_string(fileFormatList, i));
+        if (outputId && !isOutputTypeRegistered(outputId)) {
+            obs_property_list_item_disable(fileFormatList, i, true);
+        }
+    }
 
     auto splitFileList = obs_properties_add_list(
         recordingGroup, "split_file", obs_module_text("SplitFile"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING

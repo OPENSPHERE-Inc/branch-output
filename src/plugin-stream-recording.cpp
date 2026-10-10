@@ -29,6 +29,20 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "branch-output.hpp"
 #include "utils.hpp"
 
+static bool recordingFormatAcceptsEncoder(const QString &name, const char *recFormat, obs_encoder_t *encoder)
+{
+    auto codec = obs_encoder_get_codec(encoder);
+    if (formatAcceptsCodec(recFormat, codec)) {
+        return true;
+    }
+
+    obs_log(
+        LOG_ERROR, "%s: Recording format '%s' does not support codec '%s'", qUtf8Printable(name), recFormat,
+        codec ? codec : ""
+    );
+    return false;
+}
+
 obs_data_t *BranchOutput::createRecordingSettings(obs_data_t *settings, bool createFolder)
 {
     auto recordingSettings = obs_data_create();
@@ -112,11 +126,18 @@ void BranchOutput::createAndStartRecordingOutput(obs_data_t *settings)
     }
 
     auto recFormat = obs_data_get_string(settings, "rec_format");
-    const char *outputId = !strcmp(recFormat, "hybrid_mp4") ? "mp4_output" : "ffmpeg_muxer";
+    auto nativeMuxerOutputId = getNativeMuxerOutputId(recFormat);
+    if (nativeMuxerOutputId && !isOutputTypeRegistered(nativeMuxerOutputId)) {
+        obs_log(
+            LOG_ERROR, "%s: Recording format '%s' requires output type '%s', which this OBS does not provide",
+            qUtf8Printable(name), recFormat, nativeMuxerOutputId
+        );
+        return;
+    }
+    const char *outputId = nativeMuxerOutputId ? nativeMuxerOutputId : "ffmpeg_muxer";
 
-    // Dtermine chapter marker capability
-    // Chapter maker is only available for hybrid MP4
-    addChapterToRecordingEnabled = !strcmp(recFormat, "hybrid_mp4");
+    // Chapter markers are only available on native muxer outputs (mp4_output / mov_output)
+    addChapterToRecordingEnabled = !!nativeMuxerOutputId;
 
     // Ensure base path exists
     OBSDataAutoRelease recordingSettings = createRecordingSettings(settings, true);
@@ -160,6 +181,15 @@ void BranchOutput::createAndStartRecordingOutput(obs_data_t *settings)
     }
 
     obs_output_set_video_encoder(recordingOutput, videoEncoder);
+
+    if (!recordingFormatAcceptsEncoder(name, recFormat, obs_output_get_video_encoder(recordingOutput))) {
+        return;
+    }
+    for (size_t i = 0; i < encIndex; i++) {
+        if (!recordingFormatAcceptsEncoder(name, recFormat, obs_output_get_audio_encoder(recordingOutput, i))) {
+            return;
+        }
+    }
 
     // Start recording output
     if (obs_output_start(recordingOutput)) {

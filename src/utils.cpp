@@ -34,6 +34,8 @@ QString getFormatExt(const char *container)
         ext = "mp4";
     if (ext == "hybrid_mp4")
         ext = "mp4";
+    else if (ext == "hybrid_mov")
+        ext = "mov";
     else if (ext == "fragmented_mov")
         ext = "mov";
     else if (ext == "hls")
@@ -42,6 +44,50 @@ QString getFormatExt(const char *container)
         ext = "ts";
 
     return ext;
+}
+
+const char *getNativeMuxerOutputId(const char *container)
+{
+    if (!container) {
+        return nullptr;
+    }
+
+    if (!strcmp(container, "hybrid_mp4")) {
+        return "mp4_output";
+    } else if (!strcmp(container, "hybrid_mov")) {
+        return "mov_output";
+    }
+
+    return nullptr;
+}
+
+bool isOutputTypeRegistered(const char *outputId)
+{
+    return outputId && obs_get_output_flags(outputId) != 0;
+}
+
+bool formatAcceptsCodec(const char *container, const char *codec)
+{
+    // Same as the hybrid_mov entry of obs-studio/frontend/utility/FFmpegCodec.cpp
+    static const char *const hybridMovCodecs[] = {
+        "h264", "hevc", "prores", "aac", "alac", "pcm_s16le", "pcm_s24le", "pcm_f32le",
+    };
+
+    if (!container || strcmp(container, "hybrid_mov")) {
+        return true;
+    }
+
+    if (!codec) {
+        return false;
+    }
+
+    for (auto allowed : hybridMovCodecs) {
+        if (!strcmp(codec, allowed)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // Origin: https://github.com/obsproject/obs-studio/blob/06642fdee48477ab85f89ff670f105affe402df7/UI/obs-app.cpp#L1771
