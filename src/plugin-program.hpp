@@ -36,6 +36,9 @@ class BranchOutputProgram : public BranchOutput {
     QTimer *intervalTimer;                // UI thread. Exists only while attached.
     OBSWeakSourceAutoRelease contextWeak; // Weak reference to contextSource
     OBSSourceAutoRelease outputProxy;     // Guarded by outputMutex
+    // OBS's video settings the current video input was built from. Guarded by outputMutex.
+    // Meaningful only while videoOutput is set.
+    obs_video_info builtVideoInfo = {};
     std::atomic<bool> attached;
     std::atomic<bool> suspended;
     std::atomic<bool> removing;       // Set once by beginRemoval(); never cleared
@@ -57,6 +60,7 @@ class BranchOutputProgram : public BranchOutput {
     void selectVideoInputMode(obs_data_t *settings) override;
     bool setupVideoInput(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop) override;
     void teardownVideoInput() override;
+    bool isVideoInputOutdated() const override;
     bool setupDefaultAudio(const obs_audio_info &ai) override;
     bool evaluateBlanking(obs_data_t *settings) override;
     BlankingState getBlankingState() const override;

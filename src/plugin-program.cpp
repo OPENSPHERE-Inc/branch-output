@@ -74,6 +74,28 @@ static void resetTransientCheckboxes(obs_data_t *settings)
     obs_data_set_bool(settings, "replay_buffer_estimate", false);
 }
 
+// True when the main video yields the same frames as a view built from ovi and crop.
+static bool canUseMainVideo(const obs_video_info &mainInfo, const obs_video_info &ovi, const CropRect &crop)
+{
+    bool wholeCanvas = crop.left == 0 && crop.top == 0 && crop.width == mainInfo.base_width &&
+                       crop.height == mainInfo.base_height;
+    bool sameOutputSize = ovi.output_width == mainInfo.output_width && ovi.output_height == mainInfo.output_height;
+    // libobs skips scaling when the base and output sizes are equal, so the scale type is unused then
+    bool mainUnscaled = mainInfo.base_width == mainInfo.output_width && mainInfo.base_height == mainInfo.output_height;
+    bool sameScaling = mainUnscaled || ovi.scale_type == mainInfo.scale_type;
+
+    return wholeCanvas && sameOutputSize && sameScaling;
+}
+
+// True when a and b build the same video: every field but graphics_module and adapter.
+static bool sameVideoInfo(const obs_video_info &a, const obs_video_info &b)
+{
+    return a.fps_num == b.fps_num && a.fps_den == b.fps_den && a.base_width == b.base_width &&
+           a.base_height == b.base_height && a.output_width == b.output_width && a.output_height == b.output_height &&
+           a.output_format == b.output_format && a.gpu_conversion == b.gpu_conversion && a.colorspace == b.colorspace &&
+           a.range == b.range && a.scale_type == b.scale_type;
+}
+
 //--- BranchOutputProgram class ---//
 
 BranchOutputProgram::BranchOutputProgram(obs_data_t *settings, obs_source_t *source, QObject *parent)
@@ -172,6 +194,28 @@ void BranchOutputProgram::selectVideoInputMode(obs_data_t *) {}
 // On failure, everything created here has already been cleaned up.
 bool BranchOutputProgram::setupVideoInput(obs_data_t *, obs_video_info *ovi, const CropRect &crop)
 {
+    obs_video_info mainInfo = {};
+    if (!obs_get_video_info(&mainInfo)) {
+        obs_log(LOG_ERROR, "%s: No video", qUtf8Printable(name));
+        return false;
+    }
+    builtVideoInfo = mainInfo;
+
+    if (canUseMainVideo(mainInfo, *ovi, crop)) {
+        videoOutputOwned = false;
+        videoOutput = obs_get_video();
+        if (!videoOutput) {
+            obs_log(LOG_ERROR, "%s: Main video not found", qUtf8Printable(name));
+            return false;
+        }
+
+        obs_log(
+            LOG_INFO, "%s: Video path: direct (%ux%u)", qUtf8Printable(name), mainInfo.output_width,
+            mainInfo.output_height
+        );
+        return true;
+    }
+
     outputProxy = createMainTextureProxy(crop);
     if (!outputProxy) {
         obs_log(LOG_ERROR, "%s: Main texture proxy creation failed", qUtf8Printable(name));
@@ -189,6 +233,7 @@ bool BranchOutputProgram::setupVideoInput(obs_data_t *, obs_video_info *ovi, con
         return false;
     }
 
+    obs_log(LOG_INFO, "%s: Video path: proxy (%ux%u)", qUtf8Printable(name), ovi->output_width, ovi->output_height);
     return true;
 }
 
@@ -196,6 +241,21 @@ bool BranchOutputProgram::setupVideoInput(obs_data_t *, obs_video_info *ovi, con
 void BranchOutputProgram::teardownVideoInput()
 {
     outputProxy = nullptr;
+}
+
+// Caller must hold outputMutex.
+bool BranchOutputProgram::isVideoInputOutdated() const
+{
+    if (!videoOutput) {
+        return false;
+    }
+
+    obs_video_info current = {};
+    if (!obs_get_video_info(&current)) {
+        return false;
+    }
+
+    return !sameVideoInfo(current, builtVideoInfo);
 }
 
 // Caller must hold outputMutex.
@@ -393,7 +453,7 @@ void BranchOutputProgram::videoTickCallback(float)
     }
 }
 
-// Draws the properties dialog preview only; the outputs render through outputProxy.
+// Draws the properties dialog preview only; the outputs take the main video or render through outputProxy.
 void BranchOutputProgram::videoRenderCallback(gs_effect_t *)
 {
     renderMainTexture(0, 0);

@@ -251,6 +251,9 @@ protected:
     virtual void selectVideoInputMode(obs_data_t *settings) = 0;
     virtual bool setupVideoInput(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop) = 0;
     virtual void teardownVideoInput() = 0;
+    // True when OBS's video settings differ from those the current video input was built from.
+    // Caller must hold outputMutex.
+    virtual bool isVideoInputOutdated() const = 0;
     virtual bool setupDefaultAudio(const obs_audio_info &ai) = 0;
     virtual bool evaluateBlanking(obs_data_t *settings) = 0;
     virtual BlankingState getBlankingState() const = 0;

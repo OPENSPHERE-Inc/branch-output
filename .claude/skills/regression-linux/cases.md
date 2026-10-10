@@ -239,7 +239,7 @@ A main output is a Branch Output whose input is OBS's program output instead of 
   - Hide `Name` (obs-websocket `SetSceneItemEnabled`).
 - Defaults unless a case says otherwise: no filter in `BORegression` other than those the case adds; one main output, `Main Output 1` from M01, with x264, Stream Recording on, and Resolution at its default "Output (Stretch to fit)"; dock Interlock "Always ON", every dock checkbox on, `Main` in Program, and Studio Mode off.
 - Keep a main output's recordings and replay buffer saves in its default folder, the profile's recording path, where OBS's own recordings also go, and tell the files apart by name. The default file name format is `%1 %2 {the profile's format}`, where `%1` expands to `Main Output` and `%2` to the main output's name.
-- M02–M12 use M01's main output. When it is missing (for example on a resume in a rebuilt work folder), first create it as M01's Do does, with x264.
+- M02–M13 use M01's main output. When it is missing (for example on a resume in a rebuilt work folder), first create it as M01's Do does, with x264.
 - To remove a main output (to redo a case, or to resume R cases on the same version), choose "Remove" in the menu that right-clicking one of its dock rows opens, and answer Yes. Its rows leave the dock at once, and `Removed main output '{name}'` is logged once its outputs have stopped. While OBS is closed, delete its element from `outputs` in `branchOutputPrograms.json` instead. To delete the whole file, also delete `branchOutputPrograms.json.bak` and any `branchOutputPrograms.json.tmp`: the plugin loads the `.bak` when it cannot read the file. The R cases assume that the profile has no main output.
 
 ### M01 Add and configure
@@ -413,3 +413,52 @@ Do and Pass:
 - Removal, in the dialog: note `Hotkey Output`'s `uuid` in `branchOutputPrograms.json`. Open its dialog from its Source cell, set Resolution to "Half of canvas (50%)" without OK, and remove `Hotkey Output` from the dock with Yes as M11 does: OBS's unsaved-changes prompt appears. Keep it open until `Removed main output 'Hotkey Output'` is logged; `GetHotkeyList` then lists no name ending in its `uuid`. Choose "Save": `GetHotkeyList` still lists none of its names, and Settings → Hotkeys has none of its items, while `Main Output 1`'s 15 keep their keys. Do not judge by `Hotkey Output: Main output updated`: whether Save logs it depends on the OBS version and timing.
 
 Afterwards turn `Main Output 1`'s Streaming, Replay Buffer, and Automatic File Splitting off and its recording format back to its value before M12 through obs-websocket, stop the receiver, and make sure that `Main Output 1` is the only main output.
+
+### M13 Direct video path
+
+A main output encodes OBS's own video as is (the direct path) when that yields the same frames as its own view: no crop, its output resolution equal to OBS's, and, when OBS scales (its output resolution differs from its base resolution), `downscale_filter` empty or equal to OBS's Downscale Filter. Otherwise it renders the program through its own view (the proxy path).
+
+- Each build of `Main Output 1`'s video input (a start from standby, a restart for a setting change, a restart for a change of OBS's video settings) logs `[osi-branch-output] Main Output 1: Video path: direct ({width}x{height})` or `... Video path: proxy ({width}x{height})`. Judge the path by the newest such line after each operation.
+- A setting change logs one `Settings change detected, Attempting restart` line and one new `Video path` line, and starts a new recording file. Between those two lines, libobs logs `NV12 texture support` or `P010 texture support` for the view before a proxy line, and neither before a direct line.
+- Change the settings through obs-websocket `SetInputSettings`:
+  - Crop: `crop_type` `relative` with `crop_rel_right` 640, `crop_rel_bottom` 360, and `crop_rel_top` and `crop_rel_left` 0 (the top-left quadrant); `crop_type` `none` to remove it.
+  - Resolution: `resolution` `half`, `canvas`, `output`, or `custom` with `custom_width` 1280 and `custom_height` 720 in the same request.
+  - Downscale filter: `downscale_filter` `lanczos`, or `bilinear` when OBS's Downscale Filter is Lanczos; an empty string to restore.
+  - Frame rate divider: `fps_divider` 2; 1 to restore.
+- Change OBS's video settings only in Settings → Video: obs-websocket `SetVideoSettings` resets the video from another thread, which is left to #216.
+
+Do and Pass, starting with `Main Output 1` recording at its defaults (x264, Stream Recording only, Resolution "Output (Stretch to fit)", no crop) and every OBS output stopped. In steps 1–5, keep each setting about 5 s before the next change.
+
+1. The newest `Video path` line is `direct (1280x720)`. The recording is 1280x720 and shows the four quadrants of `quad.png`.
+2. Set the top-left crop: `proxy (1280x720)`, and the output is filled with the top-left quadrant's color. Remove the crop: `direct (1280x720)`.
+3. Set Resolution `half`: `proxy (640x360)`, and the recording is 640x360. Then `canvas`: `direct (1280x720)`. Then Custom 1280x720: `direct (1280x720)`. Then `output`: `direct (1280x720)`.
+4. Set `fps_divider` 2: `direct (1280x720)`, and the recording runs at 15 fps. Set it back to 1.
+5. Set `video_encoder` to R01's hardware encoder: `direct (1280x720)`, and the recording plays and shows the four quadrants. Set it back to x264. With no hardware encoder offered, SKIP this step and note it.
+6. Disable `Main Output 1` with the eye icon in its Filter cell. Once its rows are "Inactive", start OBS's streaming (to the profile's local RTMP receiver) and recording, and wait 5 s. Enable and disable `Main Output 1` with its eye icon three times, about 5 s each, ending disabled with every row "Inactive". After 5 s more, stop OBS's recording and streaming.
+   - Each enable logs `direct (1280x720)`, and each of `Main Output 1`'s recordings plays.
+   - OBS's recording plays from start to stop without a break: ffprobe counts at least 99% of (its duration × 30) video frames, no two consecutive frames are more than 0.1 s apart, and its audio carries both the 1 kHz and the 440 Hz tone. The receiver's file of OBS's stream meets the same criteria.
+   - The log has no `Output 'simple_stream': Number of dropped frames due to insufficient bandwidth/connection stalls` line.
+7. Enable `Main Output 1` again. While it records, start OBS's recording, and stop it after 10 s.
+   - OBS's recording meets step 6's criteria.
+   - `Main Output 1` does not restart (no new `Video path` or `Settings change detected` line), and its recording continues in the same file.
+
+From the start of OBS's outputs in step 6 until every row is "Inactive" in step 8, the log has no libobs line `Video stopped, number of skipped frames due to encoding lag`. libobs logs it, after skipped frames only, when the last encoder leaves OBS's video: at the end of step 6 and in step 8. When it appears, repeat step 6 with `Main Output 1` kept disabled throughout. If it appears there too, record it under "OBS" in "Observations" instead of failing the case; otherwise the case fails.
+
+8. Set the dock Interlock to "Always OFF". Once every row is "Inactive", set Settings → Video → Output (Scaled) Resolution to 640x360, note the Downscale Filter, and press OK. Set Interlock back to "Always ON": `direct (640x360)`, and the recording is 640x360.
+9. Set `downscale_filter` as listed above: `proxy (640x360)`. Set it back to empty: `direct (640x360)`.
+10. Set Resolution `canvas`: `proxy (1280x720)`. Set it back to `output`: `direct (640x360)`.
+11. Restore 1280x720 as step 8 does: `direct (1280x720)`.
+
+Edge: OBS's video settings changed while a stream reconnects. Start the receiver again only after the new `Video path` line: until the stop completes, the slot keeps reconnecting even after `OBS video settings changed, Attempting restart`, and a reconnect then would start the encoder on the freed video (#216).
+
+12. Direct path: turn `Main Output 1`'s Stream Recording off and its Streaming on with one slot pointing at a local RTMP receiver. Keep OBS's outputs and every other Branch Output stopped: OBS refuses a video reset while any encoder runs. Once the slot is "Live" with `direct (1280x720)`, stop the receiver and its restart loop. Once the row shows "Reconnecting", set Settings → Video → Output (Scaled) Resolution to 640x360 and press OK.
+    - The video settings can be edited, and OK accepts the change.
+    - Within 30 s, `OBS video settings changed, Attempting restart` and then `Video path: direct (640x360)` are logged. OBS stays responsive and does not crash.
+    - Started with its restart loop after that line, the receiver gets 640x360 video, and the slot goes "Live".
+13. Proxy path: in that state (OBS's output resolution 640x360, the slot "Live"), set the top-left crop: `proxy (640x360)`. Once the slot is "Live" again, stop the receiver and its restart loop. Once the row shows "Reconnecting", set Output (Scaled) Resolution back to 1280x720 and press OK.
+    - Within 30 s, `OBS video settings changed, Attempting restart` and then `Video path: proxy (1280x720)` are logged. OBS stays responsive and does not crash.
+    - Started with its restart loop after that line, the receiver gets 1280x720 video filled with the top-left quadrant's color, and the slot goes "Live".
+
+Afterwards remove the crop, turn `Main Output 1`'s Streaming off and Stream Recording on, and stop the receiver and its restart loop. Make sure that OBS's output resolution is 1280x720 and that `Main Output 1` has its defaults (no crop, `output`, empty `downscale_filter`, divider 1, x264).
+
+Under "Not covered", list (#216): a video reset during a stream's first connection, a reconnect that succeeds between a reset and the plugin's next check (1 s), and a reset that keeps the video settings.

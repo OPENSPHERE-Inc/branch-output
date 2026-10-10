@@ -229,8 +229,10 @@ OBSDataAutoRelease BranchOutput::AppliedSettings::get()
 // so that the next call can retry from a clean state.
 bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
 {
-    // FIXME: obs_reset_video() frees the view's mix while no encoder of this view is connected (an
-    // output still connecting or reconnecting), leaving videoOutput and the encoder dangling (issue #216).
+    // FIXME: obs_reset_video() frees the mix of videoOutput (the view's, or the main mix on the direct
+    // path) while no encoder is connected (an output still connecting or reconnecting), leaving videoOutput
+    // and the encoder dangling. Only the main output detects a reset, and only one that changed the video
+    // settings, at the next timer tick (issue #216).
     if (infrastructureReady) {
         return true;
     }
@@ -705,11 +707,12 @@ void BranchOutput::releaseInfrastructureIfIdle()
     // Stop the private video_t (joins its worker thread) before releasing the encoder, for
     // the same reason as the audio_t above. obs_view_remove() only flags the mix for removal
     // on the graphics thread, so it is not a synchronization point.
-    // FIXME: This covers the raw video worker only. A GPU video encoder is driven from libobs'
-    // GPU encode thread via the mix's gpu_encoders array, which only obs_encoder_stop() detaches.
-    // obs_output_active() turning false is no boundary: an output whose start is unresolved already
-    // reports false. Resolve every output's start before releasing infrastructure (issue #161).
-    if (videoOutput && videoOutputOwned) {
+    // An outdated video_t has been freed by obs_reset_video(); only video_output_stop() would touch it.
+    // FIXME: This covers the raw worker of an owned video_t only. Neither the main video_t of the direct
+    // path nor libobs' GPU encode thread (detached only by obs_encoder_stop()) can be stopped here, and
+    // an output whose start is unresolved already reports obs_output_active() false. Resolve every
+    // output's start before releasing infrastructure (issue #161).
+    if (videoOutput && videoOutputOwned && !isVideoInputOutdated()) {
         video_output_stop(videoOutput);
     }
 
@@ -888,6 +891,20 @@ void BranchOutput::onIntervalTimerTimeout()
             // helpers and startOutput() use the same copy.
             auto applied = appliedSettings.get();
             obs_data_t *settings = applied;
+
+            // Must run before anything below reuses the infrastructure. The stop is graceful because a
+            // streaming slot is usually reconnecting here; a later idle tick rebuilds the infrastructure.
+            bool videoInputOutdated;
+            pthread_mutex_lock(&outputMutex);
+            {
+                OBSMutexAutoUnlock outputLocked(&outputMutex);
+                videoInputOutdated = isVideoInputOutdated();
+            }
+            if (videoInputOutdated) {
+                obs_log(LOG_INFO, "%s: OBS video settings changed, Attempting restart", qUtf8Printable(name));
+                stopOutputGracefully();
+                return;
+            }
 
             // Start all eligible streaming slots as a single output group.
             // Returns true if any slot was started.

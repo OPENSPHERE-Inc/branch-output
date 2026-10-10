@@ -289,6 +289,12 @@ void BranchOutputFilter::teardownVideoInput()
     blankingAudioMuted = false;
 }
 
+// The parent source's size is followed through getSourceResolution() instead.
+bool BranchOutputFilter::isVideoInputOutdated() const
+{
+    return false;
+}
+
 void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_source_t *parent)
 {
     if (!parent) {
