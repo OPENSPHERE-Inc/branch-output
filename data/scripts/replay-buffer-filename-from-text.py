@@ -60,12 +60,15 @@ last_text = None
 override_cleared = False
 
 # Main output instance that last received a non-empty format from the tick.
-# The tick (graphics thread) and script_unload() (UI thread) can interleave, so
-# applied_target_weak / applied_target_uuid / target_unloaded are accessed only
-# under target_lock, which never covers a proc call or obs_source_release().
+# script_update() / script_unload() (UI thread) can run while a tick (graphics
+# thread) waits in an obs call, so applied_target_weak / applied_target_uuid /
+# target_generation are accessed only under target_lock, which never covers a
+# proc call or obs_source_release(). The UI thread advances target_generation
+# before it clears a target, and a tick that finds it advanced clears its
+# target again.
 applied_target_weak = None
 applied_target_uuid = ""
-target_unloaded = False
+target_generation = 0
 target_lock = threading.Lock()
 missing_target_warned = False
 
@@ -280,24 +283,24 @@ def invoke_override(target_uuid, format_value):
     """Call the override proc on the specified Branch Output filter or main output.
 
     Verifies that the target is actually a Branch Output and logs proc result.
-    Returns (ok, weak). weak is a weak reference to the main output instance
-    the proc was called on, or None for a filter or on failure; the caller
-    owns and releases it.
+    Returns (ok, weak, missing). weak is a weak reference to the main output
+    instance the proc was called on, or None for a filter or on failure; the
+    caller owns and releases it. missing is True when no source has target_uuid.
     """
     if not target_uuid:
-        return False, None
+        return False, None, False
 
     target = obs.obs_get_source_by_uuid(target_uuid)
     if not target:
         obs.script_log(obs.LOG_WARNING, f"Branch Output (uuid: {target_uuid}) not found")
-        return False, None
+        return False, None, True
 
     try:
         target_id = obs.obs_source_get_unversioned_id(target)
         if target_id not in (BRANCH_OUTPUT_FILTER_ID, BRANCH_OUTPUT_PROGRAM_ID):
             obs.script_log(obs.LOG_WARNING,
                            f"Source (uuid: {target_uuid}) is not a Branch Output (id: {target_id})")
-            return False, None
+            return False, None, False
 
         ph = obs.obs_source_get_proc_handler(target)
         cd = obs.calldata_create()
@@ -310,10 +313,10 @@ def invoke_override(target_uuid, format_value):
         if not result:
             obs.script_log(obs.LOG_WARNING,
                            f"proc_handler_call for {OVERRIDE_PROC} failed — is the Branch Output plugin up to date?")
-            return False, None
+            return False, None, False
         if target_id == BRANCH_OUTPUT_PROGRAM_ID:
-            return True, obs.obs_source_get_weak_source(target)
-        return True, None
+            return True, obs.obs_source_get_weak_source(target), False
+        return True, None, False
     finally:
         obs.obs_source_release(target)
 
@@ -323,7 +326,7 @@ def call_override_proc(filter_uuid, format_value):
 
     Returns True on success, False otherwise.
     """
-    ok, weak = invoke_override(filter_uuid, format_value)
+    ok, weak, _ = invoke_override(filter_uuid, format_value)
     if weak is not None:
         obs.obs_weak_source_release(weak)
     return ok
@@ -342,22 +345,39 @@ def track_program_target(target_uuid):
 
     The override lives on the main output instance, so an expired weak
     reference (the instance was replaced) resets the apply state to send the
-    format again. A target that is not loaded yet is waited for.
+    format again. An instance whose UUID was reassigned in place (duplicating a
+    scene collection on OBS 30.x) gets its override cleared and is no longer
+    followed until the Branch Output is selected again. A target that is not
+    loaded yet is waited for.
     """
     global applied_target_weak, missing_target_warned
 
+    applied = None
     expired = False
+    reassigned_uuid = ""
     with target_lock:
         if applied_target_weak is not None:
-            if applied_target_uuid != target_uuid:
+            if applied_target_uuid == target_uuid:
+                applied = obs.obs_weak_source_get_source(applied_target_weak)
+                if not applied:
+                    expired = True
+                elif obs.obs_source_get_uuid(applied) != target_uuid:
+                    reassigned_uuid = obs.obs_source_get_uuid(applied)
+            if applied_target_uuid != target_uuid or expired or reassigned_uuid:
                 obs.obs_weak_source_release(applied_target_weak)
                 applied_target_weak = None
-            elif obs.obs_weak_source_expired(applied_target_weak):
-                obs.obs_weak_source_release(applied_target_weak)
-                applied_target_weak = None
-                expired = True
         target_alive = applied_target_weak is not None
+    if applied:
+        obs.obs_source_release(applied)
 
+    if reassigned_uuid:
+        call_override_proc(reassigned_uuid, "")
+        obs.script_log(obs.LOG_WARNING,
+                       f"Main Output (uuid: {target_uuid}) now has uuid {reassigned_uuid}; "
+                       "override cleared. Select the Branch Output again")
+        reset_apply_state()
+        missing_target_warned = True
+        return False
     if expired:
         reset_apply_state()
     if target_alive:
@@ -376,28 +396,18 @@ def track_program_target(target_uuid):
     return True
 
 
-def store_applied_target(weak, target_uuid):
-    """Keep weak as the main output instance that received the format. Takes ownership of weak."""
-    global applied_target_weak, applied_target_uuid
-
-    with target_lock:
-        if target_unloaded:
-            obs.obs_weak_source_release(weak)
-            return
-        if applied_target_weak is not None:
-            obs.obs_weak_source_release(applied_target_weak)
-        applied_target_weak = weak
-        applied_target_uuid = target_uuid
-
-
 def update_replay_buffer_format():
     """Read text source and update Branch Output replay buffer filename format."""
-    global last_text, override_cleared
+    global applied_target_weak, applied_target_uuid, last_text, override_cleared
 
-    if not text_source_uuid or not selected_filter:
+    with target_lock:
+        generation = target_generation
+        selected = selected_filter
+
+    if not text_source_uuid or not selected:
         return
 
-    source_uuid, filter_uuid = parse_selected_filter(selected_filter)
+    source_uuid, filter_uuid = parse_selected_filter(selected)
     if not filter_uuid:
         return
 
@@ -444,20 +454,39 @@ def update_replay_buffer_format():
     if new_format == last_text:
         return
 
-    ok, weak = invoke_override(filter_uuid, new_format)
-    if weak is not None:
-        store_applied_target(weak, filter_uuid)
+    ok, weak, missing = invoke_override(filter_uuid, new_format)
+    with target_lock:
+        current = target_generation == generation
+        if current:
+            if weak is not None:
+                if applied_target_weak is not None:
+                    obs.obs_weak_source_release(applied_target_weak)
+                applied_target_weak = weak
+                applied_target_uuid = filter_uuid
+                weak = None
+            if ok:
+                last_text = new_format
+                override_cleared = False
+            elif missing and not source_uuid:
+                # The next tick waits in track_program_target() until the main output
+                # is loaded again, then resends the format.
+                reset_apply_state()
+            else:
+                # Filter missing or proc call failed: cache new_format so the
+                # "same format" early-return suppresses retries on subsequent ticks
+                # until the text or selection actually changes. Without this the
+                # timer would re-issue the warning every tick at 1 Hz.
+                last_text = new_format
+                override_cleared = True
+
+    if not current:
+        if weak is not None:
+            obs.obs_weak_source_release(weak)
+        if ok:
+            call_override_proc(filter_uuid, "")
+        return
     if ok:
-        last_text = new_format
-        override_cleared = False
         obs.script_log(obs.LOG_INFO, f"{LOG_LABEL} updated: {new_format}")
-    else:
-        # Branch Output missing or proc call failed: cache new_format so the
-        # "same format" early-return suppresses retries on subsequent ticks
-        # until the text or selection actually changes. Without this the
-        # timer would re-issue the warning every tick at 1 Hz.
-        last_text = new_format
-        override_cleared = True
 
 
 def timer_callback():
@@ -528,21 +557,30 @@ def script_defaults(settings):
 
 def script_update(settings):
     global text_source_uuid, selected_filter, base_format, last_text, override_cleared
-    global missing_target_warned
+    global target_generation, missing_target_warned
 
-    # Remember the previously selected Branch Output so we can clear its
-    # override if the user changed the selection.
-    prev_selected_filter = selected_filter
-    _, old_filter_uuid = parse_selected_filter(prev_selected_filter)
+    new_text_source_uuid = obs.obs_data_get_string(settings, "text_source")
+    new_selected_filter = obs.obs_data_get_string(settings, "selected_filter")
+    new_base_format = obs.obs_data_get_string(settings, "base_format")
 
-    text_source_uuid = obs.obs_data_get_string(settings, "text_source")
-    selected_filter = obs.obs_data_get_string(settings, "selected_filter")
-    base_format = obs.obs_data_get_string(settings, "base_format")
+    with target_lock:
+        # Remember the previously selected Branch Output so we can clear its
+        # override if the user changed the selection.
+        prev_selected_filter = selected_filter
+        text_source_uuid = new_text_source_uuid
+        selected_filter = new_selected_filter
+        base_format = new_base_format
+        if prev_selected_filter != new_selected_filter or not new_text_source_uuid:
+            target_generation += 1
+        # Reset state to force update on next tick
+        last_text = None
+        override_cleared = False  # reset to "needs re-apply"
 
-    if prev_selected_filter != selected_filter:
+    if prev_selected_filter != new_selected_filter:
         missing_target_warned = False
 
-    _, new_filter_uuid = parse_selected_filter(selected_filter)
+    _, old_filter_uuid = parse_selected_filter(prev_selected_filter)
+    _, new_filter_uuid = parse_selected_filter(new_selected_filter)
     if old_filter_uuid and old_filter_uuid != new_filter_uuid:
         # Clear override on the previously selected Branch Output so it does not
         # remain overridden after the user switched to a different one.
@@ -552,24 +590,16 @@ def script_update(settings):
                            f"(uuid: {old_filter_uuid})")
 
     # If text source was deselected, clear the override on the current
-    # Branch Output so it reverts to its own setting. clear_override() already
-    # resets last_text.
-    if not text_source_uuid:
+    # Branch Output so it reverts to its own setting.
+    if not new_text_source_uuid:
         clear_override()
-        return
-
-    # Reset state to force update on next tick
-    last_text = None
-    override_cleared = False  # reset to "needs re-apply"
 
 
 def script_load(settings):
-    global target_unloaded, missing_target_warned
+    global missing_target_warned
 
     # The module object, and with it the state left by script_unload(), is reused
     # when OBS creates the script again (e.g. on a scene collection switch).
-    with target_lock:
-        target_unloaded = False
     missing_target_warned = False
 
     # Defensive timer_remove in case of script reload.
@@ -607,12 +637,13 @@ def clear_override():
 
 
 def script_unload():
-    global applied_target_weak, target_unloaded
+    global applied_target_weak, target_generation
 
     obs.timer_remove(timer_callback)
+    with target_lock:
+        target_generation += 1
     clear_override()
     with target_lock:
-        target_unloaded = True
         if applied_target_weak is not None:
             obs.obs_weak_source_release(applied_target_weak)
             applied_target_weak = None
