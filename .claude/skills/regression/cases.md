@@ -236,7 +236,7 @@ A main output is a Branch Output whose input is OBS's program output instead of 
   - Hide `Name` (obs-websocket `SetSceneItemEnabled`).
 - Defaults unless a case says otherwise: no filter in `BORegression` other than those the case adds; one main output, `Main Output 1` from M01, with x264, Stream Recording on, and Resolution at its default "Output (Stretch to fit)"; dock Interlock "Always ON", every dock checkbox on, `Main` in Program, and Studio Mode off.
 - Keep a main output's recordings and replay buffer saves in its default folder, the profile's recording path, where OBS's own recordings also go, and tell the files apart by name. The default file name format is `%1 %2 {the profile's format}`, where `%1` expands to `Main Output` and `%2` to the main output's name.
-- M02–M13 use M01's main output. When it is missing (for example on a resume in a rebuilt work folder), first create it as M01's Do does, with x264.
+- M02–M14 use M01's main output. When it is missing (for example on a resume in a rebuilt work folder), first create it as M01's Do does, with x264.
 - To remove a main output (to redo a case, or to resume R cases on the same version), choose "Remove" in the menu that right-clicking one of its dock rows opens, and answer Yes. Its rows leave the dock at once, and `Removed main output '{name}'` is logged once its outputs have stopped. While OBS is closed, delete its element from `outputs` in `branchOutputPrograms.json` instead. To delete the whole file, also delete `branchOutputPrograms.json.bak` and any `branchOutputPrograms.json.tmp`: the plugin loads the `.bak` when it cannot read the file. The R cases assume that the profile has no main output.
 
 ### M01 Add and configure — all
@@ -347,13 +347,39 @@ Do and Pass, with Stream Recording and Replay Buffer on in `Main Output 1`:
 
 Afterwards turn Replay Buffer off.
 
-### M09 Script filter list — all
+### M09 File name override scripts, Lua — all
 
-Do: add a Branch Output filter to `Media` and Apply. Load `recording-filename-from-text.lua` as R17's Do does, and open that script's filter list in Tools → Scripts.
+The bundled scripts list filters and main outputs in their "Branch Output" list, labeled `{source name} / {filter name}` and `[Main Output] {main output name}`. A script prepends its text source's text to its base format, so an overridden file name starts with the text, and logs `Recording filename format updated: {format}` (the replay buffer script: `Replay buffer filename format updated: {format}`) for each override it sends. An override belongs to the main output's instance: a profile switch replaces the instance and the scripts send the override again, while a profile rename keeps it.
 
-Pass: the list has the filter on `Media` and no `Main Output 1`.
+Do: set `Name`'s `text` to `M09` through obs-websocket `SetInputSettings`. Add a Branch Output filter to `Media` with Stream Recording on, and Apply. Through obs-websocket, set Automatic File Splitting to "Only split manually" on that filter and on `Main Output 1`, and turn `Main Output 1`'s Replay Buffer on.
 
-Afterwards remove the script and delete the filter on `Media`.
+Do and Pass:
+
+1. Script of the previous release: write `recording-filename-from-text.lua` of the release 1.0.13, the last whose scripts know only `get_filter_list`, to `<work>/scripts-1.0.13/` with `git show 1.0.13:data/scripts/recording-filename-from-text.lua` (`git fetch --tags` first when the tag is missing), and load it as R17's Do does. In Tools → Scripts, set its text source to `Name` and its filter to the one on `Media`.
+   - Its filter list has the filter on `Media` and no `Main Output 1`.
+   - The filter's recording splits to a file whose name starts with `M09`.
+2. Update: quit OBS. In `BORegression.json`, point that script's `path` at the bundled `recording-filename-from-text.lua`, keeping its `settings`, and also load `replay-buffer-filename-from-text.lua` as R17's Do does. Launch OBS.
+   - The recording script shows `Name` and `Media / Branch Output`, the filter chosen in step 1. Its Branch Output list has `Media / Branch Output` and `[Main Output] Main Output 1`, and nothing else besides "(Select a Branch Output)".
+   - The filter's newest recording file starts with `M09`.
+   - Switch the profile to `BORegression2`, wait 5 s, and switch back: no `Recording filename format updated` line is logged, and the filter's newest recording file still starts with `M09`.
+3. Main output: in Tools → Scripts, choose `[Main Output] Main Output 1` in both scripts, and `Name` as the replay buffer script's text source. After "Buffering" for 5 s, save `Main Output 1`'s replay buffer with its row's Save button.
+   - The filter's recording splits to a file in its own format: a script clears the override on the target it leaves.
+   - `Main Output 1`'s recording splits to a file starting with `M09`, and the saved replay buffer file starts with `M09`.
+4. Startup: delete the filter on `Media`, quit OBS, and launch it again.
+   - The shutdown log ends with `Number of memory leaks: 0` (allowed leaks as in R19).
+   - After the launch, `Recording filename format updated` is logged, and from then on `Main Output 1` records to a file starting with `M09`. A file in the default format that ends at that line is allowed: the main output can start recording before the script finds it.
+   - No "Script Log" window opens. Each script logs `Main Output (uuid: {uuid}) not found; waiting for it to load` at most once.
+5. Profile switch: switch the profile to `BORegression2`, wait 5 s, and switch back.
+   - No "Script Log" window opens.
+   - Back in `BORegression`, `Recording filename format updated` and `Replay buffer filename format updated` are logged again, and `Main Output 1` records to a file starting with `M09` (a default-format file before it, as in step 4). After "Buffering" for 5 s, a save of its replay buffer starts with `M09`.
+6. Profile rename: with `Main Output 1` recording to a file starting with `M09`, rename the profile to `BORegressionRenamed` with Profile → Rename, wait 5 s, and rename it back to `BORegression`. Enter each name as M11 enters a name.
+   - `Main Output 1` keeps recording to the same file: no new file, and no `Recording filename format updated` or `Settings change detected` line after the renames.
+   - On 31.1 and later, the log has `Keep 1 main output(s) across the profile change` after each rename. 30.1.2 renames a profile without a profile change event and logs none.
+7. Removal: remove both scripts in Tools → Scripts.
+   - `Main Output 1`'s recording splits to a file in its own format, and `Recording filename format override cleared` is logged.
+   - Quit OBS: the log ends with `Number of memory leaks: 0` (allowed leaks as in R19).
+
+Afterwards launch OBS, and turn `Main Output 1`'s Replay Buffer and Automatic File Splitting off through obs-websocket.
 
 ### M10 Lifecycle and shutdown — all
 
@@ -459,3 +485,11 @@ Edge: OBS's video settings changed while a stream reconnects. Start the receiver
 Afterwards remove the crop, turn `Main Output 1`'s Streaming off and Stream Recording on, and stop the receiver. Make sure that OBS's output resolution is 1280x720 and that `Main Output 1` has its defaults (no crop, `output`, empty `downscale_filter`, divider 1, x264).
 
 Under "Not covered", list: whether a hardware encoder took the GPU texture path (the plugin cannot tell); a video reset during a stream's first connection, a reconnect that succeeds between a reset and the plugin's next check (1 s), and a reset that keeps the video settings (#216).
+
+### M14 File name override scripts, Python — latest
+
+Do and Pass: M09's Do, steps 3–7, and Afterwards with the `.py` scripts and Python set up as R18 says (SKIP as R18 does). Leave out the filter on `Media` and its items, and set `Name`'s `text` to `M14`, reading `M09` in M09's items as `M14`. Load both scripts as R17's Do does, and in step 3 also set the recording script's text source to `Name`. Before step 5, switch the scene collection to `BORegression2` and back:
+
+- While in `BORegression2`, `Main Output 1` records to a file in its own format: the scripts unload with their collection and clear the override.
+- Back in `BORegression`, `Main Output 1` records to a file starting with `M14` (a default-format file before it, as in M09's step 4).
+- Step 5 then still passes: OBS reuses the loaded Python module when it loads the scripts again, keeping the state of their previous unload.
