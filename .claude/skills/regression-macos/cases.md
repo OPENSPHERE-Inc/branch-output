@@ -369,7 +369,7 @@ Afterwards turn Replay Buffer off.
 
 The bundled scripts list filters and main outputs in their "Branch Output" list, labeled `{source name} / {filter name}` and `[Main Output] {main output name}`. A script prepends its text source's text to its base format, so an overridden file name starts with the text, and logs `Recording filename format updated: {format}` (the replay buffer script: `Replay buffer filename format updated: {format}`) for each override it sends. An override belongs to the main output's instance: a profile switch replaces the instance and the scripts send the override again, while a profile rename keeps it.
 
-Do: set `Name`'s `text` to `M09` through obs-websocket `SetInputSettings`. Add a Branch Output filter to `Media` with Stream Recording on, and Apply. Through obs-websocket, set Automatic File Splitting to "Only split manually" on that filter and on `Main Output 1`, and turn `Main Output 1`'s Replay Buffer on.
+Do: set `Name`'s `text` to `M09` through obs-websocket `SetInputSettings`. Uncheck `Main Output 1`'s recording row in the dock: under the 30.1.2 ffmpeg-mux rule above, the filter's recording and `Main Output 1`'s never run at the same time in this case. Add a Branch Output filter to `Media` with Stream Recording on, and Apply. Through obs-websocket, set Automatic File Splitting to "Only split manually" on that filter and on `Main Output 1`, and turn `Main Output 1`'s Replay Buffer on.
 
 Do and Pass:
 
@@ -380,9 +380,11 @@ Do and Pass:
    - The recording script shows `Name` and `Media / Branch Output`, the filter chosen in step 1. Its Branch Output list has `Media / Branch Output` and `[Main Output] Main Output 1`, and nothing else besides "(Select a Branch Output)".
    - The filter's newest recording file starts with `M09`.
    - Switch the profile to `BORegression2`, wait 5 s, and switch back: no `Recording filename format updated` line is logged, and the filter's newest recording file still starts with `M09`.
-3. Main output: in Tools → Scripts, choose `[Main Output] Main Output 1` in both scripts, and `Name` as the replay buffer script's text source. After "Buffering" for 5 s, save `Main Output 1`'s replay buffer with its row's Save button.
-   - The filter's recording splits to a file in its own format: a script clears the override on the target it leaves.
-   - `Main Output 1`'s recording splits to a file starting with `M09`, and the saved replay buffer file starts with `M09`.
+   - `Main Output 1`'s recording row stays unchecked after the launch and after the profile switch, and it records nothing.
+3. Main output: in Tools → Scripts, choose `[Main Output] Main Output 1` in the recording script. Then uncheck the filter's recording row, check `Main Output 1`'s recording row, and once it shows "Recording", set `Name`'s `text` to `M09B`. Finally choose `[Main Output] Main Output 1` and `Name` in the replay buffer script, and after "Buffering" for 5 s, save `Main Output 1`'s replay buffer with its row's Save button.
+   - The choice in the recording script splits the filter's recording to a file in its own format: a script clears the override on the target it leaves.
+   - `Main Output 1`'s recording starts with a file starting with `M09`, and the text change splits it to a file starting with `M09B`. The saved replay buffer file starts with `M09B`.
+   - The later steps' "starting with `M09`" includes `M09B`.
 4. Startup: delete the filter on `Media`, quit OBS, and launch it again.
    - The shutdown log ends with `Number of memory leaks: 0` (allowed leaks as in R19).
    - After the launch, `Recording filename format updated` is logged, and from then on `Main Output 1` records to a file starting with `M09`. A file in the default format that ends at that line is allowed: the main output can start recording before the script finds it.
@@ -506,7 +508,7 @@ Under "Not covered", list: whether a hardware encoder took the GPU texture path 
 
 ### M14 File name override scripts, Python — latest
 
-Do and Pass: M09's Do, steps 3–7, and Afterwards with the `.py` scripts and Python set up as R18 says (SKIP as R18 does). Leave out the filter on `Media` and its items, and set `Name`'s `text` to `M14`, reading `M09` in M09's items as `M14`. Load both scripts as R17's Do does, and in step 3 also set the recording script's text source to `Name`. Before step 5, switch the scene collection to `BORegression2` and back:
+Do and Pass: M09's Do, steps 3–7, and Afterwards with the `.py` scripts and Python set up as R18 says (SKIP as R18 does). Leave out the filter on `Media` and its items, including the unchecking and checking of `Main Output 1`'s recording row: `Main Output 1` records throughout, so the choice in step 3 splits its recording to a file starting with `M14`. Set `Name`'s `text` to `M14`, reading `M09` in M09's items as `M14` and `M09B` as `M14B`. Load both scripts as R17's Do does, and in step 3 also set the recording script's text source to `Name`. Before step 5, switch the scene collection to `BORegression2` and back:
 
 - While in `BORegression2`, `Main Output 1` records to a file in its own format: the scripts unload with their collection and clear the override.
 - Back in `BORegression`, `Main Output 1` records to a file starting with `M14` (a default-format file before it, as in M09's step 4).
