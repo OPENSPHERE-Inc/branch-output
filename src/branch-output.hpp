@@ -325,6 +325,7 @@ protected:
 
     // Implemented in plugin-stream-recording.cpp
     obs_data_t *createRecordingSettings(obs_data_t *settings, bool createFolder = false);
+    bool validateRecordingFormat(obs_data_t *settings);
     void createAndStartRecordingOutput(obs_data_t *settings);
     void stopRecordingOutput(bool pending = false);
     void restartRecordingOutput();

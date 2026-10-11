@@ -431,6 +431,7 @@ void BranchOutput::startOutput(obs_data_t *settings, int interlockType)
             recordingEligible = recordingEligible && obs_frontend_recording_active();
             replayBufferEligible = replayBufferEligible && obs_frontend_replay_buffer_active();
         }
+        recordingEligible = recordingEligible && validateRecordingFormat(settings);
 
         // Skip infrastructure setup when no output type is eligible, so that interlock modes
         // like ALWAYS_ON do not rebuild and immediately tear down infrastructure every tick.
