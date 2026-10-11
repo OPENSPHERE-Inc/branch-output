@@ -406,7 +406,7 @@ void BranchOutputProgramManager::onFrontendEvent(enum obs_frontend_event event, 
         for (const auto &source : std::as_const(manager->programs)) {
             BranchOutputProgram::fromSource(source)->setSuspended(false);
         }
-        // Duplicating a scene collection reassigns the UUIDs of every source, private ones included
+        // On OBS 30.x, duplicating a scene collection reassigns all UUIDs, private sources included
         manager->savePrograms();
         break;
     case OBS_FRONTEND_EVENT_PROFILE_CHANGING:

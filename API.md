@@ -8,10 +8,10 @@
 
 Recording Filename Override lets you override the filename format of stream recordings and replay buffer saves at runtime via Branch Output's public procedures.
 
-The overridden format is stored separately from the Branch Output's property settings and stays
-active until reset via procedure or until OBS exits.
-For a main output, the override is also cleared when the main output's source is recreated
-(for example, on a profile switch).
+The overridden format is stored in the instance of the Branch Output's source, separately from its
+property settings. It stays active until reset via procedure, until the source is recreated (for
+example, when a deleted filter is restored with undo, or when the profile of a main output is loaded
+again), or until OBS exits.
 
 The feature exists for production setups that need to organize recorded files by current scene, the value of a text input, or other external data.
 
@@ -454,8 +454,8 @@ Install path: `data\obs-plugins\osi-branch-output\scripts\` under the OBS instal
 5. The override is active immediately. Check **Script Log** for activity.
 6. While the script is loaded, its override takes precedence over the Branch Output's property value.
    - For a main output, the script applies the override again after the main output's source is
-     recreated (for example, on a profile switch), and waits for the main output to load at OBS
-     startup.
+     recreated (for example, when switching back to its profile), and waits for the main output to
+     load at OBS startup.
 7. Remove the script via the trash button to disable.
 
 #### recording-filename-from-text
@@ -492,17 +492,24 @@ The following caveats apply to all procedures and sample scripts above.
   additions/removals. While a scene collection or profile is being switched, an output may be
   temporarily missing from the lists.
 - **Main outputs**:
-  - The override belongs to the instance of the main output's source, and is cleared when the
-    source is recreated (for example, on a profile switch).
+  - Main outputs belong to the current profile and are saved with it. Switching to another profile
+    replaces them with the main outputs of that profile, so a script finds a selected main output
+    only while its profile is current.
+  - Unlike a filter, a main output's source is kept across scene collection switches. It is
+    recreated when its profile is loaded again, which clears the override.
   - The UUID can stay the same across the recreation, and a profile switch can also keep the
     source. Detect the replacement of the instance (for example, with a weak reference) and apply
     the override again.
   - Resending the override on events alone can split or restart a recording in progress. The
     bundled sample scripts detect the replacement with a weak reference.
-  - Main outputs are loaded on `OBS_FRONTEND_EVENT_FINISHED_LOADING`. A script loaded with the
-    scene collection may not find a main output right after OBS starts. The bundled sample scripts
-    wait until it is found.
-  - Duplicating a scene collection reassigns the UUIDs of the main outputs too. A main output
-    selected by a script saved in another scene collection is no longer found and must be selected
-    again.
+  - Hold a strong reference to a main output's source only during a call, and keep a weak
+    reference otherwise. A reference still held when the main output is loaded again keeps the old
+    instance alive: its weak reference does not expire, and the loaded main output gets a new UUID.
+    An open properties dialog of the main output has the same effect; select the main output again
+    in that case.
+  - A script may not find a main output for a while after OBS starts. Poll until it is found
+    instead of relying on a frontend event, as the bundled sample scripts do.
+  - On OBS 30.x, duplicating a scene collection reassigns the UUIDs of the main outputs too. A main
+    output selected by a script in any scene collection, including the new one, is no longer found
+    and must be selected again.
 - **Windows + "Read from file" — Lua sample only**: When the text source reads from a file on Windows, the Lua sample uses `io.open()`, which interprets the path in the system ANSI code page (e.g., CP932 on Japanese locales). Paths containing characters outside that code page may fail to open. On open failure the script clears the override and writes a `Failed to read text file` warning to the OBS Script Log. The Python sample is unaffected (CPython uses wide-character Windows APIs); use it if full UTF-8 path support is required.
