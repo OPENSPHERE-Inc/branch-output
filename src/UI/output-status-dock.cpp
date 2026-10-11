@@ -534,14 +534,14 @@ void BranchOutputStatusDock::addOutput(BranchOutput *output)
     }
 
     sort();
-    publishFilterListSnapshot();
+    publishOutputListSnapshot();
 }
 
 void BranchOutputStatusDock::removeOutput(BranchOutput *output)
 {
     // `output` is a comparison key only: it may already be deleted (queued from removeCallback(),
     // or called from ~QObject via onOutputDestroyed()). Neither this function nor its callees
-    // (sort() / publishFilterListSnapshot()) may dereference any row->branchOutput.
+    // (sort() / publishOutputListSnapshot()) may dereference any row->branchOutput.
     foreach (auto row, outputTableRows) {
         if (row->branchOutput == output) {
             // FIXME: removeRow() deletes the QTableWidgetItems at once while the cells only get
@@ -554,7 +554,7 @@ void BranchOutputStatusDock::removeOutput(BranchOutput *output)
     }
 
     sort();
-    publishFilterListSnapshot();
+    publishOutputListSnapshot();
 }
 
 void BranchOutputStatusDock::onOutputDestroyed(QObject *obj)
@@ -1041,8 +1041,8 @@ void BranchOutputStatusDock::onTableContextMenuRequested(const QPoint &pos)
 
     // The dock timer can delete the row during the nested event loops below: touch no row after this
     OBSWeakSource weak = row->contextWeak.Get();
-    auto isMainOutput = !row->contextIsFilter;
-    auto currentName = row->filterInfo.filterName;
+    auto isMainOutput = !row->info.isFilter;
+    auto currentName = row->info.outputName;
 
     QMenu menu(this);
     auto openSettingsAction = menu.addAction(QTStr("RowMenu.OpenSettings"));
@@ -1158,10 +1158,10 @@ void BranchOutputStatusDock::removeMainOutput(obs_weak_source_t *weak, const QSt
 bool BranchOutputStatusDock::isMainOutputNameUsed(const QString &filterName, obs_source_t *except) const
 {
     foreach (auto row, outputTableRows) {
-        if (row->contextIsFilter || obs_weak_source_references_source(row->contextWeak, except)) {
+        if (row->info.isFilter || obs_weak_source_references_source(row->contextWeak, except)) {
             continue;
         }
-        if (row->filterInfo.filterName == filterName) {
+        if (row->info.outputName == filterName) {
             return true;
         }
     }
@@ -1320,18 +1320,18 @@ OutputTableRow::OutputTableRow(
     // Connected before the input name is read so that no later rename is missed
     connect(branchOutput, &BranchOutput::inputNameChanged, parentCell, &ParentCell::setTextValue, Qt::QueuedConnection);
 
-    filterInfo.sourceName = branchOutput->getInputName();
-    filterInfo.sourceUuid = branchOutput->getInputUuid();
-    filterInfo.filterName = QString(obs_source_get_name(branchOutput->contextSource));
-    filterInfo.filterUuid = QString(obs_source_get_uuid(branchOutput->contextSource));
-    contextIsFilter = obs_source_get_type(branchOutput->contextSource) == OBS_SOURCE_TYPE_FILTER;
+    info.isFilter = obs_source_get_type(branchOutput->contextSource) == OBS_SOURCE_TYPE_FILTER;
+    info.sourceName = branchOutput->getInputName();
+    info.sourceUuid = branchOutput->getInputUuid();
+    info.outputName = QString(obs_source_get_name(branchOutput->contextSource));
+    info.outputUuid = QString(obs_source_get_uuid(branchOutput->contextSource));
     contextWeak = obs_source_get_weak_source(branchOutput->contextSource);
 
-    auto rowId = QString("%1_%2_%3").arg(filterInfo.sourceName).arg(branchOutput->name).arg(groupIndex);
+    auto rowId = QString("%1_%2_%3").arg(info.sourceName).arg(branchOutput->name).arg(groupIndex);
 
     filterCell = new FilterCell(rowId, branchOutput->name, branchOutput->contextSource, parent);
     parentCell->item()->setRowId(rowId);
-    parentCell->setTextValue(filterInfo.sourceName);
+    parentCell->setTextValue(info.sourceName);
     status = new StatusCell(rowId, QTStr("Status.Inactive"), parent);
 
     switch (outputType) {
@@ -1425,16 +1425,16 @@ OutputTableRow::OutputTableRow(
 
     // Setup rename event
     connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &newName) {
-        filterInfo.filterName = newName;
+        info.outputName = newName;
         updateRowId(); // Update row ID with new filter name
         parent->sort();
-        parent->publishFilterListSnapshot();
+        parent->publishOutputListSnapshot();
     });
     connect(parentCell, &ParentCell::renamed, this, [this, parent](const QString &newName) {
-        filterInfo.sourceName = newName;
+        info.sourceName = newName;
         updateRowId(); // Update row ID with new source name
         parent->sort();
-        parent->publishFilterListSnapshot();
+        parent->publishOutputListSnapshot();
     });
 }
 
@@ -2182,33 +2182,28 @@ void StatusCell::setTextValue(const QString &textValue)
 // Built from the rows' own copies only: this runs from removeOutput(), where the
 // output QObject and its obs_source_t may already be freed, so it must not
 // dereference row->branchOutput or call libobs.
-QList<BranchOutputFilterInfo> BranchOutputStatusDock::buildFilterListSnapshot() const
+QList<BranchOutputInfo> BranchOutputStatusDock::buildOutputListSnapshot() const
 {
-    QList<BranchOutputFilterInfo> list;
+    QList<BranchOutputInfo> list;
 
     foreach (auto row, outputTableRows) {
-        // The script API get_filter_list lists filters only
-        if (!row->contextIsFilter) {
-            continue;
-        }
-
         // addOutput() creates exactly one row with groupIndex 0 per output
         if (row->groupIndex != 0) {
             continue;
         }
 
         // Row was created after the filter had already left its parent
-        if (row->filterInfo.sourceUuid.isEmpty()) {
+        if (row->info.isFilter && row->info.sourceUuid.isEmpty()) {
             continue;
         }
 
-        list.append(row->filterInfo);
+        list.append(row->info);
     }
 
     return list;
 }
 
-void BranchOutputStatusDock::publishFilterListSnapshot()
+void BranchOutputStatusDock::publishOutputListSnapshot()
 {
-    ::publishFilterListSnapshot(buildFilterListSnapshot());
+    ::publishOutputListSnapshot(buildOutputListSnapshot());
 }

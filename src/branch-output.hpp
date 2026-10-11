@@ -50,9 +50,9 @@ extern pthread_mutex_t pluginMutex;
 // Defined in plugin-main.cpp. Returns nullptr while the status dock does not exist.
 BranchOutputStatusDock *loadStatusDock();
 
-// Publish a fresh filter-list snapshot consumed by the global proc handler.
+// Publish a fresh output-list snapshot consumed by the global proc handlers.
 // Defined in plugin-main.cpp; thread-safe (mutex-guarded).
-void publishFilterListSnapshot(QList<BranchOutputFilterInfo> snapshot);
+void publishOutputListSnapshot(QList<BranchOutputInfo> snapshot);
 
 class BranchOutput : public QObject {
     Q_OBJECT

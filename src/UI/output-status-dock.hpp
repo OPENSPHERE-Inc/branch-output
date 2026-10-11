@@ -53,11 +53,12 @@ enum RowOutputType {
     ROW_OUTPUT_REPLAY_BUFFER = 3,
 };
 
-struct BranchOutputFilterInfo {
-    QString sourceName;
-    QString sourceUuid;
-    QString filterName;
-    QString filterUuid;
+struct BranchOutputInfo {
+    bool isFilter = false; // false: main output
+    QString sourceName;    // filter: parent source name; main output: the dock's input column text
+    QString sourceUuid;    // filter: parent source UUID; main output: empty
+    QString outputName;    // context source name (filter name or main output name)
+    QString outputUuid;    // context source UUID (filter UUID or main output private source UUID)
 };
 
 class OutputTableCellItem : public QTableWidgetItem {
@@ -294,8 +295,8 @@ class BranchOutputStatusDock : public QFrame {
 
     void update();
     void updateOutputToggles(BranchOutput *output);
-    QList<BranchOutputFilterInfo> buildFilterListSnapshot() const;
-    void publishFilterListSnapshot();
+    QList<BranchOutputInfo> buildOutputListSnapshot() const;
+    void publishOutputListSnapshot();
     void applyEnableAllButtonEnabled();
     void applyDisableAllButtonEnabled();
     void applySplitRecordingAllButtonEnabled();
@@ -372,8 +373,7 @@ class OutputTableRow : public QObject {
     // context obs_source_t may already be released, so rows keep their own copies
     // of the identifying data below. Touched only from the Qt UI thread.
     BranchOutput *branchOutput;
-    BranchOutputFilterInfo filterInfo;
-    bool contextIsFilter = false;
+    BranchOutputInfo info;
     OBSWeakSourceAutoRelease contextWeak;
     FilterCell *filterCell;
     ParentCell *parentCell;

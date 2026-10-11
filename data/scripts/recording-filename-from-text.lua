@@ -5,9 +5,9 @@ Overrides the Branch Output recording filename format
 based on the content of a Text (GDI+) source.
 
 This script overrides the filename format at runtime via proc handler.
-The filter's own property settings are NOT modified.
+The Branch Output's own property settings are NOT modified.
 When this script is unloaded, the override is cleared and
-the filter reverts to its original filename format setting.
+the Branch Output reverts to its original filename format setting.
 
 The filename format is applied in three ways depending on recording state:
   - Before recording: stored and used when recording starts
@@ -16,6 +16,7 @@ The filename format is applied in three ways depending on recording state:
 
 Requirements:
   - Branch Output plugin v1.0.9+ (with override_recording_filename_format proc)
+  - Branch Output plugin v1.1.0+ to list main outputs (earlier versions list filters only)
   - A Text (GDI+) source whose "text" property will be used as the filename prefix
 
 Known limitation (Windows + "Read from file" mode):
@@ -32,7 +33,8 @@ Known limitation (Windows + "Read from file" mode):
 
 Usage:
   1. Add this script via OBS > Tools > Scripts
-  2. Select the text source and the Branch Output filter from the dropdown lists
+  2. Select the text source and the Branch Output (a filter or a main output)
+     from the dropdown lists
   3. Set the base filename format (OBS date/time specifiers like %CCYY-%MM-%DD are supported)
   4. The recording filename will update whenever the text source content changes
 --]]
@@ -42,6 +44,7 @@ local obs = obslua
 -- Proc and filter constants
 local OVERRIDE_PROC = "override_recording_filename_format"
 local BRANCH_OUTPUT_FILTER_ID = "osi_branch_output"
+local BRANCH_OUTPUT_PROGRAM_ID = "osi_branch_output_program"
 local LOG_LABEL = "Recording filename format"
 local MAX_READ_SIZE = 4096 -- 4 KB read limit to prevent performance issues on large files
 -- Truncate to 200 bytes to stay within NTFS filename component (255) /
@@ -50,7 +53,8 @@ local MAX_FILENAME_BYTES = 200
 
 -- Script settings
 local text_source_uuid = ""
-local selected_filter = "" -- "source_uuid::filter_uuid" format
+-- "source_uuid::filter_uuid" for a filter, "::output_uuid" for a main output
+local selected_filter = ""
 local base_format = "%CCYY-%MM-%DD %hh-%mm-%ss"
 local last_text = nil
 local last_applied_text = nil
@@ -58,50 +62,93 @@ local last_applied_time = 0
 local override_cleared = false
 local THROTTLE_SECONDS = 30
 
+-- Main output instance the last non-empty format was sent to, and its UUID
+local applied_target_weak = nil
+local applied_target_uuid = ""
+local missing_target_warned = false
+
 -- Forward declaration so update_recording_format() can call clear_override()
 local clear_override
 
-local function get_branch_output_filters()
-    -- Get list of Branch Output filters via global proc handler.
-    local filters = {}
+local function call_global_list_proc(proc_name)
+    -- Returns (found, json_str). found is false when the proc is not registered.
     local ph = obs.obs_get_proc_handler()
     local cd = obs.calldata_create()
+    local found = obs.proc_handler_call(ph, proc_name, cd)
+    local json_str = nil
+    if found then
+        json_str = obs.calldata_string(cd, "json")
+    end
+    obs.calldata_destroy(cd)
+    return found, json_str
+end
 
-    if obs.proc_handler_call(ph, "osi_branch_output_get_filter_list", cd) then
-        local json_str = obs.calldata_string(cd, "json")
-        if json_str and json_str ~= "" then
-            local data = obs.obs_data_create_from_json(json_str)
-            if data == nil then
-                obs.script_log(obs.LOG_WARNING, "Failed to parse filter list JSON")
-            else
-                local array = obs.obs_data_get_array(data, "filters")
-                if array ~= nil then
-                    local count = obs.obs_data_array_count(array)
-                    for i = 0, count - 1 do
-                        local item = obs.obs_data_array_item(array, i)
-                        if item ~= nil then
-                            local source_uuid = obs.obs_data_get_string(item, "source_uuid")
-                            local filter_uuid = obs.obs_data_get_string(item, "filter_uuid")
-                            if source_uuid ~= "" and filter_uuid ~= "" then
-                                table.insert(filters, {
-                                    source_name = obs.obs_data_get_string(item, "source_name"),
-                                    source_uuid = source_uuid,
-                                    filter_name = obs.obs_data_get_string(item, "filter_name"),
-                                    filter_uuid = filter_uuid,
-                                })
-                            end
-                            obs.obs_data_release(item)
-                        end
-                    end
-                    obs.obs_data_array_release(array)
-                end
-                obs.obs_data_release(data)
+local function for_each_list_item(json_str, array_key, list_label, callback)
+    if json_str == nil or json_str == "" then
+        return
+    end
+    local data = obs.obs_data_create_from_json(json_str)
+    if data == nil then
+        obs.script_log(obs.LOG_WARNING, "Failed to parse " .. list_label .. " JSON")
+        return
+    end
+    local array = obs.obs_data_get_array(data, array_key)
+    if array ~= nil then
+        local count = obs.obs_data_array_count(array)
+        for i = 0, count - 1 do
+            local item = obs.obs_data_array_item(array, i)
+            if item ~= nil then
+                callback(item)
+                obs.obs_data_release(item)
             end
         end
+        obs.obs_data_array_release(array)
+    end
+    obs.obs_data_release(data)
+end
+
+local function add_filter_choice(choices, item)
+    local source_uuid = obs.obs_data_get_string(item, "source_uuid")
+    local filter_uuid = obs.obs_data_get_string(item, "filter_uuid")
+    if source_uuid ~= "" and filter_uuid ~= "" then
+        table.insert(choices, {
+            label = obs.obs_data_get_string(item, "source_name") .. " / " ..
+                obs.obs_data_get_string(item, "filter_name"),
+            value = source_uuid .. "::" .. filter_uuid,
+        })
+    end
+end
+
+local function get_branch_outputs()
+    -- Returns a list of {label, value} choices. get_filter_list is used only
+    -- when get_output_list is not registered (plugin older than v1.1.0).
+    local choices = {}
+    local found, json_str = call_global_list_proc("osi_branch_output_get_output_list")
+    if found then
+        for_each_list_item(json_str, "outputs", "output list", function(item)
+            local item_type = obs.obs_data_get_string(item, "type")
+            if item_type == "filter" then
+                add_filter_choice(choices, item)
+            elseif item_type == "program" then
+                local output_uuid = obs.obs_data_get_string(item, "output_uuid")
+                if output_uuid ~= "" then
+                    table.insert(choices, {
+                        label = "[Main Output] " .. obs.obs_data_get_string(item, "output_name"),
+                        value = "::" .. output_uuid,
+                    })
+                end
+            end
+        end)
+        return choices
     end
 
-    obs.calldata_destroy(cd)
-    return filters
+    found, json_str = call_global_list_proc("osi_branch_output_get_filter_list")
+    if found then
+        for_each_list_item(json_str, "filters", "filter list", function(item)
+            add_filter_choice(choices, item)
+        end)
+    end
+    return choices
 end
 
 local function utf8_validate(s)
@@ -397,42 +444,101 @@ local function read_text_from_source(text_source)
     return result_text, ok
 end
 
-local function call_override_proc(filter_uuid, format_value)
-    -- Call the override proc on the specified Branch Output filter.
-    -- Verifies that the target is actually a Branch Output filter and logs proc result.
-    -- Returns true on success, false otherwise.
-    if filter_uuid == nil or filter_uuid == "" then
-        return false
+local function invoke_override(target_uuid, format_value)
+    -- Call the override proc on the specified Branch Output filter or main output.
+    -- Returns (ok, weak). weak is a weak reference to the main output the proc
+    -- was called on, or nil for a filter or on failure; the caller releases it.
+    if target_uuid == nil or target_uuid == "" then
+        return false, nil
     end
 
-    local bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-    if bo_filter == nil then
-        obs.script_log(obs.LOG_WARNING, "Filter (uuid: " .. filter_uuid .. ") not found")
-        return false
+    local target = obs.obs_get_source_by_uuid(target_uuid)
+    if target == nil then
+        obs.script_log(obs.LOG_WARNING, "Branch Output (uuid: " .. target_uuid .. ") not found")
+        return false, nil
     end
 
-    local filter_id = obs.obs_source_get_unversioned_id(bo_filter)
-    if filter_id ~= BRANCH_OUTPUT_FILTER_ID then
+    local target_id = obs.obs_source_get_unversioned_id(target)
+    if target_id ~= BRANCH_OUTPUT_FILTER_ID and target_id ~= BRANCH_OUTPUT_PROGRAM_ID then
         obs.script_log(obs.LOG_WARNING,
-            "Source (uuid: " .. filter_uuid .. ") is not a Branch Output filter (id: " ..
-                tostring(filter_id) .. ")")
-        obs.obs_source_release(bo_filter)
-        return false
+            "Source (uuid: " .. target_uuid .. ") is not a Branch Output (id: " ..
+                tostring(target_id) .. ")")
+        obs.obs_source_release(target)
+        return false, nil
     end
 
-    local ph = obs.obs_source_get_proc_handler(bo_filter)
+    local ph = obs.obs_source_get_proc_handler(target)
     local cd = obs.calldata_create()
     obs.calldata_set_string(cd, "format", format_value)
     local result = obs.proc_handler_call(ph, OVERRIDE_PROC, cd)
     obs.calldata_destroy(cd)
-    obs.obs_source_release(bo_filter)
+    local weak = nil
+    if result and target_id == BRANCH_OUTPUT_PROGRAM_ID then
+        weak = obs.obs_source_get_weak_source(target)
+    end
+    obs.obs_source_release(target)
 
     if not result then
         obs.script_log(obs.LOG_WARNING,
             "proc_handler_call for " .. OVERRIDE_PROC ..
                 " failed — is the Branch Output plugin up to date?")
+        return false, nil
+    end
+    return true, weak
+end
+
+local function call_override_proc(filter_uuid, format_value)
+    -- Returns true on success, false otherwise.
+    local ok, weak = invoke_override(filter_uuid, format_value)
+    if weak ~= nil then
+        obs.obs_weak_source_release(weak)
+    end
+    return ok
+end
+
+local function reset_apply_state()
+    last_text = nil
+    last_applied_text = nil
+    last_applied_time = 0
+    override_cleared = false
+end
+
+local function release_applied_target()
+    if applied_target_weak ~= nil then
+        obs.obs_weak_source_release(applied_target_weak)
+        applied_target_weak = nil
+    end
+    applied_target_uuid = ""
+end
+
+local function track_program_target(target_uuid)
+    -- Returns false while the main output cannot be found. A main output
+    -- instance replaced under the same UUID (e.g. on a profile switch) drops
+    -- the override, so the apply state is reset to resend it.
+    if applied_target_weak ~= nil then
+        if applied_target_uuid ~= target_uuid then
+            release_applied_target()
+        elseif obs.obs_weak_source_expired(applied_target_weak) then
+            release_applied_target()
+            reset_apply_state()
+        end
+    end
+    if applied_target_weak ~= nil then
+        return true
+    end
+
+    local target = obs.obs_get_source_by_uuid(target_uuid)
+    if target == nil then
+        reset_apply_state()
+        if not missing_target_warned then
+            obs.script_log(obs.LOG_INFO,
+                "Main Output (uuid: " .. target_uuid .. ") not found; waiting for it to load")
+            missing_target_warned = true
+        end
         return false
     end
+    obs.obs_source_release(target)
+    missing_target_warned = false
     return true
 end
 
@@ -442,8 +548,12 @@ local function update_recording_format()
         return
     end
 
-    local _, filter_uuid = parse_selected_filter(selected_filter)
+    local parent_uuid, filter_uuid = parse_selected_filter(selected_filter)
     if filter_uuid == "" then
+        return
+    end
+
+    if parent_uuid == "" and not track_program_target(filter_uuid) then
         return
     end
 
@@ -501,14 +611,20 @@ local function update_recording_format()
         return
     end
 
-    if call_override_proc(filter_uuid, new_format) then
+    local ok, weak = invoke_override(filter_uuid, new_format)
+    if weak ~= nil then
+        release_applied_target()
+        applied_target_weak = weak
+        applied_target_uuid = filter_uuid
+    end
+    if ok then
         last_text = new_format
         last_applied_text = new_format
         last_applied_time = now
         override_cleared = false
         obs.script_log(obs.LOG_INFO, LOG_LABEL .. " updated: " .. new_format)
     else
-        -- Filter missing or proc call failed: cache new_format so the
+        -- Target missing or proc call failed: cache new_format so the
         -- "same format" early-return suppresses retries on subsequent ticks
         -- until the text or selection actually changes. Without this the
         -- timer would re-issue the warning every tick at 1 Hz.
@@ -553,7 +669,7 @@ function script_description()
     return [[<b>Recording Filename from Text Source</b><br><br>
 Overrides a Branch Output recording filename format based on the content of a Text (GDI+) source.<br><br>
 The text content is prepended to the base format.<br><br>
-<b>Note:</b> This script overrides the filename format at runtime. The filter's own property settings are not modified. When this script is unloaded, the override is cleared and the filter reverts to its original filename format setting.<br><br>
+<b>Note:</b> This script overrides the filename format at runtime. The Branch Output's own property settings are not modified. When this script is unloaded, the override is cleared and the Branch Output reverts to its original filename format setting.<br><br>
 <b>Behavior:</b><ul>
 <li>Before recording: filename is applied when recording starts</li>
 <li>During recording (split enabled): triggers immediate file split</li>
@@ -589,16 +705,14 @@ function script_properties()
         obs.source_list_release(sources)
     end
 
-    -- Branch Output filter selector
+    -- Branch Output selector (filters and main outputs)
     p = obs.obs_properties_add_list(
-        props, "selected_filter", "Branch Output Filter",
+        props, "selected_filter", "Branch Output",
         obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING
     )
-    obs.obs_property_list_add_string(p, "(Select a filter)", "")
-    for _, f in ipairs(get_branch_output_filters()) do
-        local label = f.filter_name .. "  (" .. f.source_name .. ")"
-        local value = f.source_uuid .. "::" .. f.filter_uuid
-        obs.obs_property_list_add_string(p, label, value)
+    obs.obs_property_list_add_string(p, "(Select a Branch Output)", "")
+    for _, choice in ipairs(get_branch_outputs()) do
+        obs.obs_property_list_add_string(p, choice.label, choice.value)
     end
 
     -- Base filename format
@@ -616,7 +730,7 @@ end
 
 function script_update(settings)
     -- Capture previous identifiers before overwriting them so we can detect
-    -- selection changes (clear old filter override, reset throttle window).
+    -- selection changes (clear old target override, reset throttle window).
     local prev_text_source_uuid = text_source_uuid
     local prev_selected_filter = selected_filter
     local _, old_filter_uuid = parse_selected_filter(prev_selected_filter)
@@ -625,25 +739,30 @@ function script_update(settings)
     selected_filter = obs.obs_data_get_string(settings, "selected_filter")
     base_format = obs.obs_data_get_string(settings, "base_format")
 
+    if prev_selected_filter ~= selected_filter then
+        missing_target_warned = false
+    end
+
     local _, new_filter_uuid = parse_selected_filter(selected_filter)
     if old_filter_uuid ~= "" and old_filter_uuid ~= new_filter_uuid then
-        -- Clear override on the previously selected filter so it does not
-        -- remain overridden after the user switched to a different filter.
+        -- Clear override on the previously selected Branch Output so it does
+        -- not remain overridden after the user switched to a different one.
         if call_override_proc(old_filter_uuid, "") then
             obs.script_log(obs.LOG_INFO,
-                LOG_LABEL .. " override cleared on previous filter (uuid: " .. old_filter_uuid .. ")")
+                LOG_LABEL .. " override cleared on previous Branch Output (uuid: " ..
+                    old_filter_uuid .. ")")
         end
     end
 
     -- If text source was deselected, clear the override on the current
-    -- filter so it reverts to its own setting.
+    -- Branch Output so it reverts to its own setting.
     if text_source_uuid == "" then
         clear_override()
         return
     end
 
-    -- Force re-apply on next tick (text or filter selection changed, or
-    -- base_format was edited).
+    -- Force re-apply on next tick (text or Branch Output selection changed,
+    -- or base_format was edited).
     last_text = nil
     override_cleared = false  -- reset to "needs re-apply"
     -- Preserve last_applied_text / last_applied_time when only base_format
@@ -667,4 +786,5 @@ end
 function script_unload()
     obs.timer_remove(timer_callback)
     clear_override()
+    release_applied_target()
 end

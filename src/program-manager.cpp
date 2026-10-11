@@ -203,8 +203,10 @@ void BranchOutputProgramManager::onProfileChanged()
 
 void BranchOutputProgramManager::releasePrograms(bool drain)
 {
-    // FIXME: An open properties dialog keeps its source alive: edits there are lost, and reloading
-    // the profile reassigns the UUID. Close the dialogs first, handling a canceled save prompt.
+    // FIXME: An external strong reference (an open properties dialog, a script) keeps its source
+    // alive: dialog edits are lost, and reloading the profile reassigns the UUID. Close the dialogs
+    // first, handling a canceled save prompt, and load the new sources only after the released ones
+    // are destroyed.
     for (const auto *list : {&programs, &removingPrograms}) {
         for (const auto &source : *list) {
             if (auto *program = BranchOutputProgram::fromSource(source)) {
