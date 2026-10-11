@@ -444,18 +444,29 @@ local function read_text_from_source(text_source)
     return result_text, ok
 end
 
+local function call_override_on_source(target, format_value)
+    -- Returns true when the override proc call on target succeeded.
+    local ph = obs.obs_source_get_proc_handler(target)
+    local cd = obs.calldata_create()
+    obs.calldata_set_string(cd, "format", format_value)
+    local result = obs.proc_handler_call(ph, OVERRIDE_PROC, cd)
+    obs.calldata_destroy(cd)
+    return result
+end
+
 local function invoke_override(target_uuid, format_value)
     -- Call the override proc on the specified Branch Output filter or main output.
-    -- Returns (ok, weak). weak is a weak reference to the main output the proc
-    -- was called on, or nil for a filter or on failure; the caller releases it.
+    -- Returns (ok, weak, missing). weak is a weak reference to the main output
+    -- the proc was called on, or nil for a filter or on failure; the caller
+    -- releases it. missing is true when no source has target_uuid.
     if target_uuid == nil or target_uuid == "" then
-        return false, nil
+        return false, nil, false
     end
 
     local target = obs.obs_get_source_by_uuid(target_uuid)
     if target == nil then
         obs.script_log(obs.LOG_WARNING, "Branch Output (uuid: " .. target_uuid .. ") not found")
-        return false, nil
+        return false, nil, true
     end
 
     local target_id = obs.obs_source_get_unversioned_id(target)
@@ -464,14 +475,10 @@ local function invoke_override(target_uuid, format_value)
             "Source (uuid: " .. target_uuid .. ") is not a Branch Output (id: " ..
                 tostring(target_id) .. ")")
         obs.obs_source_release(target)
-        return false, nil
+        return false, nil, false
     end
 
-    local ph = obs.obs_source_get_proc_handler(target)
-    local cd = obs.calldata_create()
-    obs.calldata_set_string(cd, "format", format_value)
-    local result = obs.proc_handler_call(ph, OVERRIDE_PROC, cd)
-    obs.calldata_destroy(cd)
+    local result = call_override_on_source(target, format_value)
     local weak = nil
     if result and target_id == BRANCH_OUTPUT_PROGRAM_ID then
         weak = obs.obs_source_get_weak_source(target)
@@ -482,9 +489,9 @@ local function invoke_override(target_uuid, format_value)
         obs.script_log(obs.LOG_WARNING,
             "proc_handler_call for " .. OVERRIDE_PROC ..
                 " failed — is the Branch Output plugin up to date?")
-        return false, nil
+        return false, nil, false
     end
-    return true, weak
+    return true, weak, false
 end
 
 local function call_override_proc(filter_uuid, format_value)
@@ -515,12 +522,30 @@ local function track_program_target(target_uuid)
     -- Returns false while the main output cannot be found. A main output
     -- instance replaced under the same UUID (e.g. on a profile switch) drops
     -- the override, so the apply state is reset to resend it.
+    -- A main output whose UUID was reassigned in place (a scene collection
+    -- duplicate on OBS 30.x) cannot be reached by UUID, so its override is
+    -- cleared through the weak reference and it is no longer tracked.
     if applied_target_weak ~= nil then
         if applied_target_uuid ~= target_uuid then
             release_applied_target()
-        elseif obs.obs_weak_source_expired(applied_target_weak) then
-            release_applied_target()
-            reset_apply_state()
+        else
+            local applied = obs.obs_weak_source_get_source(applied_target_weak)
+            if applied == nil then
+                release_applied_target()
+                reset_apply_state()
+            elseif obs.obs_source_get_uuid(applied) ~= target_uuid then
+                call_override_on_source(applied, "")
+                obs.obs_source_release(applied)
+                obs.script_log(obs.LOG_WARNING,
+                    "Main Output (uuid: " .. target_uuid ..
+                        ") was assigned a new UUID; override cleared, select it again")
+                release_applied_target()
+                reset_apply_state()
+                missing_target_warned = true
+                return false
+            else
+                obs.obs_source_release(applied)
+            end
         end
     end
     if applied_target_weak ~= nil then
@@ -611,7 +636,7 @@ local function update_recording_format()
         return
     end
 
-    local ok, weak = invoke_override(filter_uuid, new_format)
+    local ok, weak, missing = invoke_override(filter_uuid, new_format)
     if weak ~= nil then
         release_applied_target()
         applied_target_weak = weak
@@ -623,8 +648,12 @@ local function update_recording_format()
         last_applied_time = now
         override_cleared = false
         obs.script_log(obs.LOG_INFO, LOG_LABEL .. " updated: " .. new_format)
+    elseif missing and parent_uuid == "" then
+        -- The next tick waits in track_program_target() until the main output
+        -- is loaded again, then resends the format.
+        reset_apply_state()
     else
-        -- Target missing or proc call failed: cache new_format so the
+        -- Filter missing or proc call failed: cache new_format so the
         -- "same format" early-return suppresses retries on subsequent ticks
         -- until the text or selection actually changes. Without this the
         -- timer would re-issue the warning every tick at 1 Hz.
