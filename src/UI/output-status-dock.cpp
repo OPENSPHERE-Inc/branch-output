@@ -943,7 +943,7 @@ void BranchOutputStatusDock::showAddMenu()
     };
 
     QMenu menu(window());
-    auto mainOutputAction = menu.addAction(QTStr("MainOutput"));
+    auto programAction = menu.addAction(QTStr("Program"));
     menu.addSeparator();
 
     auto sourcesMenu = menu.addMenu(QTStr("AddMenu.Sources"));
@@ -974,8 +974,8 @@ void BranchOutputStatusDock::showAddMenu()
         return;
     }
 
-    if (selected == mainOutputAction) {
-        emit addMainOutputRequested();
+    if (selected == programAction) {
+        emit addProgramRequested();
         return;
     }
 
@@ -1041,14 +1041,14 @@ void BranchOutputStatusDock::onTableContextMenuRequested(const QPoint &pos)
 
     // The dock timer can delete the row during the nested event loops below: touch no row after this
     OBSWeakSource weak = row->contextWeak.Get();
-    auto isMainOutput = !row->info.isFilter;
+    auto isProgram = !row->info.isFilter;
     auto currentName = row->info.outputName;
 
     QMenu menu(window());
     auto openSettingsAction = menu.addAction(QTStr("RowMenu.OpenSettings"));
     QAction *renameAction = nullptr;
     QAction *removeAction = nullptr;
-    if (isMainOutput) {
+    if (isProgram) {
         menu.addSeparator();
         renameAction = menu.addAction(QTStr("RowMenu.Rename"));
         removeAction = menu.addAction(QTStr("RowMenu.Remove"));
@@ -1075,21 +1075,21 @@ void BranchOutputStatusDock::onTableContextMenuRequested(const QPoint &pos)
             output->openSettings();
         }
     } else if (selected == renameAction) {
-        renameMainOutput(weak, currentName);
+        renameProgram(weak, currentName);
     } else if (selected == removeAction) {
-        removeMainOutput(weak, currentName);
+        removeProgram(weak, currentName);
     }
 }
 
-void BranchOutputStatusDock::renameMainOutput(obs_weak_source_t *weak, const QString &currentName)
+void BranchOutputStatusDock::renameProgram(obs_weak_source_t *weak, const QString &currentName)
 {
     auto input = currentName;
 
     while (true) {
         QInputDialog dialog(this);
         dialog.setInputMode(QInputDialog::TextInput);
-        dialog.setWindowTitle(QTStr("RenameMainOutput.Title"));
-        dialog.setLabelText(QTStr("RenameMainOutput.Text"));
+        dialog.setWindowTitle(QTStr("RenameProgram.Title"));
+        dialog.setLabelText(QTStr("RenameProgram.Text"));
         dialog.setTextValue(input);
         dialog.setOkButtonText(frontendText("OK"));
         dialog.setCancelButtonText(frontendText("Cancel"));
@@ -1103,7 +1103,7 @@ void BranchOutputStatusDock::renameMainOutput(obs_weak_source_t *weak, const QSt
             return;
         }
         if (newName.isEmpty()) {
-            showWarning(QTStr("RenameMainOutput.Title"), QTStr("RenameMainOutput.EmptyName"));
+            showWarning(QTStr("RenameProgram.Title"), QTStr("RenameProgram.EmptyName"));
             continue;
         }
 
@@ -1114,23 +1114,23 @@ void BranchOutputStatusDock::renameMainOutput(obs_weak_source_t *weak, const QSt
             if (!source) {
                 return;
             }
-            used = isMainOutputNameUsed(newName, source);
+            used = isProgramNameUsed(newName, source);
             uuid = QString::fromUtf8(obs_source_get_uuid(source));
         }
         if (used) {
-            showWarning(QTStr("RenameMainOutput.Title"), QTStr("RenameMainOutput.NameExists").arg(newName));
+            showWarning(QTStr("RenameProgram.Title"), QTStr("RenameProgram.NameExists").arg(newName));
             continue;
         }
 
-        emit renameMainOutputRequested(uuid, newName);
+        emit renameProgramRequested(uuid, newName);
         return;
     }
 }
 
-void BranchOutputStatusDock::removeMainOutput(obs_weak_source_t *weak, const QString &currentName)
+void BranchOutputStatusDock::removeProgram(obs_weak_source_t *weak, const QString &currentName)
 {
     QMessageBox box(
-        QMessageBox::Question, QTStr("RemoveMainOutput.Title"), QTStr("RemoveMainOutput.Text").arg(currentName),
+        QMessageBox::Question, QTStr("RemoveProgram.Title"), QTStr("RemoveProgram.Text").arg(currentName),
         QMessageBox::NoButton, this
     );
     box.setTextFormat(Qt::PlainText);
@@ -1152,10 +1152,10 @@ void BranchOutputStatusDock::removeMainOutput(obs_weak_source_t *weak, const QSt
         uuid = QString::fromUtf8(obs_source_get_uuid(source));
     }
 
-    emit removeMainOutputRequested(uuid);
+    emit removeProgramRequested(uuid);
 }
 
-bool BranchOutputStatusDock::isMainOutputNameUsed(const QString &filterName, obs_source_t *except) const
+bool BranchOutputStatusDock::isProgramNameUsed(const QString &filterName, obs_source_t *except) const
 {
     foreach (auto row, outputTableRows) {
         if (row->info.isFilter || obs_weak_source_references_source(row->contextWeak, except)) {

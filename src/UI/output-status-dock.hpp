@@ -54,11 +54,11 @@ enum RowOutputType {
 };
 
 struct BranchOutputInfo {
-    bool isFilter = false; // false: main output
-    QString sourceName;    // filter: parent source name; main output: the dock's input column text
-    QString sourceUuid;    // filter: parent source UUID; main output: empty
-    QString outputName;    // context source name (filter name or main output name)
-    QString outputUuid;    // context source UUID (filter UUID or main output private source UUID)
+    bool isFilter = false; // false: Program Output
+    QString sourceName;    // filter: parent source name; Program Output: the dock's input column text
+    QString sourceUuid;    // filter: parent source UUID; Program Output: empty
+    QString outputName;    // context source name (filter name or Program Output name)
+    QString outputUuid;    // context source UUID (filter UUID or Program Output private source UUID)
 };
 
 class OutputTableCellItem : public QTableWidgetItem {
@@ -310,9 +310,9 @@ class BranchOutputStatusDock : public QFrame {
     void applySettings(obs_data_t *settings);
     void showAddMenu();
     void addBranchOutputFilter(obs_source_t *target);
-    void renameMainOutput(obs_weak_source_t *weak, const QString &currentName);
-    void removeMainOutput(obs_weak_source_t *weak, const QString &currentName);
-    bool isMainOutputNameUsed(const QString &filterName, obs_source_t *except) const;
+    void renameProgram(obs_weak_source_t *weak, const QString &currentName);
+    void removeProgram(obs_weak_source_t *weak, const QString &currentName);
+    bool isProgramNameUsed(const QString &filterName, obs_source_t *except) const;
     void showWarning(const QString &title, const QString &text);
     int rowUnderPointer() const;
     void retargetHoveredRow();
@@ -328,9 +328,9 @@ class BranchOutputStatusDock : public QFrame {
     static void onSaveReplayBufferAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
 
 signals:
-    void addMainOutputRequested();
-    void renameMainOutputRequested(const QString &uuid, const QString &newName);
-    void removeMainOutputRequested(const QString &uuid);
+    void addProgramRequested();
+    void renameProgramRequested(const QString &uuid, const QString &newName);
+    void removeProgramRequested(const QString &uuid);
 
 private slots:
     void onHeaderPressed(int index);

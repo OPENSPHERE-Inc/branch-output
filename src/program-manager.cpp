@@ -39,13 +39,9 @@ BranchOutputProgramManager::BranchOutputProgramManager(BranchOutputStatusDock *d
     eventCallbackRegistered = true;
 
     if (dock) {
-        connect(dock, &BranchOutputStatusDock::addMainOutputRequested, this, &BranchOutputProgramManager::addProgram);
-        connect(
-            dock, &BranchOutputStatusDock::renameMainOutputRequested, this, &BranchOutputProgramManager::renameProgram
-        );
-        connect(
-            dock, &BranchOutputStatusDock::removeMainOutputRequested, this, &BranchOutputProgramManager::removeProgram
-        );
+        connect(dock, &BranchOutputStatusDock::addProgramRequested, this, &BranchOutputProgramManager::addProgram);
+        connect(dock, &BranchOutputStatusDock::renameProgramRequested, this, &BranchOutputProgramManager::renameProgram);
+        connect(dock, &BranchOutputStatusDock::removeProgramRequested, this, &BranchOutputProgramManager::removeProgram);
     }
 }
 
@@ -126,7 +122,7 @@ void BranchOutputProgramManager::loadPrograms()
 
         OBSSourceAutoRelease source = obs_load_private_source(item);
         if (!source) {
-            obs_log(LOG_WARNING, "Failed to load main output '%s'", obs_data_get_string(item, "name"));
+            obs_log(LOG_WARNING, "Failed to load Program Output '%s'", obs_data_get_string(item, "name"));
             continue;
         }
 
@@ -134,7 +130,7 @@ void BranchOutputProgramManager::loadPrograms()
     }
 
     persistenceReady = true;
-    obs_log(LOG_INFO, "Loaded %d main output(s)", static_cast<int>(programs.size()));
+    obs_log(LOG_INFO, "Loaded %d Program Output(s)", static_cast<int>(programs.size()));
 }
 
 void BranchOutputProgramManager::savePrograms()
@@ -188,7 +184,7 @@ void BranchOutputProgramManager::onProfileChanged()
 
         // The profile was duplicated or renamed: its file mirrors the running outputs
         if (fileUuids == heldUuids) {
-            obs_log(LOG_INFO, "Keep %d main output(s) across the profile change", static_cast<int>(programs.size()));
+            obs_log(LOG_INFO, "Keep %d Program Output(s) across the profile change", static_cast<int>(programs.size()));
             persistenceReady = true;
             savePrograms();
             return;
@@ -196,7 +192,7 @@ void BranchOutputProgramManager::onProfileChanged()
     }
 
     // FIXME: OBS 31+ activates a new profile without PROFILE_CHANGING, so obs_reset_video() runs while
-    // main outputs still hold their views. Stop them before the reset once OBS offers a hook for it.
+    // Program Outputs still hold their views. Stop them before the reset once OBS offers a hook for it.
     releasePrograms(false);
     loadPrograms();
 }
@@ -233,7 +229,7 @@ bool BranchOutputProgramManager::adopt(obs_source_t *source)
 {
     auto *program = BranchOutputProgram::fromSource(source);
     if (!program) {
-        obs_log(LOG_WARNING, "Ignore '%s': not a main output", obs_source_get_name(source));
+        obs_log(LOG_WARNING, "Ignore '%s': not a Program Output", obs_source_get_name(source));
         return false;
     }
 
@@ -260,9 +256,9 @@ QString BranchOutputProgramManager::nextDefaultName() const
         names.insert(QString::fromUtf8(obs_source_get_name(source)));
     }
 
-    auto format = QTStr("MainOutput.DefaultName");
+    auto format = QTStr("Program.DefaultName");
     if (!format.contains(QStringLiteral("%1"))) {
-        format = QTStr("MainOutput") + " %1";
+        format = QTStr("Program") + " %1";
     }
 
     auto count = static_cast<int>(programs.size());
@@ -279,14 +275,14 @@ QString BranchOutputProgramManager::nextDefaultName() const
 void BranchOutputProgramManager::addProgram()
 {
     if (!persistenceReady) {
-        obs_log(LOG_WARNING, "Cannot add a main output: %s of the current profile is not loaded", PROGRAMS_JSON_NAME);
+        obs_log(LOG_WARNING, "Cannot add a Program Output: %s of the current profile is not loaded", PROGRAMS_JSON_NAME);
         return;
     }
 
     auto defaultName = nextDefaultName();
     OBSSourceAutoRelease source = obs_source_create_private(PROGRAM_SOURCE_ID, qUtf8Printable(defaultName), nullptr);
     if (!source) {
-        obs_log(LOG_ERROR, "Failed to create main output '%s'", qUtf8Printable(defaultName));
+        obs_log(LOG_ERROR, "Failed to create Program Output '%s'", qUtf8Printable(defaultName));
         return;
     }
 
@@ -313,13 +309,13 @@ void BranchOutputProgramManager::renameProgram(const QString &uuid, const QStrin
 {
     auto name = newName.trimmed();
     if (name.isEmpty()) {
-        obs_log(LOG_WARNING, "Cannot rename main output: the name is empty");
+        obs_log(LOG_WARNING, "Cannot rename Program Output: the name is empty");
         return;
     }
 
     auto index = findProgram(uuid);
     if (index < 0) {
-        obs_log(LOG_DEBUG, "Ignore renaming main output %s: not held", qUtf8Printable(uuid));
+        obs_log(LOG_DEBUG, "Ignore renaming Program Output %s: not held", qUtf8Printable(uuid));
         return;
     }
 
@@ -329,7 +325,7 @@ void BranchOutputProgramManager::renameProgram(const QString &uuid, const QStrin
     for (int i = 0; i < programs.size(); i++) {
         if (i != index && QString::fromUtf8(obs_source_get_name(programs.at(i))) == name) {
             obs_log(
-                LOG_WARNING, "Cannot rename main output '%s': '%s' is in use", qUtf8Printable(currentName),
+                LOG_WARNING, "Cannot rename Program Output '%s': '%s' is in use", qUtf8Printable(currentName),
                 qUtf8Printable(name)
             );
             return;
@@ -340,7 +336,7 @@ void BranchOutputProgramManager::renameProgram(const QString &uuid, const QStrin
         return;
     }
 
-    obs_log(LOG_INFO, "Renamed main output '%s' to '%s'", qUtf8Printable(currentName), qUtf8Printable(name));
+    obs_log(LOG_INFO, "Renamed Program Output '%s' to '%s'", qUtf8Printable(currentName), qUtf8Printable(name));
     obs_source_set_name(source, qUtf8Printable(name));
 }
 
@@ -348,7 +344,7 @@ void BranchOutputProgramManager::removeProgram(const QString &uuid)
 {
     auto index = findProgram(uuid);
     if (index < 0) {
-        obs_log(LOG_DEBUG, "Ignore removing main output %s: not held", qUtf8Printable(uuid));
+        obs_log(LOG_DEBUG, "Ignore removing Program Output %s: not held", qUtf8Printable(uuid));
         return;
     }
 
@@ -356,7 +352,7 @@ void BranchOutputProgramManager::removeProgram(const QString &uuid)
     removingPrograms.append(source);
 
     auto *program = BranchOutputProgram::fromSource(source);
-    obs_log(LOG_INFO, "Removing main output '%s'", obs_source_get_name(source));
+    obs_log(LOG_INFO, "Removing Program Output '%s'", obs_source_get_name(source));
 
     // Connected first: beginRemoval() emits removalReady at once when no output is running
     connect(
@@ -380,7 +376,7 @@ void BranchOutputProgramManager::finishRemoval(BranchOutputProgram *program)
 
         OBSSource source = removingPrograms.takeAt(i);
         program->detach();
-        obs_log(LOG_INFO, "Removed main output '%s'", obs_source_get_name(source));
+        obs_log(LOG_INFO, "Removed Program Output '%s'", obs_source_get_name(source));
         return;
     }
 }

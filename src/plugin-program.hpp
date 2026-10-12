@@ -110,7 +110,7 @@ public:
     void beginRemoval();             // UI thread. Idempotent. Precondition: attached.
     void openSettings() override;    // UI thread.
 
-    // Caller holds a strong reference to source. Null when source is not a main output.
+    // Caller holds a strong reference to source. Null when source is not a Program Output.
     static BranchOutputProgram *fromSource(obs_source_t *source);
     static obs_source_info createProgramInfo();
 };

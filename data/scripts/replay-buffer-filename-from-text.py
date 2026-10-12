@@ -19,12 +19,12 @@ Note on throttling:
 
 Requirements:
   - Branch Output plugin v1.0.9+ (with override_replay_buffer_filename_format proc)
-  - Branch Output plugin v1.1.0+ to list main outputs (earlier versions list filters only)
+  - Branch Output plugin v1.1.0+ to list Program Outputs (earlier versions list filters only)
   - A Text (GDI+) source whose "text" property will be used as the filename prefix
 
 Usage:
   1. Add this script via OBS > Tools > Scripts
-  2. Select the text source and the Branch Output (a filter or a main output)
+  2. Select the text source and the Branch Output (a filter or a Program Output)
      from the dropdown lists
   3. Set the base filename format (OBS date/time specifiers like %CCYY-%MM-%DD are supported)
   4. The replay buffer filename will update whenever the text source content changes
@@ -54,12 +54,12 @@ WINDOWS_RESERVED = {
 
 # Script settings
 text_source_uuid = ""
-selected_filter = ""  # "source_uuid::filter_uuid" for a filter, "::output_uuid" for a main output
+selected_filter = ""  # "source_uuid::filter_uuid" (filter) or "::output_uuid" (Program Output)
 base_format = "%CCYY-%MM-%DD %hh-%mm-%ss"
 last_text = None
 override_cleared = False
 
-# Main output instance that last received a non-empty format from the tick.
+# Program Output instance that last received a non-empty format from the tick.
 # script_update() / script_unload() (UI thread) can run while a tick (graphics
 # thread) waits in an obs call, so applied_target_weak / applied_target_uuid /
 # target_generation are accessed only under target_lock, which never covers a
@@ -111,7 +111,7 @@ def parse_output_list(json_str):
         elif output_type == "program":
             output_uuid = item.get("output_uuid", "")
             if output_uuid:
-                choices.append((f"[Main Output] {item.get('output_name', '')}", f"::{output_uuid}"))
+                choices.append((f"[Program] {item.get('output_name', '')}", f"::{output_uuid}"))
     return choices
 
 
@@ -280,10 +280,10 @@ def read_text_from_source(text_source):
 
 
 def invoke_override(target_uuid, format_value):
-    """Call the override proc on the specified Branch Output filter or main output.
+    """Call the override proc on the specified Branch Output filter or Program Output.
 
     Verifies that the target is actually a Branch Output and logs proc result.
-    Returns (ok, weak, missing). weak is a weak reference to the main output
+    Returns (ok, weak, missing). weak is a weak reference to the Program Output
     instance the proc was called on, or None for a filter or on failure; the
     caller owns and releases it. missing is True when no source has target_uuid.
     """
@@ -341,9 +341,9 @@ def reset_apply_state():
 
 
 def track_program_target(target_uuid):
-    """Return True when the tick may continue with the main output target_uuid.
+    """Return True when the tick may continue with the Program Output target_uuid.
 
-    The override lives on the main output instance, so an expired weak
+    The override lives on the Program Output instance, so an expired weak
     reference (the instance was replaced) resets the apply state to send the
     format again. An instance whose UUID was reassigned in place (duplicating a
     scene collection on OBS 30.x) gets its override cleared and is no longer
@@ -373,7 +373,7 @@ def track_program_target(target_uuid):
     if reassigned_uuid:
         call_override_proc(reassigned_uuid, "")
         obs.script_log(obs.LOG_WARNING,
-                       f"Main Output (uuid: {target_uuid}) now has uuid {reassigned_uuid}; "
+                       f"Program Output (uuid: {target_uuid}) now has uuid {reassigned_uuid}; "
                        "override cleared. Select the Branch Output again")
         reset_apply_state()
         missing_target_warned = True
@@ -388,7 +388,8 @@ def track_program_target(target_uuid):
         reset_apply_state()
         if not missing_target_warned:
             obs.script_log(obs.LOG_INFO,
-                           f"Main Output (uuid: {target_uuid}) not found; waiting for it to load")
+                           f"Program Output (uuid: {target_uuid}) not found; "
+                           "waiting for it to load")
             missing_target_warned = True
         return False
     obs.obs_source_release(target)
@@ -411,7 +412,7 @@ def update_replay_buffer_format():
     if not filter_uuid:
         return
 
-    # An empty source UUID selects a main output.
+    # An empty source UUID selects a Program Output.
     if not source_uuid and not track_program_target(filter_uuid):
         return
 
@@ -468,7 +469,7 @@ def update_replay_buffer_format():
                 last_text = new_format
                 override_cleared = False
             elif missing and not source_uuid:
-                # The next tick waits in track_program_target() until the main output
+                # The next tick waits in track_program_target() until the Program Output
                 # is loaded again, then resends the format.
                 reset_apply_state()
             else:

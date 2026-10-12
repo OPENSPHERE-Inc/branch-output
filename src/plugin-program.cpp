@@ -164,7 +164,7 @@ bool BranchOutputProgram::isInputAvailable() const
 
 QString BranchOutputProgram::getInputName() const
 {
-    return QTStr("MainOutput");
+    return QTStr("Program");
 }
 
 QString BranchOutputProgram::getInputUuid() const
@@ -419,7 +419,7 @@ void BranchOutputProgram::updateCallback(obs_data_t *settings)
     // below walk the object unsynchronized. Confine live-settings traversal to the UI thread.
     OBSDataAutoRelease current = appliedSettings.get();
     if (current && settingsEquivalent(settings, current)) {
-        obs_log(LOG_DEBUG, "%s: Main output settings unchanged", qUtf8Printable(name));
+        obs_log(LOG_DEBUG, "%s: Program Output settings unchanged", qUtf8Printable(name));
         return;
     }
 
@@ -439,7 +439,7 @@ void BranchOutputProgram::updateCallback(obs_data_t *settings)
 
     emit persistRequested();
 
-    obs_log(LOG_INFO, "%s: Main output updated", qUtf8Printable(name));
+    obs_log(LOG_INFO, "%s: Program Output updated", qUtf8Printable(name));
 }
 
 void BranchOutputProgram::videoTickCallback(float)
@@ -654,7 +654,7 @@ obs_source_info BranchOutputProgram::createProgramInfo()
     info.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_CAP_DISABLED;
 
     info.get_name = [](void *) {
-        return "Branch Output Main Output";
+        return "Branch Output Program";
     };
 
     info.create = [](obs_data_t *settings, obs_source_t *source) -> void * {

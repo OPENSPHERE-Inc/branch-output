@@ -231,7 +231,7 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
 {
     // FIXME: obs_reset_video() frees the mix of videoOutput (the view's, or the main mix on the direct
     // path) while no encoder is connected (an output still connecting or reconnecting), leaving videoOutput
-    // and the encoder dangling. Only the main output detects a reset, and only one that changed the video
+    // and the encoder dangling. Only a Program Output detects a reset, and only one that changed the video
     // settings, at the next timer tick (issue #216).
     if (infrastructureReady) {
         return true;

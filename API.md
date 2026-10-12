@@ -10,13 +10,13 @@ Recording Filename Override lets you override the filename format of stream reco
 
 The overridden format is stored in the instance of the Branch Output's source, separately from its
 property settings. It stays active until reset via procedure, until the source is recreated (for
-example, when a deleted filter is restored with undo, or when the profile of a main output is loaded
-again), or until OBS exits.
+example, when a deleted filter is restored with undo, or when the profile of a Program Output is
+loaded again), or until OBS exits.
 
 The feature exists for production setups that need to organize recorded files by current scene, the value of a text input, or other external data.
 
 For caveats that apply to every procedure below (thread/callback safety, latency, deferred
-application, registration timing, module unload, main outputs), see
+application, registration timing, module unload, Program Outputs), see
 [Known Limitations](#known-limitations).
 
 ### Obtaining the Target Source
@@ -26,14 +26,14 @@ The override procedures (`override_recording_filename_format`,
 To call them you need a reference to that source.
 
 - Branch Output filter: the filter source itself — not the parent source/scene.
-- Main output (1.1.0 or later): the main output's source.
+- Program Output (1.1.0 or later): the Program Output's source.
   - It is a private source that does not appear in the OBS frontend.
 
 Typical acquisition flow:
 
 1. Obtain the UUID of the target source with one of the list procedures described below.
-   - `output_uuid` from `osi_branch_output_get_output_list` (1.1.0 or later): filters and main
-     outputs.
+   - `output_uuid` from `osi_branch_output_get_output_list` (1.1.0 or later): filters and Program
+     Outputs.
    - `filter_uuid` from `osi_branch_output_get_filter_list`: filters only.
 2. Get a source reference via `obs_get_source_by_uuid(uuid)`.
 3. Get the proc handler via `obs_source_get_proc_handler(source)`.
@@ -44,13 +44,13 @@ For a filter, if you already have a parent source reference,
 
 ### Overriding the Stream Recording Filename Format
 
-A procedure on the Branch Output source (filter or main output) that overrides the stream recording filename format at runtime.
+A procedure on the Branch Output source (filter or Program Output) that overrides the stream recording filename format at runtime.
 
 | Item | Description |
 |------|-------------|
 | Procedure name | `override_recording_filename_format` |
 | Signature | `void override_recording_filename_format(in string format)` |
-| Registered on | Branch Output filter source, or main output source (1.1.0 or later) (`obs_source_get_proc_handler(source)`) |
+| Registered on | Branch Output filter source, or Program Output source (1.1.0 or later) (`obs_source_get_proc_handler(source)`) |
 | Parameters | `format` (string) — New filename format. OBS date/time specifiers (e.g., `%CCYY-%MM-%DD %hh-%mm-%ss`) are supported. **Passing an empty string clears the override and reverts to the filename format configured in the Branch Output's properties.** |
 | Returns | None |
 
@@ -67,7 +67,7 @@ Behavior by recording state:
 ```python
 import obspython as obs
 
-# Get the target Branch Output source (filter or main output) by UUID.
+# Get the target Branch Output source (filter or Program Output) by UUID.
 # Pass "" as format to clear.
 bo_source = obs.obs_get_source_by_uuid(target_uuid)
 if bo_source:
@@ -84,7 +84,7 @@ if bo_source:
 ```lua
 local obs = obslua
 
--- Get the target Branch Output source (filter or main output) by UUID.
+-- Get the target Branch Output source (filter or Program Output) by UUID.
 -- Pass "" as format to clear.
 local bo_source = obs.obs_get_source_by_uuid(target_uuid)
 if bo_source ~= nil then
@@ -99,13 +99,13 @@ end
 
 ### Overriding the Replay Buffer Save Filename Format
 
-A procedure on the Branch Output source (filter or main output) that overrides the replay buffer save filename format.
+A procedure on the Branch Output source (filter or Program Output) that overrides the replay buffer save filename format.
 
 | Item | Description |
 |------|-------------|
 | Procedure name | `override_replay_buffer_filename_format` |
 | Signature | `void override_replay_buffer_filename_format(in string format)` |
-| Registered on | Branch Output filter source, or main output source (1.1.0 or later) (`obs_source_get_proc_handler(source)`) |
+| Registered on | Branch Output filter source, or Program Output source (1.1.0 or later) (`obs_source_get_proc_handler(source)`) |
 | Parameters | `format` (string) — New filename format. OBS date/time specifiers (e.g., `%CCYY-%MM-%DD %hh-%mm-%ss`) are supported. **Passing an empty string clears the override and reverts to the filename format configured in the Branch Output's properties.** |
 | Returns | None |
 
@@ -116,7 +116,7 @@ The new format takes effect on the next replay buffer save. The replay buffer it
 ```python
 import obspython as obs
 
-# Get the target Branch Output source (filter or main output) by UUID.
+# Get the target Branch Output source (filter or Program Output) by UUID.
 # Pass "" as format to clear.
 bo_source = obs.obs_get_source_by_uuid(target_uuid)
 if bo_source:
@@ -133,7 +133,7 @@ if bo_source:
 ```lua
 local obs = obslua
 
--- Get the target Branch Output source (filter or main output) by UUID.
+-- Get the target Branch Output source (filter or Program Output) by UUID.
 -- Pass "" as format to clear.
 local bo_source = obs.obs_get_source_by_uuid(target_uuid)
 if bo_source ~= nil then
@@ -150,8 +150,8 @@ end
 
 A global procedure that returns the list of Branch Output filters currently loaded. Used to obtain target filter UUIDs for the override procedures above.
 
-Main outputs are not included.
-To list both filters and main outputs, use `osi_branch_output_get_output_list` (1.1.0 or later,
+Program Outputs are not included.
+To list both filters and Program Outputs, use `osi_branch_output_get_output_list` (1.1.0 or later,
 see [Retrieving the Branch Output List](#retrieving-the-branch-output-list)).
 
 | Item | Description |
@@ -255,8 +255,9 @@ end
 
 ### Retrieving the Branch Output List
 
-A global procedure that returns the list of Branch Outputs currently loaded: both filters and main
-outputs. Available in 1.1.0 or later. Used to obtain target UUIDs for the override procedures above.
+A global procedure that returns the list of Branch Outputs currently loaded: both filters and
+Program Outputs. Available in 1.1.0 or later. Used to obtain target UUIDs for the override
+procedures above.
 
 | Item | Description |
 |------|-------------|
@@ -282,7 +283,7 @@ outputs. Available in 1.1.0 or later. Used to obtain target UUIDs for the overri
     {
       "type": "program",
       "output_uuid": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
-      "output_name": "Main Output 1"
+      "output_name": "Program 1"
     },
     ...
   ]
@@ -291,13 +292,13 @@ outputs. Available in 1.1.0 or later. Used to obtain target UUIDs for the overri
 
 | Field | Present for `type` | Description |
 |-------|--------------------|-------------|
-| `type` | All | `filter` for a Branch Output filter, `program` for a main output |
+| `type` | All | `filter` for a Branch Output filter, `program` for a Program Output |
 | `output_uuid` | All | UUID of the source the override procedures are registered on (used for the override procedures) |
 | `source_name` | `filter` | Parent source/scene name |
 | `source_uuid` | `filter` | Parent source/scene UUID |
 | `filter_name` | `filter` | Branch Output filter name |
 | `filter_uuid` | `filter` | Branch Output filter UUID (same value as `output_uuid`) |
-| `output_name` | `program` | Main output name |
+| `output_name` | `program` | Program Output name |
 
 - New `type` values may be added in later versions. Skip entries whose `type` you do not recognize.
 - The order of the entries is not guaranteed.
@@ -340,7 +341,7 @@ def parse_list(json_str, list_key):
             label = f'{item.get("source_name", "")} / {item.get("filter_name", "")}'
             outputs.append((label, item.get("filter_uuid", "")))
         elif item_type == "program":
-            label = f'[Main Output] {item.get("output_name", "")}'
+            label = f'[Program] {item.get("output_name", "")}'
             outputs.append((label, item.get("output_uuid", "")))
         # Entries of any other type are skipped
     return outputs
@@ -404,7 +405,7 @@ local function parse_list(json_str, list_key)
             })
         elseif item_type == "program" then
             table.insert(outputs, {
-                label = "[Main Output] " .. obs.obs_data_get_string(item, "output_name"),
+                label = "[Program] " .. obs.obs_data_get_string(item, "output_name"),
                 uuid = obs.obs_data_get_string(item, "output_uuid"),
             })
         end
@@ -446,16 +447,16 @@ Install path: `data\obs-plugins\osi-branch-output\scripts\` under the OBS instal
 3. Select the script file (`.py` or `.lua`).
 4. In the Description panel, configure:
    - **Text Source** — text input to read.
-   - **Branch Output** — filter or main output to override.
-     - Filters are labeled `<source name> / <filter name>`, and main outputs
-       `[Main Output] <output name>`.
+   - **Branch Output** — filter or Program Output to override.
+     - Filters are labeled `<source name> / <filter name>`, and Program Outputs
+       `[Program] <output name>`.
      - With a plugin older than 1.1.0, only filters are listed.
    - **Base Filename Format** — base format appended to the filename.
 5. The override is active immediately. Check **Script Log** for activity.
 6. While the script is loaded, its override takes precedence over the Branch Output's property value.
-   - For a main output, the script applies the override again after the main output's source is
-     recreated (for example, when switching back to its profile), and waits for the main output to
-     load at OBS startup.
+   - For a Program Output, the script applies the override again after the Program Output's source
+     is recreated (for example, when switching back to its profile), and waits for the Program
+     Output to load at OBS startup.
 7. Remove the script via the trash button to disable.
 
 #### recording-filename-from-text
@@ -486,30 +487,30 @@ The following caveats apply to all procedures and sample scripts above.
   the return value before reading.
 - **Module unload**: Do not call any procedure after `obs_module_unload()` — behavior is undefined.
 - **Private sources excluded**: Both list procedures omit filters on sources not visible in the OBS
-  frontend, matching the Status Dock's visibility rules. Main outputs are implemented as private
+  frontend, matching the Status Dock's visibility rules. Program Outputs are implemented as private
   sources but are included in `osi_branch_output_get_output_list`.
 - **Snapshot semantics**: The lists are snapshots at call time. Poll or refresh on demand to detect
   additions/removals. While a scene collection or profile is being switched, an output may be
   temporarily missing from the lists.
-- **Main outputs**:
-  - Main outputs belong to the current profile and are saved with it. Switching to another profile
-    replaces them with the main outputs of that profile, so a script finds a selected main output
-    only while its profile is current.
-  - Unlike a filter, a main output's source is kept across scene collection switches. It is
+- **Program Outputs**:
+  - Program Outputs belong to the current profile and are saved with it. Switching to another
+    profile replaces them with the Program Outputs of that profile, so a script finds a selected
+    Program Output only while its profile is current.
+  - Unlike a filter, a Program Output's source is kept across scene collection switches. It is
     recreated when its profile is loaded again, which clears the override.
   - The UUID can stay the same across the recreation, and a profile switch can also keep the
     source. Detect the replacement of the instance (for example, with a weak reference) and apply
     the override again.
   - Resending the override on events alone can split or restart a recording in progress. The
     bundled sample scripts detect the replacement with a weak reference.
-  - Hold a strong reference to a main output's source only during a call, and keep a weak
-    reference otherwise. A reference still held when the main output is loaded again keeps the old
-    instance alive: its weak reference does not expire, and the loaded main output gets a new UUID.
-    An open properties dialog of the main output has the same effect; select the main output again
-    in that case.
-  - A script may not find a main output for a while after OBS starts. Poll until it is found
+  - Hold a strong reference to a Program Output's source only during a call, and keep a weak
+    reference otherwise. A reference still held when the Program Output is loaded again keeps the
+    old instance alive: its weak reference does not expire, and the loaded Program Output gets a new
+    UUID. An open properties dialog of the Program Output has the same effect; select the Program
+    Output again in that case.
+  - A script may not find a Program Output for a while after OBS starts. Poll until it is found
     instead of relying on a frontend event, as the bundled sample scripts do.
-  - On OBS 30.x, duplicating a scene collection reassigns the UUIDs of the main outputs too. A main
-    output selected by a script in any scene collection, including the new one, is no longer found
-    and must be selected again.
+  - On OBS 30.x, duplicating a scene collection reassigns the UUIDs of the Program Outputs too. A
+    Program Output selected by a script in any scene collection, including the new one, is no longer
+    found and must be selected again.
 - **Windows + "Read from file" — Lua sample only**: When the text source reads from a file on Windows, the Lua sample uses `io.open()`, which interprets the path in the system ANSI code page (e.g., CP932 on Japanese locales). Paths containing characters outside that code page may fail to open. On open failure the script clears the override and writes a `Failed to read text file` warning to the OBS Script Log. The Python sample is unaffected (CPython uses wide-character Windows APIs); use it if full UTF-8 path support is required.

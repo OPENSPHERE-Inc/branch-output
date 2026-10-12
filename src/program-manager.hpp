@@ -31,13 +31,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 class BranchOutputStatusDock;
 class BranchOutputProgram;
 
-// Owns the main outputs of the current profile and persists them to PROGRAMS_JSON_NAME.
+// Owns the Program Outputs of the current profile and persists them to PROGRAMS_JSON_NAME.
 // Used from the UI thread only.
 class BranchOutputProgramManager : public QObject {
     Q_OBJECT
 
-    QList<OBSSource> programs;         // Strong references; the only owner of main outputs
-    QList<OBSSource> removingPrograms; // Strong references of main outputs stopping for removal
+    QList<OBSSource> programs;         // Strong references; the only owner of Program Outputs
+    QList<OBSSource> removingPrograms; // Strong references of Program Outputs stopping for removal
     bool persistenceReady = false;     // The current profile's file has been read and may be written
     bool collectionSwitching = false;
     bool eventCallbackRegistered = false;

@@ -1249,11 +1249,11 @@ void BranchOutput::addVideoEncoderGroup(obs_properties_t *props)
     const char *halfKey = "Resolution.Half";
     const char *quarterKey = "Resolution.Quarter";
     if (!hasFilterPipeline()) {
-        // Main outputs take the canvas as their input
-        sourceKey = "Resolution.MainOutput.Source";
-        threeQuartersKey = "Resolution.MainOutput.ThreeQuarters";
-        halfKey = "Resolution.MainOutput.Half";
-        quarterKey = "Resolution.MainOutput.Quarter";
+        // Program Outputs take the canvas as their input
+        sourceKey = "Resolution.Program.Source";
+        threeQuartersKey = "Resolution.Program.ThreeQuarters";
+        halfKey = "Resolution.Program.Half";
+        quarterKey = "Resolution.Program.Quarter";
     }
     obs_property_list_add_string(resolutionList, obs_module_text(sourceKey), "");
     obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Output"), "output");
