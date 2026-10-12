@@ -8,7 +8,7 @@
 
 ## Summary
 
-{Counts of PASS / FAIL / SKIP / BLOCKED per version, and the conclusion in two or three sentences.}
+{Counts of PASS / FAIL (new, known issue) / SKIP / BLOCKED per version, and the conclusion in two or three sentences.}
 
 ## Results
 
@@ -39,7 +39,7 @@ Behavior worth noting that did not fail a case, grouped as below. Leave out an e
 - Plugin, known issues
   - {Behavior matching an existing issue, with the case ID and the issue number}
 - Plugin, no issue
-  - {Behavior not judged a defect, with the case ID and the reason}
+  - {Behavior with no matching issue, with the case ID: either not judged a defect, with the reason, or a suspected defect marked as a new issue candidate}
 
 ## Not covered
 
