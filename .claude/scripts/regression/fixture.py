@@ -1,6 +1,6 @@
 """Write the regression fixture into the config folder of a closed OBS instance.
 
-usage: fixture.py --config DIR --media DIR --rec DIR --obs-version X.Y.Z [--ws-port PORT] [--text-source ID]
+usage: fixture.py --config DIR --media DIR --rec DIR --obs-version X.Y.Z --ws-port PORT [--text-source ID]
 
 --config is the instance's obs-studio config folder, which OBS must already have created by
 running once (global.ini must exist). The fixture:
@@ -13,7 +13,8 @@ running once (global.ini must exist). The fixture:
   color source.
 - Scene collection BORegression2: scene Scene2 with Media2 (quad-1k.mp4, loop), which has a
   Branch Output filter BO with default settings (every output type off).
-- obs-websocket server on PORT without authentication, and MaxLogs=100.
+- obs-websocket server on PORT with a password generated on each run (obsws.py reads it with
+  --config), and MaxLogs=100.
 
 --text-source defaults to text_gdiplus_v3 on Windows (text_gdiplus_v2 on OBS 30.x) and to
 text_ft2_source_v2 elsewhere. <rec>/obs-rec and <rec>/bo-rec are created.
@@ -21,6 +22,7 @@ text_ft2_source_v2 elsewhere. <rec>/obs-rec and <rec>/bo-rec are created.
 import argparse
 import json
 import os
+import secrets
 import sys
 import uuid
 
@@ -130,7 +132,7 @@ def main():
     parser.add_argument("--media", required=True)
     parser.add_argument("--rec", required=True)
     parser.add_argument("--obs-version", required=True)
-    parser.add_argument("--ws-port", type=int, default=4455)
+    parser.add_argument("--ws-port", type=int, required=True)
     parser.add_argument("--text-source")
     opts = parser.parse_args()
 
@@ -171,13 +173,14 @@ def main():
     collection(cfg, "BORegression2", [scene("Scene2", [item(media2, 1)])], [media2])
 
     ini_set(global_ini, "General", {"MaxLogs": 100})
+    password = secrets.token_urlsafe(16)
     if is30:
         ini_set(global_ini, "OBSWebSocket", {"FirstLoad": "false", "ServerEnabled": "true",
                                              "ServerPort": opts.ws_port, "AlertsEnabled": "false",
-                                             "AuthRequired": "false"})
+                                             "AuthRequired": "true", "ServerPassword": password})
     else:
-        ws = {"alerts_enabled": False, "auth_required": False, "first_load": False, "server_enabled": True,
-              "server_password": "", "server_port": opts.ws_port}
+        ws = {"alerts_enabled": False, "auth_required": True, "first_load": False, "server_enabled": True,
+              "server_password": password, "server_port": opts.ws_port}
         write(os.path.join(cfg, "plugin_config", "obs-websocket", "config.json"), json.dumps(ws))
     print(f"fixture written to {cfg} (OBS {opts.obs_version}, text source {text_source}, "
           f"obs-websocket port {opts.ws_port})")
