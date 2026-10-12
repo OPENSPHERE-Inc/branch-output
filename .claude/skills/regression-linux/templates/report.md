@@ -37,9 +37,9 @@ Behavior worth noting that did not fail a case, grouped as below. Leave out an e
 - OBS
   - {Behavior of OBS itself, and the evidence that OBS shows it without the plugin}
 - Plugin, known issues
-  - {Behavior matching an open issue or an issue closed as not planned, with the case ID and the issue number}
+  - {Behavior matching an open issue or a closed issue labeled wontfix, with the case ID and the issue number}
 - Plugin, no issue
-  - {Behavior with no matching known issue, with the case ID and `regression of #N` when it matches an issue closed as completed: either not judged a defect, with the reason, or a suspected defect marked as a new issue candidate}
+  - {Behavior with no matching known issue, with the case ID and `regression of #N` when it matches a closed issue not labeled wontfix: either not judged a defect, with the reason, or a suspected defect marked as a new issue candidate}
 
 ## Not covered
 

@@ -78,9 +78,9 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 - On a failure:
   - Record the operation, the expected and actual results, and the evidence.
   - Retry the failing operation once and record whether it reproduced.
-  - Search the GitHub issues (`gh issue list --state all --json number,title,state,stateReason --search ...`) for a matching report and link it, or mark the failure as new. Judge an issue closed as `DUPLICATE` by the issue it duplicates. A FAIL that matches an open issue or an issue closed as `NOT_PLANNED` is a known-issue FAIL; count it apart from new FAILs. A FAIL that matches only issues closed as `COMPLETED` is a regression of a fixed issue: count it as new and write `new (regression of #N)` as its related issue.
+  - Search the GitHub issues (`gh issue list --state all --json number,title,state,stateReason,labels --search ...`) for a matching report and link it, or mark the failure as new. Judge an issue closed as `DUPLICATE` by the issue it duplicates. A FAIL that matches an open issue or a closed issue labeled `wontfix` is a known-issue FAIL; count it apart from new FAILs. A FAIL that matches only closed issues without that label is a regression of a fixed issue, whatever the close reason (`COMPLETED` or `NOT_PLANNED`): count it as new and write `new (regression of #N)` as its related issue.
   - Continue with the next case. After a crash, copy the crash dump to the report folder, relaunch OBS, and continue.
-- Search the issues the same way for each plugin behavior noted under Observations. One that matches an open issue or an issue closed as `NOT_PLANNED` goes under "Plugin, known issues" with the issue number; any other goes under "Plugin, no issue", with `regression of #N` when it matches an issue closed as `COMPLETED`.
+- Search the issues the same way for each plugin behavior noted under Observations. One that matches an open issue or a closed issue labeled `wontfix` goes under "Plugin, known issues" with the issue number; any other goes under "Plugin, no issue", with `regression of #N` when it matches a closed issue without that label.
 - Stop and ask the user when the environment blocks most of the remaining cases (a download fails, OBS does not start, the receivers cannot run, the fixture cannot be built).
 
 ## Step 3 — Clean up
