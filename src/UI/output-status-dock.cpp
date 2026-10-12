@@ -43,6 +43,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QScrollBar>
 #include <QApplication>
 #include <QScopeGuard>
+#include <QToolTip>
 
 #include <algorithm>
 
@@ -703,7 +704,14 @@ bool BranchOutputStatusDock::eventFilter(QObject *obj, QEvent *event)
         break;
     }
     case QEvent::HoverLeave:
-        rowDelegate->setHoveredRow(-1);
+        // macOS can report a leave when a tooltip opens under the pointer. Keep the band while the tooltip
+        // shows, and check the pointer again once Qt has hidden it (300 ms after a leave).
+        if (QToolTip::isVisible()) {
+            resyncHoveredRow();
+            QTimer::singleShot(400, this, [this]() { resyncHoveredRow(); });
+        } else {
+            rowDelegate->setHoveredRow(-1);
+        }
         break;
     case QEvent::MouseButtonPress: {
         auto mouseEvent = static_cast<QMouseEvent *>(event);
@@ -1194,9 +1202,11 @@ int BranchOutputStatusDock::rowUnderPointer() const
             return -1;
         }
     } else {
-        // Cell widgets are children of the viewport
+        // Cell widgets are children of the viewport. A tooltip can open under the pointer, for example
+        // the Reset button's near the screen edge, and leaves the pointer on the row.
         auto widget = QApplication::widgetAt(globalPos);
-        if (widget != viewport && !viewport->isAncestorOf(widget)) {
+        auto overTooltip = widget && widget->window()->windowType() == Qt::ToolTip;
+        if (!overTooltip && widget != viewport && !viewport->isAncestorOf(widget)) {
             return -1;
         }
     }
