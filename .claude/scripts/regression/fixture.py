@@ -13,8 +13,8 @@ running once (global.ini must exist). The fixture:
   color source.
 - Scene collection BORegression2: scene Scene2 with Media2 (quad-1k.mp4, loop), which has a
   Branch Output filter BO with default settings (every output type off).
-- obs-websocket server on PORT with a password generated on each run (obsws.py reads it with
-  --config), and MaxLogs=100.
+- obs-websocket server on PORT (not 4455, the default port) with a password generated on each
+  run (obsws.py reads it with --config), and MaxLogs=100.
 
 --text-source defaults to text_gdiplus_v3 on Windows (text_gdiplus_v2 on OBS 30.x) and to
 text_ft2_source_v2 elsewhere. <rec>/obs-rec and <rec>/bo-rec are created.
@@ -135,6 +135,8 @@ def main():
     parser.add_argument("--ws-port", type=int, required=True)
     parser.add_argument("--text-source")
     opts = parser.parse_args()
+    if not 0 < opts.ws_port < 65536 or opts.ws_port == 4455:
+        parser.error("--ws-port must be 1-65535 and not 4455, the default port another OBS may hold")
 
     cfg = os.path.abspath(opts.config)
     global_ini = os.path.join(cfg, "global.ini")

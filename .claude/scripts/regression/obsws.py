@@ -67,6 +67,10 @@ def main():
         client = obs.ReqClient(host="127.0.0.1", port=port, password=password, timeout=15)
     except Exception as e:
         sys.exit(f"cannot connect to obs-websocket on port {port}: {type(e).__name__}: {e}")
+    if "authentication" not in client.base_client.server_hello["d"]:
+        sys.exit(f"the obs-websocket server on port {port} requires no password, so it is not "
+                 "the one fixture.py set up: another OBS holds the port; "
+                 "rerun fixture.py with another --ws-port")
 
     def send(request, data=None):
         try:
