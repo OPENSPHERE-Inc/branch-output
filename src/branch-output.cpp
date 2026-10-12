@@ -960,7 +960,10 @@ void BranchOutput::onIntervalTimerTimeout()
                     if (!sourceCollapsed && !cropCollapse) {
                         if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
                             // Restart output when source resolution was changed.
-                            obs_log(LOG_INFO, "%s: Attempting restart the streaming output", qUtf8Printable(name));
+                            obs_log(
+                                LOG_INFO, "%s: Source resolution change detected, Attempting restart",
+                                qUtf8Printable(name)
+                            );
                             startOutput(settings, interlockType);
                             return;
                         }
