@@ -7,11 +7,14 @@ Always: video codec, size, frame rate, duration, audio stream count, major brand
   --tones   mean level of the 1 kHz and 440 Hz bands in each audio stream
   --gaps    video packet count against duration x frame rate, and the largest gap between packets
   --window  mean luma of the frame in the middle of T0-T1 (seconds), and mean volume of each audio stream in it
+
+A FILE that ffprobe cannot read prints ffprobe's error to stderr and makes the exit status non-zero.
 """
 import argparse
 import json
 import re
 import subprocess
+import sys
 
 
 def run(*cmd):
@@ -30,9 +33,15 @@ def mean_volume(stderr):
 
 
 def probe(path, opts):
-    info = json.loads(run("ffprobe", "-v", "error", "-show_chapters", "-show_entries",
-                          "stream=codec_type,codec_name,width,height,avg_frame_rate:format=duration:format_tags",
-                          "-of", "json", path).stdout or "{}")
+    result = run("ffprobe", "-v", "error", "-show_chapters", "-show_entries",
+                 "stream=codec_type,codec_name,width,height,avg_frame_rate:format=duration:format_tags",
+                 "-of", "json", path)
+    if result.returncode != 0:
+        err = result.stderr.decode(errors="replace").strip()
+        sys.stdout.flush()
+        print(f"{path}: ffprobe failed: {err}", file=sys.stderr)
+        return False
+    info = json.loads(result.stdout or "{}")
     streams = info.get("streams", [])
     video = next((s for s in streams if s["codec_type"] == "video"), None)
     audio_count = sum(1 for s in streams if s["codec_type"] == "audio")
@@ -40,19 +49,23 @@ def probe(path, opts):
     duration = float(fmt.get("duration", 0))
     if not video:
         print(f"{path}: no video stream, audio={audio_count} dur={duration:.2f}s")
-        return
+        return True
     w, h = video["width"], video["height"]
     brand = fmt.get("tags", {}).get("major_brand", "-")
     print(f"{path}: {video['codec_name']} {w}x{h} fps={video['avg_frame_rate']} dur={duration:.2f}s "
           f"audio={audio_count} brand={brand} chapters={len(info.get('chapters', []))}")
 
     if opts.colors:
-        raw = run("ffmpeg", "-v", "error", "-ss", "1", "-i", path, "-frames:v", "1",
-                  "-f", "rawvideo", "-pix_fmt", "rgb24", "-").stdout
+        frame = run("ffmpeg", "-v", "error", "-ss", "1", "-i", path, "-frames:v", "1",
+                    "-f", "rawvideo", "-pix_fmt", "rgb24", "-")
+        raw = frame.stdout
         if len(raw) >= w * h * 3:
             points = [(w // 4, h // 4), (3 * w // 4, h // 4), (w // 4, 3 * h // 4), (3 * w // 4, 3 * h // 4)]
             cols = [color_name(tuple(raw[(y * w + x) * 3:(y * w + x) * 3 + 3])) for x, y in points]
             print(f"   TL {cols[0]}  TR {cols[1]}  BL {cols[2]}  BR {cols[3]}")
+        else:
+            err = frame.stderr.decode(errors="replace").strip()
+            print("   colors: no frame at 1 s" + (f": {err}" if err else ""))
     if opts.tones:
         for i in range(audio_count):
             levels = []
@@ -63,7 +76,7 @@ def probe(path, opts):
             print(f"   a:{i} " + "  ".join(levels))
     if opts.gaps:
         out = run("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time",
-                  "-of", "csv=p=0", path).stdout.decode().split()
+                  "-of", "default=nw=1:nk=1", path).stdout.decode().split()
         times = sorted(float(t) for t in out if t not in ("", "N/A"))
         num, _, den = video["avg_frame_rate"].partition("/")
         fps = float(num) / float(den or 1) if float(den or 1) else 0
@@ -80,6 +93,7 @@ def probe(path, opts):
                       "-af", "volumedetect", "-f", "null", "-").stderr
             line += f"  a{i}={mean_volume(err.decode(errors='replace'))}dB"
         print(line)
+    return True
 
 
 def main():
@@ -90,8 +104,11 @@ def main():
     parser.add_argument("--window", action="append")
     parser.add_argument("files", nargs="+")
     opts = parser.parse_args()
+    ok = True
     for path in opts.files:
-        probe(path, opts)
+        ok = probe(path, opts) and ok
+    if not ok:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
