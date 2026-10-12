@@ -942,7 +942,7 @@ void BranchOutputStatusDock::showAddMenu()
         return QString::fromUtf8(obs_source_get_name(source)).replace("&", "&&");
     };
 
-    QMenu menu(this);
+    QMenu menu(window());
     auto mainOutputAction = menu.addAction(QTStr("MainOutput"));
     menu.addSeparator();
 
@@ -1044,7 +1044,7 @@ void BranchOutputStatusDock::onTableContextMenuRequested(const QPoint &pos)
     auto isMainOutput = !row->info.isFilter;
     auto currentName = row->info.outputName;
 
-    QMenu menu(this);
+    QMenu menu(window());
     auto openSettingsAction = menu.addAction(QTStr("RowMenu.OpenSettings"));
     QAction *renameAction = nullptr;
     QAction *removeAction = nullptr;
