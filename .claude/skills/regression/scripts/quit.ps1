@@ -21,6 +21,10 @@ public class ObsQuit {
 "@
 
 $exe = [IO.Path]::GetFullPath((Join-Path $Root "bin\64bit\obs64.exe"))
+if (-not (Test-Path $exe)) {
+    Write-Error "$exe not found"
+    exit 1
+}
 $procs = @(Get-Process obs64 -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe })
 if ($procs.Count -eq 0) {
     Write-Output "not running"
