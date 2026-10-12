@@ -73,7 +73,7 @@ jobs:
 
   macos-build:
     name: Build for macOS 🍏
-    runs-on: macos-14
+    runs-on: macos-15
     needs: check-event
     defaults:
       run:
@@ -90,8 +90,8 @@ jobs:
           : Set Up Environment 🔧
           if (( ${+RUNNER_DEBUG} )) setopt XTRACE
 
-          print '::group::Enable Xcode 15.2'
-          sudo xcode-select --switch /Applications/Xcode_15.2.app/Contents/Developer
+          print '::group::Enable Xcode 16.4'
+          sudo xcode-select --switch /Applications/Xcode_16.4.app/Contents/Developer
           print '::endgroup::'
 
           print '::group::Clean Homebrew Environment'
