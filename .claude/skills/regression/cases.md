@@ -227,7 +227,7 @@ Do and Pass:
 
 - Toggle the filter's eye icon five times quickly while every output runs: the filter ends in the last state, and no failure line is logged.
 - Switch to the scene collection `BORegression2` and back, once with outputs running and once with them stopped: no crash, and the dock lists only the current collection's filters.
-- Quit OBS once with outputs running and once with them stopped, each from a session launched for this item: shutdown completes, no crash dump appears, and the log ends with `Number of memory leaks: 0`. Other sessions can end with leaks of OBS itself (the first session of an instance; on 30.1.2, one per SRT `Failed to open the url`).
+- Quit OBS once with outputs running and once with them stopped, each from a session launched for this item: shutdown completes, no crash dump appears, and the log ends with `Number of memory leaks: 0`. In any session, OBS itself leaks one per `RTMP_ReadPacket error` line in the log: it does not free a packet when it detects an RTMP disconnect while reading, as after a case stops a receiver. Other sessions can also end with leaks of OBS itself (the first session of an instance; on 30.1.2, one per SRT `Failed to open the url`).
 
 ## Program Output
 
