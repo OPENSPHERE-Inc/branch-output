@@ -46,7 +46,6 @@ class BranchOutputFilter : public BranchOutput {
 
     // Crop context
     OBSSceneAutoRelease cropScene; // Source output mode crop scene
-    CropRectPreviewRenderer cropPreview;
 
     // Filter input mode flag
     bool useFilterInput;
@@ -74,9 +73,11 @@ class BranchOutputFilter : public BranchOutput {
     void selectVideoInputMode(obs_data_t *settings) override;
     bool setupVideoInput(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop) override;
     void teardownVideoInput() override;
+    bool isVideoInputOutdated() const override;
     bool setupDefaultAudio(const obs_audio_info &ai) override;
     bool evaluateBlanking(obs_data_t *settings) override;
     BlankingState getBlankingState() const override;
+    bool hasFilterPipeline() const override;
 
     // Hotkey registration against the parent source
     bool canRegisterHotkeys() override;
@@ -92,9 +93,6 @@ class BranchOutputFilter : public BranchOutput {
     void updateCallback(obs_data_t *settings) override;
 
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
-
-    // Implemented in plugin-ui.cpp
-    void addVideoEncoderGroup(obs_properties_t *props);
 
     void addCallback(obs_source_t *source);
     void videoTickCallback(float seconds);

@@ -30,9 +30,22 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QMouseEvent>
+#include <QHoverEvent>
+#include <QListWidget>
+#include <QPainter>
 #include <QDesktopServices>
 #include <QAccessible>
 #include <QAccessibleWidget>
+#include <QMenu>
+#include <QCursor>
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QScrollBar>
+#include <QApplication>
+#include <QScopeGuard>
+#include <QToolTip>
+
+#include <algorithm>
 
 #include "../branch-output.hpp"
 #include "output-status-dock.hpp"
@@ -100,6 +113,20 @@ bool OutputStatusTable::isSorted(int column, Qt::SortOrder order) const
     return true;
 }
 
+// Qt's standard button texts stay in English because OBS does not load Qt's translations
+static QString frontendText(const char *lookupVal)
+{
+    auto text = obs_frontend_get_locale_string(lookupVal);
+    return QString::fromUtf8(text ? text : lookupVal);
+}
+
+// Wayland reports neither the global pointer position nor the window under it, so hover tracking relies on the
+// viewport's enter/leave state there, and a resync only clears the band.
+static bool isWaylandPlatform()
+{
+    return QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
+}
+
 //--- BranchOutputStatusDock class ---//
 
 BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
@@ -119,11 +146,17 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     outputTable->horizontalHeader()->setSectionsClickable(true);
     outputTable->horizontalHeader()->setMinimumSectionSize(100);
     outputTable->horizontalHeader()->setStyleSheet("QHeaderView::section { padding: 0 8px; }");
-    outputTable->setGridStyle(Qt::NoPen);
+    // A grid shrinks every cell by 1px, which would split the row band at the column borders
+    outputTable->setShowGrid(false);
     outputTable->setHorizontalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
     outputTable->setVerticalScrollMode(QTableView::ScrollMode::ScrollPerPixel);
     outputTable->setSelectionMode(QTableWidget::SelectionMode::NoSelection);
     outputTable->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+    outputTable->viewport()->setAttribute(Qt::WA_Hover, true);
+    rowDelegate = new OutputTableRowDelegate(outputTable);
+    outputTable->setItemDelegate(rowDelegate);
+    outputTable->viewport()->installEventFilter(this);
+    connect(outputTable->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]() { retargetHoveredRow(); });
     outputTable->setColumnCount(8);
     outputTable->sortItems(sortingColumnIndex, sortingOrder);
 
@@ -150,6 +183,11 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     connect(
         outputTable->horizontalHeader(), &QHeaderView::sectionPressed, this, &BranchOutputStatusDock::onHeaderPressed
     );
+    outputTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(
+        outputTable, &QTableWidget::customContextMenuRequested, this,
+        &BranchOutputStatusDock::onTableContextMenuRequested
+    );
     connect(&timer, &QTimer::timeout, this, &BranchOutputStatusDock::update);
 
     timer.setInterval(TIMER_INTERVAL);
@@ -158,6 +196,12 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     }
 
     // Tool buttons
+    addButton = new QToolButton(this);
+    addButton->setText("+"); // Shown when the theme provides no icon
+    addButton->setToolTip(QTStr("AddBranchOutput"));
+    setThemeID(addButton, "addIconSmall", "icon-plus");
+    connect(addButton, &QToolButton::clicked, this, [this]() { showAddMenu(); });
+
     applyToAllLabel = new QLabel(QTStr("ApplyToAll"), this);
 
     enableAllButton = new QToolButton(this);
@@ -217,6 +261,8 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     });
 
     auto buttonsContainerLayout = new QHBoxLayout();
+    buttonsContainerLayout->addWidget(addButton);
+    buttonsContainerLayout->addSpacing(10);
     buttonsContainerLayout->addWidget(applyToAllLabel);
     buttonsContainerLayout->addSpacing(5);
     buttonsContainerLayout->addWidget(enableAllButton);
@@ -489,14 +535,14 @@ void BranchOutputStatusDock::addOutput(BranchOutput *output)
     }
 
     sort();
-    publishFilterListSnapshot();
+    publishOutputListSnapshot();
 }
 
 void BranchOutputStatusDock::removeOutput(BranchOutput *output)
 {
     // `output` is a comparison key only: it may already be deleted (queued from removeCallback(),
     // or called from ~QObject via onOutputDestroyed()). Neither this function nor its callees
-    // (sort() / publishFilterListSnapshot()) may dereference any row->branchOutput.
+    // (sort() / publishOutputListSnapshot()) may dereference any row->branchOutput.
     foreach (auto row, outputTableRows) {
         if (row->branchOutput == output) {
             // FIXME: removeRow() deletes the QTableWidgetItems at once while the cells only get
@@ -509,7 +555,7 @@ void BranchOutputStatusDock::removeOutput(BranchOutput *output)
     }
 
     sort();
-    publishFilterListSnapshot();
+    publishOutputListSnapshot();
 }
 
 void BranchOutputStatusDock::onOutputDestroyed(QObject *obj)
@@ -644,6 +690,43 @@ void BranchOutputStatusDock::hideEvent(QHideEvent *)
     timer.stop();
 }
 
+bool BranchOutputStatusDock::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj != outputTable->viewport()) {
+        return QFrame::eventFilter(obj, event);
+    }
+
+    switch (event->type()) {
+    case QEvent::HoverEnter:
+    case QEvent::HoverMove: {
+        auto y = static_cast<QHoverEvent *>(event)->position().toPoint().y();
+        rowDelegate->setHoveredRow(outputTable->rowAt(y));
+        break;
+    }
+    case QEvent::HoverLeave:
+        // macOS can report a leave when a tooltip opens under the pointer. Keep the band while the tooltip
+        // shows, and check the pointer again once Qt has hidden it (300 ms after a leave).
+        if (QToolTip::isVisible()) {
+            resyncHoveredRow();
+            QTimer::singleShot(400, this, [this]() { resyncHoveredRow(); });
+        } else {
+            rowDelegate->setHoveredRow(-1);
+        }
+        break;
+    case QEvent::MouseButtonPress: {
+        auto mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton || mouseEvent->button() == Qt::RightButton) {
+            rowDelegate->setSelectedRow(outputTable->rowAt(mouseEvent->position().toPoint().y()));
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    return false;
+}
+
 void BranchOutputStatusDock::setEabnleAll(bool enabled)
 {
     foreach (auto row, outputTableRows) {
@@ -742,6 +825,8 @@ void BranchOutputStatusDock::sort()
         outputTable->sortItems(sortingColumnIndex, sortingOrder);
     }
 
+    retargetHoveredRow();
+
     for (int i = 0; i < headerCount; i++) {
         if (i == sortingColumnIndex || i == resetColumnIndex) {
             continue;
@@ -835,6 +920,399 @@ void BranchOutputStatusDock::onHeaderPressed(int index)
     }
 }
 
+void BranchOutputStatusDock::showAddMenu()
+{
+    QList<OBSSource> sources;
+    {
+        QList<OBSSource> enumerated;
+        obs_enum_sources(
+            [](void *param, obs_source_t *source) {
+                static_cast<QList<OBSSource> *>(param)->append(OBSSource(source));
+                return true;
+            },
+            &enumerated
+        );
+
+        // Checked outside obs_enum_sources(), which holds the libobs source list lock during the callback
+        foreach (auto source, enumerated) {
+            if (source && (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) && sourceInFrontend(source)) {
+                sources.append(source);
+            }
+        }
+    }
+    std::sort(sources.begin(), sources.end(), [](const OBSSource &a, const OBSSource &b) {
+        auto nameA = QString::fromUtf8(obs_source_get_name(a));
+        auto nameB = QString::fromUtf8(obs_source_get_name(b));
+        return QString::compare(nameA, nameB, Qt::CaseInsensitive) < 0;
+    });
+
+    auto menuText = [](obs_source_t *source) {
+        return QString::fromUtf8(obs_source_get_name(source)).replace("&", "&&");
+    };
+
+    QMenu menu(window());
+    auto programAction = menu.addAction(QTStr("Program"));
+    menu.addSeparator();
+
+    auto sourcesMenu = menu.addMenu(QTStr("AddMenu.Sources"));
+    foreach (auto source, sources) {
+        auto action = sourcesMenu->addAction(menuText(source));
+        action->setData(QString::fromUtf8(obs_source_get_uuid(source)));
+    }
+    if (sourcesMenu->isEmpty()) {
+        sourcesMenu->addAction(QTStr("None"))->setEnabled(false);
+    }
+    // The actions hold UUIDs; holding the sources through exec() would delay their destruction
+    sources.clear();
+
+    auto scenesMenu = menu.addMenu(QTStr("AddMenu.Scenes"));
+    obs_frontend_source_list scenes = {};
+    obs_frontend_get_scenes(&scenes);
+    for (size_t i = 0; i < scenes.sources.num; i++) {
+        auto action = scenesMenu->addAction(menuText(scenes.sources.array[i]));
+        action->setData(QString::fromUtf8(obs_source_get_uuid(scenes.sources.array[i])));
+    }
+    obs_frontend_source_list_free(&scenes);
+    if (scenesMenu->isEmpty()) {
+        scenesMenu->addAction(QTStr("None"))->setEnabled(false);
+    }
+
+    auto selected = menu.exec(QCursor::pos());
+    if (!selected) {
+        return;
+    }
+
+    if (selected == programAction) {
+        emit addProgramRequested();
+        return;
+    }
+
+    auto uuid = selected->data().toString();
+    if (uuid.isEmpty()) {
+        return;
+    }
+
+    OBSSourceAutoRelease target = obs_get_source_by_uuid(qUtf8Printable(uuid));
+    if (!target || obs_source_removed(target)) {
+        return;
+    }
+
+    addBranchOutputFilter(target);
+}
+
+void BranchOutputStatusDock::addBranchOutputFilter(obs_source_t *target)
+{
+    auto displayName = obs_source_get_display_name(FILTER_ID);
+    auto baseName = QString::fromUtf8(displayName ? displayName : "Branch Output");
+
+    // Same naming as OBS's filters dialog
+    auto filterName = baseName;
+    for (int suffix = 2;; suffix++) {
+        OBSSourceAutoRelease existing = obs_source_get_filter_by_name(target, qUtf8Printable(filterName));
+        if (!existing) {
+            break;
+        }
+        filterName = QString("%1 %2").arg(baseName, QString::number(suffix));
+    }
+
+    OBSSourceAutoRelease filter = obs_source_create(FILTER_ID, qUtf8Printable(filterName), nullptr, nullptr);
+    if (!filter) {
+        obs_log(LOG_ERROR, "Failed to create Branch Output filter for '%s'", obs_source_get_name(target));
+        return;
+    }
+
+    obs_source_filter_add(target, filter);
+    obs_log(
+        LOG_INFO, "Added Branch Output filter '%s' to '%s'", qUtf8Printable(filterName), obs_source_get_name(target)
+    );
+
+    obs_frontend_open_source_filters(target);
+}
+
+void BranchOutputStatusDock::onTableContextMenuRequested(const QPoint &pos)
+{
+    auto tableRow = outputTable->rowAt(pos.y());
+    if (tableRow < 0) {
+        return;
+    }
+
+    OutputTableRow *row = nullptr;
+    foreach (auto candidate, outputTableRows) {
+        if (outputTable->row(candidate->filterCell->item()) == tableRow) {
+            row = candidate;
+            break;
+        }
+    }
+    if (!row || obs_weak_source_expired(row->contextWeak)) {
+        return;
+    }
+
+    // The dock timer can delete the row during the nested event loops below: touch no row after this
+    OBSWeakSource weak = row->contextWeak.Get();
+    auto isProgram = !row->info.isFilter;
+    auto currentName = row->info.outputName;
+
+    QMenu menu(window());
+    auto openSettingsAction = menu.addAction(QTStr("RowMenu.OpenSettings"));
+    QAction *renameAction = nullptr;
+    QAction *removeAction = nullptr;
+    if (isProgram) {
+        menu.addSeparator();
+        renameAction = menu.addAction(QTStr("RowMenu.Rename"));
+        removeAction = menu.addAction(QTStr("RowMenu.Remove"));
+    }
+
+    // Qt sends the viewport no HoverLeave while the menu or a dialog opened from it is shown, so drop the hover
+    // band for the whole flow and derive it again from the pointer when the flow ends.
+    rowDelegate->setHoveredRow(-1);
+    auto resyncHover = qScopeGuard([this]() { resyncHoveredRow(); });
+
+    auto selected = menu.exec(outputTable->viewport()->mapToGlobal(pos));
+    if (!selected) {
+        return;
+    }
+
+    if (selected == openSettingsAction) {
+        OBSSourceAutoRelease source = obs_weak_source_get_source(weak);
+        if (!source) {
+            return;
+        }
+        // The strong reference above keeps info.destroy from running, so the output stays alive here.
+        auto output = BranchOutput::fromCallbackData(obs_obj_get_data(source));
+        if (output) {
+            output->openSettings();
+        }
+    } else if (selected == renameAction) {
+        renameProgram(weak, currentName);
+    } else if (selected == removeAction) {
+        removeProgram(weak, currentName);
+    }
+}
+
+void BranchOutputStatusDock::renameProgram(obs_weak_source_t *weak, const QString &currentName)
+{
+    auto input = currentName;
+
+    while (true) {
+        QInputDialog dialog(this);
+        dialog.setInputMode(QInputDialog::TextInput);
+        dialog.setWindowTitle(QTStr("RenameProgram.Title"));
+        dialog.setLabelText(QTStr("RenameProgram.Text"));
+        dialog.setTextValue(input);
+        dialog.setOkButtonText(frontendText("OK"));
+        dialog.setCancelButtonText(frontendText("Cancel"));
+        if (dialog.exec() != QDialog::Accepted) {
+            return;
+        }
+
+        input = dialog.textValue();
+        auto newName = input.trimmed();
+        if (newName == currentName) {
+            return;
+        }
+        if (newName.isEmpty()) {
+            showWarning(QTStr("RenameProgram.Title"), QTStr("RenameProgram.EmptyName"));
+            continue;
+        }
+
+        QString uuid;
+        bool used = false;
+        {
+            OBSSourceAutoRelease source = obs_weak_source_get_source(weak);
+            if (!source) {
+                return;
+            }
+            used = isProgramNameUsed(newName, source);
+            uuid = QString::fromUtf8(obs_source_get_uuid(source));
+        }
+        if (used) {
+            showWarning(QTStr("RenameProgram.Title"), QTStr("RenameProgram.NameExists").arg(newName));
+            continue;
+        }
+
+        emit renameProgramRequested(uuid, newName);
+        return;
+    }
+}
+
+void BranchOutputStatusDock::removeProgram(obs_weak_source_t *weak, const QString &currentName)
+{
+    QMessageBox box(
+        QMessageBox::Question, QTStr("RemoveProgram.Title"), QTStr("RemoveProgram.Text").arg(currentName),
+        QMessageBox::NoButton, this
+    );
+    box.setTextFormat(Qt::PlainText);
+    auto yesButton = box.addButton(frontendText("Yes"), QMessageBox::YesRole);
+    auto noButton = box.addButton(frontendText("No"), QMessageBox::NoRole);
+    box.setDefaultButton(noButton);
+    box.setEscapeButton(noButton);
+    box.exec();
+    if (box.clickedButton() != yesButton) {
+        return;
+    }
+
+    QString uuid;
+    {
+        OBSSourceAutoRelease source = obs_weak_source_get_source(weak);
+        if (!source) {
+            return;
+        }
+        uuid = QString::fromUtf8(obs_source_get_uuid(source));
+    }
+
+    emit removeProgramRequested(uuid);
+}
+
+bool BranchOutputStatusDock::isProgramNameUsed(const QString &filterName, obs_source_t *except) const
+{
+    foreach (auto row, outputTableRows) {
+        if (row->info.isFilter || obs_weak_source_references_source(row->contextWeak, except)) {
+            continue;
+        }
+        if (row->info.outputName == filterName) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void BranchOutputStatusDock::showWarning(const QString &title, const QString &text)
+{
+    QMessageBox box(QMessageBox::Warning, title, text, QMessageBox::NoButton, this);
+    box.setTextFormat(Qt::PlainText);
+    box.addButton(frontendText("OK"), QMessageBox::AcceptRole);
+    box.exec();
+}
+
+int BranchOutputStatusDock::rowUnderPointer() const
+{
+    auto viewport = outputTable->viewport();
+    if (!viewport->isVisible()) {
+        return -1;
+    }
+
+    auto globalPos = QCursor::pos();
+    auto pos = viewport->mapFromGlobal(globalPos);
+    if (!viewport->rect().contains(pos)) {
+        return -1;
+    }
+
+    if (isWaylandPlatform()) {
+        if (!viewport->underMouse()) {
+            return -1;
+        }
+    } else {
+        // Cell widgets are children of the viewport. A tooltip can open under the pointer, for example
+        // the Reset button's near the screen edge, and leaves the pointer on the row.
+        auto widget = QApplication::widgetAt(globalPos);
+        auto overTooltip = widget && widget->window()->windowType() == Qt::ToolTip;
+        if (!overTooltip && widget != viewport && !viewport->isAncestorOf(widget)) {
+            return -1;
+        }
+    }
+
+    return outputTable->rowAt(pos.y());
+}
+
+void BranchOutputStatusDock::retargetHoveredRow()
+{
+    if (rowDelegate->getHoveredRow() < 0) {
+        return;
+    }
+    rowDelegate->setHoveredRow(rowUnderPointer());
+}
+
+void BranchOutputStatusDock::resyncHoveredRow()
+{
+    if (isWaylandPlatform()) {
+        rowDelegate->setHoveredRow(-1);
+        return;
+    }
+    rowDelegate->setHoveredRow(rowUnderPointer());
+}
+
+//--- OutputTableRowDelegate class ---//
+
+OutputTableRowDelegate::OutputTableRowDelegate(QTableWidget *_table)
+    : QStyledItemDelegate(_table),
+      table(_table),
+      styleReference(new QListWidget(_table))
+{
+    styleReference->setVisible(false);
+}
+
+void OutputTableRowDelegate::setHoveredRow(int row)
+{
+    if (row == hoveredRow) {
+        return;
+    }
+
+    auto previous = hoveredRow;
+    hoveredRow = row;
+    updateRow(previous);
+    updateRow(row);
+}
+
+void OutputTableRowDelegate::setSelectedRow(int row)
+{
+    auto previous = selectedIndex.isValid() ? selectedIndex.row() : -1;
+    if (row < 0) {
+        row = -1;
+    }
+    if (row == previous) {
+        return;
+    }
+
+    if (row < 0) {
+        selectedIndex = QPersistentModelIndex();
+    } else {
+        selectedIndex = QPersistentModelIndex(table->model()->index(row, 0));
+    }
+    updateRow(previous);
+    updateRow(row);
+}
+
+void OutputTableRowDelegate::updateRow(int row)
+{
+    if (row < 0 || row >= table->rowCount()) {
+        return;
+    }
+
+    table->viewport()->update(
+        QRect(0, table->rowViewportPosition(row), table->viewport()->width(), table->rowHeight(row))
+    );
+}
+
+void OutputTableRowDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
+{
+    auto hovered = index.row() == hoveredRow;
+    auto selected = selectedIndex.isValid() && index.row() == selectedIndex.row();
+    if (!hovered && !selected) {
+        return;
+    }
+
+    auto model = index.model();
+    QStyleOptionViewItem band(option);
+    band.rect = table->visualRect(model->index(index.row(), 0))
+                    .united(table->visualRect(model->index(index.row(), model->columnCount() - 1)));
+    band.state.setFlag(QStyle::State_Selected, selected);
+    band.state.setFlag(QStyle::State_MouseOver, hovered);
+    band.state.setFlag(QStyle::State_HasFocus, false);
+    band.features = QStyleOptionViewItem::None;
+    band.viewItemPosition = QStyleOptionViewItem::OnlyOne;
+    band.showDecorationSelected = true;
+    band.text.clear();
+    band.icon = QIcon();
+    band.backgroundBrush = Qt::NoBrush;
+    band.widget = styleReference;
+
+    painter->save();
+    painter->setClipRect(option.rect, Qt::IntersectClip);
+    // Themes define the hover and selected colors only for list items, so draw the band as a list item
+    styleReference->style()->drawPrimitive(QStyle::PE_PanelItemViewItem, &band, painter, styleReference);
+    painter->restore();
+}
+
 //--- OutputTableRow class ---//
 
 OutputTableRow::OutputTableRow(
@@ -852,18 +1330,18 @@ OutputTableRow::OutputTableRow(
     // Connected before the input name is read so that no later rename is missed
     connect(branchOutput, &BranchOutput::inputNameChanged, parentCell, &ParentCell::setTextValue, Qt::QueuedConnection);
 
-    filterInfo.sourceName = branchOutput->getInputName();
-    filterInfo.sourceUuid = branchOutput->getInputUuid();
-    filterInfo.filterName = QString(obs_source_get_name(branchOutput->contextSource));
-    filterInfo.filterUuid = QString(obs_source_get_uuid(branchOutput->contextSource));
-    contextIsFilter = obs_source_get_type(branchOutput->contextSource) == OBS_SOURCE_TYPE_FILTER;
+    info.isFilter = obs_source_get_type(branchOutput->contextSource) == OBS_SOURCE_TYPE_FILTER;
+    info.sourceName = branchOutput->getInputName();
+    info.sourceUuid = branchOutput->getInputUuid();
+    info.outputName = QString(obs_source_get_name(branchOutput->contextSource));
+    info.outputUuid = QString(obs_source_get_uuid(branchOutput->contextSource));
     contextWeak = obs_source_get_weak_source(branchOutput->contextSource);
 
-    auto rowId = QString("%1_%2_%3").arg(filterInfo.sourceName).arg(branchOutput->name).arg(groupIndex);
+    auto rowId = QString("%1_%2_%3").arg(info.sourceName).arg(branchOutput->name).arg(groupIndex);
 
     filterCell = new FilterCell(rowId, branchOutput->name, branchOutput->contextSource, parent);
     parentCell->item()->setRowId(rowId);
-    parentCell->setTextValue(filterInfo.sourceName);
+    parentCell->setTextValue(info.sourceName);
     status = new StatusCell(rowId, QTStr("Status.Inactive"), parent);
 
     switch (outputType) {
@@ -938,13 +1416,12 @@ OutputTableRow::OutputTableRow(
     buttonsContainerLayout->setContentsMargins(0, 0, 0, 0);
     buttonsContainer->setLayout(buttonsContainerLayout);
 
-    auto resetButton = new QPushButton(QTStr("Reset"), parent);
-    connect(resetButton, &QPushButton::clicked, this, [this]() { reset(); });
-    resetButton->setProperty("toolButton", true);  // Until OBS 30
-    resetButton->setProperty("class", "btn-tool"); // Since OBS 31
-    resetButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
+    auto resetButton = new QToolButton(parent);
+    resetButton->setIcon(QIcon(":/branch-output/images/reset.svg"));
+    resetButton->setToolTip(QTStr("Reset"));
+    connect(resetButton, &QToolButton::clicked, this, [this]() { reset(); });
 
-    buttonsContainerLayout->addWidget(resetButton);
+    buttonsContainerLayout->addWidget(resetButton, 0, Qt::AlignCenter);
     parent->outputTable->setCellWidget(row, col, buttonsContainer);
 
     // Setup status buttons
@@ -958,16 +1435,16 @@ OutputTableRow::OutputTableRow(
 
     // Setup rename event
     connect(filterCell, &FilterCell::renamed, this, [this, parent](const QString &newName) {
-        filterInfo.filterName = newName;
+        info.outputName = newName;
         updateRowId(); // Update row ID with new filter name
         parent->sort();
-        parent->publishFilterListSnapshot();
+        parent->publishOutputListSnapshot();
     });
     connect(parentCell, &ParentCell::renamed, this, [this, parent](const QString &newName) {
-        filterInfo.sourceName = newName;
+        info.sourceName = newName;
         updateRowId(); // Update row ID with new source name
         parent->sort();
-        parent->publishFilterListSnapshot();
+        parent->publishOutputListSnapshot();
     });
 }
 
@@ -1392,9 +1869,10 @@ FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_sourc
     });
 
     name = new QLabel(this);
+    name->setTextFormat(Qt::PlainText);
 
     auto checkboxLayout = new QHBoxLayout();
-    checkboxLayout->setContentsMargins(0, 0, 0, 0);
+    checkboxLayout->setContentsMargins(8, 0, 0, 0);
     checkboxLayout->addWidget(visibilityCheckbox);
     checkboxLayout->addWidget(name);
     setLayout(checkboxLayout);
@@ -1452,6 +1930,8 @@ ParentCell::ParentCell(const QString &rowId, const QString &textValue, QWidget *
     // Markup as link
     setTextFormat(Qt::RichText);
     setCursor(Qt::PointingHandCursor);
+    // A rich text label opens its own Copy menu; leave the context menu to the table
+    setContextMenuPolicy(Qt::NoContextMenu);
 
     setTextValue(textValue);
 }
@@ -1468,6 +1948,8 @@ void ParentCell::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         emit clicked();
+    } else {
+        event->ignore();
     }
 }
 
@@ -1506,6 +1988,8 @@ OutputCell::OutputCell(
     if (outputType == ROW_OUTPUT_RECORDING || outputType == ROW_OUTPUT_REPLAY_BUFFER) {
         name->setTextFormat(Qt::RichText);
         name->setCursor(Qt::PointingHandCursor);
+        // A rich text label opens its own Copy menu; leave the context menu to the table
+        name->setContextMenuPolicy(Qt::NoContextMenu);
         name->installEventFilter(this);
     }
 
@@ -1708,33 +2192,28 @@ void StatusCell::setTextValue(const QString &textValue)
 // Built from the rows' own copies only: this runs from removeOutput(), where the
 // output QObject and its obs_source_t may already be freed, so it must not
 // dereference row->branchOutput or call libobs.
-QList<BranchOutputFilterInfo> BranchOutputStatusDock::buildFilterListSnapshot() const
+QList<BranchOutputInfo> BranchOutputStatusDock::buildOutputListSnapshot() const
 {
-    QList<BranchOutputFilterInfo> list;
+    QList<BranchOutputInfo> list;
 
     foreach (auto row, outputTableRows) {
-        // The script API get_filter_list lists filters only
-        if (!row->contextIsFilter) {
-            continue;
-        }
-
         // addOutput() creates exactly one row with groupIndex 0 per output
         if (row->groupIndex != 0) {
             continue;
         }
 
         // Row was created after the filter had already left its parent
-        if (row->filterInfo.sourceUuid.isEmpty()) {
+        if (row->info.isFilter && row->info.sourceUuid.isEmpty()) {
             continue;
         }
 
-        list.append(row->filterInfo);
+        list.append(row->info);
     }
 
     return list;
 }
 
-void BranchOutputStatusDock::publishFilterListSnapshot()
+void BranchOutputStatusDock::publishOutputListSnapshot()
 {
-    ::publishFilterListSnapshot(buildFilterListSnapshot());
+    ::publishOutputListSnapshot(buildOutputListSnapshot());
 }

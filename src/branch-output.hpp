@@ -30,9 +30,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
+#include "video/crop-rect-preview-renderer.hpp"
 #include "utils.hpp"
 
+#define FILTER_ID "osi_branch_output"
 #define MAX_SERVICES 8
+#define TASK_INTERVAL_MS 1000
 #define HOTKEY_BINDINGS_KEY "hotkey_bindings"
 #define RECENTLY_SETTINGS_JSON_NAME "recently.json"
 
@@ -47,9 +50,9 @@ extern pthread_mutex_t pluginMutex;
 // Defined in plugin-main.cpp. Returns nullptr while the status dock does not exist.
 BranchOutputStatusDock *loadStatusDock();
 
-// Publish a fresh filter-list snapshot consumed by the global proc handler.
+// Publish a fresh output-list snapshot consumed by the global proc handlers.
 // Defined in plugin-main.cpp; thread-safe (mutex-guarded).
-void publishFilterListSnapshot(QList<BranchOutputFilterInfo> snapshot);
+void publishOutputListSnapshot(QList<BranchOutputInfo> snapshot);
 
 class BranchOutput : public QObject {
     Q_OBJECT
@@ -120,8 +123,10 @@ protected:
         OBSDataAutoRelease get();
     };
 
+    // FIXME: updateHotkeyDescriptions() rewrites this on the renaming thread while the UI, graphics and
+    // script threads read it without a lock. Guard the copy with a leaf lock or an atomic swap (issue #217).
     QString name;
-    bool initialized; // Activate after first "Apply" click
+    std::atomic<bool> initialized; // Activate after first "Apply" click
     AppliedSettings appliedSettings;
     // Snapshot the current infrastructure was built from; guarded by outputMutex. The strong
     // reference keeps its address from being reused, which the pointer comparison against
@@ -154,6 +159,7 @@ protected:
     bool videoOutputOwned;
     uint32_t width;
     uint32_t height;
+    CropRectPreviewRenderer cropPreview;
 
     // Audio context
     // Lock ordering: always acquire in order pluginMutex -> outputMutex -> audioMutex ->
@@ -229,7 +235,7 @@ protected:
     virtual void getSourceResolution(uint32_t &outWidth, uint32_t &outHeight) = 0;
     void determineOutputResolution(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop);
     void loadProfile(obs_data_t *settings);
-    void loadRecently(obs_data_t *settings);
+    void loadRecently(obs_data_t *settings, bool inheritCrop);
     void restartOutput(int interlockType);
     void stopOutputGracefully();
 
@@ -245,9 +251,14 @@ protected:
     virtual void selectVideoInputMode(obs_data_t *settings) = 0;
     virtual bool setupVideoInput(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop) = 0;
     virtual void teardownVideoInput() = 0;
+    // True when OBS's video settings differ from those the current video input was built from.
+    // Caller must hold outputMutex.
+    virtual bool isVideoInputOutdated() const = 0;
     virtual bool setupDefaultAudio(const obs_audio_info &ai) = 0;
     virtual bool evaluateBlanking(obs_data_t *settings) = 0;
     virtual BlankingState getBlankingState() const = 0;
+    // True when the input passes through a source's filter chain (filter audio, filter input, blanking)
+    virtual bool hasFilterPipeline() const = 0;
 
     // Hotkey synchronization. After construction, every libobs hotkey call and every access to
     // hotkeyBindingsCache happens inside an obs_hotkey_update_atomic() callback.
@@ -367,6 +378,8 @@ protected:
     void addAudioEncoderGroup(obs_properties_t *props);
     void addAdvancedSettingsGroup(obs_properties_t *props);
     void addReplayBufferGroup(obs_properties_t *props);
+    void addVideoEncoderGroup(obs_properties_t *props);
+    static void applyVideoEncoderDefaults(obs_data_t *settings);
 
     // Callbacks from obs core
     static bool onEnableFilterHotkeyPressed(void *data, obs_hotkey_pair_id id, obs_hotkey *hotkey, bool pressed);
@@ -399,6 +412,8 @@ protected:
     static void getDefaults(obs_data_t *settings);
 
     explicit BranchOutput(obs_data_t *settings, obs_source_t *source, QObject *parent = nullptr);
+    // Completes construction from the settings handed to info.create. Calls no virtual hook.
+    void initializeSettings(obs_data_t *settings, bool initialCreation, bool inheritRecentCrop);
 
 signals:
     void outputUserEnabledChanged();
@@ -411,6 +426,8 @@ public:
     ~BranchOutput();
 
     OBSDataAutoRelease getAppliedSettings() { return appliedSettings.get(); }
+
+    static void pinOutputLineup(obs_data_t *settings);
 
     // The only conversion between an instance and the data pointer handed to OBS callbacks
     static BranchOutput *fromCallbackData(void *data) { return static_cast<BranchOutput *>(data); }

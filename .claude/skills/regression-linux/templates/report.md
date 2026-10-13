@@ -15,6 +15,7 @@
 | ID | Case | Result | Notes |
 |---|---|---|---|
 | R01 | Startup and new filter | {result} | {short note} |
+| M01 | Add and configure | {result} | {short note} |
 
 ## Failures
 

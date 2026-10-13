@@ -446,13 +446,15 @@ void BranchOutput::addRecordingGroup(obs_properties_t *props)
     );
 
     // Pausing settings
-    auto suspendRecordingWhenSourceCollapsed = obs_properties_add_bool(
-        recordingGroup, "suspend_recording_when_source_collapsed",
-        obs_module_text("SuspendRecordingWhenSourceCollapsed")
-    );
-    obs_property_set_long_description(
-        suspendRecordingWhenSourceCollapsed, obs_module_text("SuspendRecordingWhenSourceCollapsedNote")
-    );
+    if (hasFilterPipeline()) {
+        auto suspendRecordingWhenSourceCollapsed = obs_properties_add_bool(
+            recordingGroup, "suspend_recording_when_source_collapsed",
+            obs_module_text("SuspendRecordingWhenSourceCollapsed")
+        );
+        obs_property_set_long_description(
+            suspendRecordingWhenSourceCollapsed, obs_module_text("SuspendRecordingWhenSourceCollapsedNote")
+        );
+    }
 
     // Group with checkable toggle (reuse stream_recording key for backward compat)
     auto recordingProp = obs_properties_add_group(
@@ -502,24 +504,26 @@ void BranchOutput::addAdvancedSettingsGroup(obs_properties_t *props)
     );
     obs_property_set_long_description(keepOutputBaseResolution, obs_module_text("KeepOutputBaseResolutionNote"));
 
-    auto blankWhenNotVisible =
-        obs_properties_add_bool(advancedGroup, "blank_when_not_visible", obs_module_text("BlankWhenNotVisible"));
-    obs_property_set_long_description(blankWhenNotVisible, obs_module_text("BlankWhenNotVisibleNote"));
+    if (hasFilterPipeline()) {
+        auto blankWhenNotVisible =
+            obs_properties_add_bool(advancedGroup, "blank_when_not_visible", obs_module_text("BlankWhenNotVisible"));
+        obs_property_set_long_description(blankWhenNotVisible, obs_module_text("BlankWhenNotVisibleNote"));
 
-    auto muteAudioWhenBlank =
-        obs_properties_add_bool(advancedGroup, "mute_audio_when_blank", obs_module_text("MuteAudioWhenBlank"));
-    obs_property_set_long_description(muteAudioWhenBlank, obs_module_text("MuteAudioWhenBlankNote"));
-    obs_property_set_enabled(muteAudioWhenBlank, false);
+        auto muteAudioWhenBlank =
+            obs_properties_add_bool(advancedGroup, "mute_audio_when_blank", obs_module_text("MuteAudioWhenBlank"));
+        obs_property_set_long_description(muteAudioWhenBlank, obs_module_text("MuteAudioWhenBlankNote"));
+        obs_property_set_enabled(muteAudioWhenBlank, false);
 
-    obs_property_set_modified_callback2(
-        blankWhenNotVisible,
-        [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            bool enabled = obs_data_get_bool(settings, "blank_when_not_visible");
-            obs_property_set_enabled(obs_properties_get(_props, "mute_audio_when_blank"), enabled);
-            return true;
-        },
-        nullptr
-    );
+        obs_property_set_modified_callback2(
+            blankWhenNotVisible,
+            [](void *, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
+                bool enabled = obs_data_get_bool(settings, "blank_when_not_visible");
+                obs_property_set_enabled(obs_properties_get(_props, "mute_audio_when_blank"), enabled);
+                return true;
+            },
+            nullptr
+        );
+    }
 
     obs_properties_add_group(
         props, "advanced_settings", obs_module_text("AdvancedSettings"), OBS_GROUP_NORMAL, advancedGroup
@@ -677,7 +681,9 @@ void BranchOutput::createAudioTrackProperties(obs_properties_t *audioGroup, size
     }
     obs_property_list_add_string(audioSourceList, obs_module_text("NoAudio"), "no_audio");
     obs_property_list_add_string(audioSourceList, obs_module_text("MasterTrack"), "master_track");
-    obs_property_list_add_string(audioSourceList, obs_module_text("FilterAudio"), "filter");
+    if (hasFilterPipeline()) {
+        obs_property_list_add_string(audioSourceList, obs_module_text("FilterAudio"), "filter");
+    }
     obs_enum_sources(
         [](void *param, obs_source_t *source) {
             auto prop = (obs_property_t *)param;
@@ -1095,18 +1101,27 @@ static bool resetFirstUnlistedListValue(
     return false;
 }
 
-void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
+void BranchOutput::applyVideoEncoderDefaults(obs_data_t *settings)
+{
+    auto encoderId = obs_data_get_string(settings, "video_encoder");
+    OBSDataAutoRelease encoderDefaults = obs_encoder_defaults(encoderId);
+    applyDefaults(settings, encoderDefaults);
+}
+
+void BranchOutput::addVideoEncoderGroup(obs_properties_t *props)
 {
     auto videoEncoderGroup = obs_properties_create();
 
-    // Video source type selection
-    auto videoSourceType = obs_properties_add_list(
-        videoEncoderGroup, "video_source_type", obs_module_text("VideoSourceType"), OBS_COMBO_TYPE_LIST,
-        OBS_COMBO_FORMAT_STRING
-    );
-    obs_property_set_long_description(videoSourceType, obs_module_text("VideoSourceType.LongDescription"));
-    obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.Source"), "source");
-    obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.FilterInput"), "filter_input");
+    if (hasFilterPipeline()) {
+        // Video source type selection
+        auto videoSourceType = obs_properties_add_list(
+            videoEncoderGroup, "video_source_type", obs_module_text("VideoSourceType"), OBS_COMBO_TYPE_LIST,
+            OBS_COMBO_FORMAT_STRING
+        );
+        obs_property_set_long_description(videoSourceType, obs_module_text("VideoSourceType.LongDescription"));
+        obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.Source"), "source");
+        obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.FilterInput"), "filter_input");
+    }
 
     // Cropping prop
     auto croppingList = obs_properties_add_list(
@@ -1119,7 +1134,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_set_modified_callback2(
         croppingList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto filter = fromFilterCallbackData(param);
+            auto filter = fromCallbackData(param);
             auto cropType = obs_data_get_string(settings, "crop_type");
             bool isRelative = cropType && !strcmp(cropType, "relative");
             bool isAbsolute = cropType && !strcmp(cropType, "absolute");
@@ -1150,7 +1165,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 
     // Crop value modified callback: updates preview rectangle in real-time
     auto cropValueModified = [](void *param, obs_properties_t *, obs_property_t *, obs_data_t *settings) {
-        auto filter = fromFilterCallbackData(param);
+        auto filter = fromCallbackData(param);
         // Check the preview checkbox for the active crop type (not isVisible, which may be false
         // due to previous invalid crop values)
         auto cropType = obs_data_get_string(settings, "crop_type");
@@ -1172,7 +1187,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
 
     // Crop preview checkbox callback
     auto previewCropModified = [](void *param, obs_properties_t *, obs_property_t *prop, obs_data_t *settings) {
-        auto filter = fromFilterCallbackData(param);
+        auto filter = fromCallbackData(param);
         bool checked = obs_data_get_bool(settings, obs_property_name(prop));
 
         // Sync both checkboxes so the preview state persists across crop type switches
@@ -1229,12 +1244,23 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     auto resolutionList = obs_properties_add_list(
         videoEncoderGroup, "resolution", obs_module_text("Resolution"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING
     );
-    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Source"), "");
+    const char *sourceKey = "Resolution.Source";
+    const char *threeQuartersKey = "Resolution.ThreeQuarters";
+    const char *halfKey = "Resolution.Half";
+    const char *quarterKey = "Resolution.Quarter";
+    if (!hasFilterPipeline()) {
+        // Program Outputs take the canvas as their input
+        sourceKey = "Resolution.Program.Source";
+        threeQuartersKey = "Resolution.Program.ThreeQuarters";
+        halfKey = "Resolution.Program.Half";
+        quarterKey = "Resolution.Program.Quarter";
+    }
+    obs_property_list_add_string(resolutionList, obs_module_text(sourceKey), "");
     obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Output"), "output");
     obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Canvas"), "canvas");
-    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.ThreeQuarters"), "three_quarters");
-    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Half"), "half");
-    obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Quarter"), "quarter");
+    obs_property_list_add_string(resolutionList, obs_module_text(threeQuartersKey), "three_quarters");
+    obs_property_list_add_string(resolutionList, obs_module_text(halfKey), "half");
+    obs_property_list_add_string(resolutionList, obs_module_text(quarterKey), "quarter");
     obs_property_list_add_string(resolutionList, obs_module_text("Resolution.Custom"), "custom");
 
     obs_property_set_modified_callback2(
@@ -1311,15 +1337,13 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
     obs_property_set_modified_callback2(
         videoEncoderList,
         [](void *param, obs_properties_t *_props, obs_property_t *, obs_data_t *settings) {
-            auto filter = fromFilterCallbackData(param);
+            auto filter = fromCallbackData(param);
             obs_log(LOG_DEBUG, "%s: Video encoder chainging.", qUtf8Printable(filter->name));
 
             auto _videoEncoderGroup = obs_property_group_content(obs_properties_get(_props, "video_encoder_group"));
-            auto _encoderId = obs_data_get_string(settings, "video_encoder");
 
-            // Apply encoder's defaults
-            OBSDataAutoRelease encoderEefaults = obs_encoder_defaults(_encoderId);
-            applyDefaults(settings, encoderEefaults);
+            applyVideoEncoderDefaults(settings);
+            auto _encoderId = obs_data_get_string(settings, "video_encoder");
 
             obs_properties_remove_by_name(_videoEncoderGroup, "video_encoder_settings_group");
 
@@ -1346,7 +1370,7 @@ void BranchOutputFilter::addVideoEncoderGroup(obs_properties_t *props)
                         if (!resetFirstUnlistedListValue(encoderProps, settings, filter->name, resetNames)) {
                             break;
                         }
-                        applyDefaults(settings, encoderEefaults);
+                        applyVideoEncoderDefaults(settings);
                         obs_properties_apply_settings(encoderProps, settings);
                     }
                     if (pass == ENCODER_LIST_RESET_MAX_PASSES) {

@@ -6,9 +6,9 @@ based on the content of a Text (GDI+) source, without
 restarting the replay buffer output.
 
 This script overrides the filename format at runtime via proc handler.
-The filter's own property settings are NOT modified.
+The Branch Output's own property settings are NOT modified.
 When this script is unloaded, the override is cleared and
-the filter reverts to its original filename format setting.
+the Branch Output reverts to its original filename format setting.
 
 Note on throttling:
   Unlike the recording variant, this script does NOT throttle updates.
@@ -19,22 +19,26 @@ Note on throttling:
 
 Requirements:
   - Branch Output plugin v1.0.9+ (with override_replay_buffer_filename_format proc)
+  - Branch Output plugin v1.1.0+ to list Program Outputs (earlier versions list filters only)
   - A Text (GDI+) source whose "text" property will be used as the filename prefix
 
 Usage:
   1. Add this script via OBS > Tools > Scripts
-  2. Select the text source and the Branch Output filter from the dropdown lists
+  2. Select the text source and the Branch Output (a filter or a Program Output)
+     from the dropdown lists
   3. Set the base filename format (OBS date/time specifiers like %CCYY-%MM-%DD are supported)
   4. The replay buffer filename will update whenever the text source content changes
 """
 
 import json
+import threading
 import unicodedata
 import obspython as obs
 
 # Proc and filter constants
 OVERRIDE_PROC = "override_replay_buffer_filename_format"
 BRANCH_OUTPUT_FILTER_ID = "osi_branch_output"
+BRANCH_OUTPUT_PROGRAM_ID = "osi_branch_output_program"
 LOG_LABEL = "Replay buffer filename format"
 MAX_READ_SIZE = 4096  # 4 KB read limit to prevent performance issues on large files
 # Truncate to 200 bytes to stay within NTFS filename component (255) /
@@ -50,37 +54,100 @@ WINDOWS_RESERVED = {
 
 # Script settings
 text_source_uuid = ""
-selected_filter = ""  # "source_uuid::filter_uuid" format
+selected_filter = ""  # "source_uuid::filter_uuid" (filter) or "::output_uuid" (Program Output)
 base_format = "%CCYY-%MM-%DD %hh-%mm-%ss"
 last_text = None
 override_cleared = False
 
+# Program Output instance that last received a non-empty format from the tick.
+# script_update() / script_unload() (UI thread) can run while a tick (graphics
+# thread) waits in an obs call, so applied_target_weak / applied_target_uuid /
+# target_generation are accessed only under target_lock, which never covers a
+# proc call or obs_source_release(). The UI thread advances target_generation
+# before it clears a target, and a tick that finds it advanced clears its
+# target again.
+applied_target_weak = None
+applied_target_uuid = ""
+target_generation = 0
+target_lock = threading.Lock()
+missing_target_warned = False
 
-def get_branch_output_filters():
-    """Get list of Branch Output filters via global proc handler."""
-    filters = []
+
+def call_global_list_proc(proc_name):
+    """Call a global list proc. Returns (found, json_str)."""
     ph = obs.obs_get_proc_handler()
     cd = obs.calldata_create()
-
     try:
-        if obs.proc_handler_call(ph, "osi_branch_output_get_filter_list", cd):
-            json_str = obs.calldata_string(cd, "json")
-            if json_str:
-                try:
-                    data = json.loads(json_str)
-                    for item in data.get("filters", []):
-                        source_name = item.get("source_name", "")
-                        source_uuid = item.get("source_uuid", "")
-                        filter_name = item.get("filter_name", "")
-                        filter_uuid = item.get("filter_uuid", "")
-                        if source_uuid and filter_uuid:
-                            filters.append((source_name, source_uuid, filter_name, filter_uuid))
-                except json.JSONDecodeError as e:
-                    obs.script_log(obs.LOG_WARNING, f"Failed to parse filter list JSON: {e}")
+        found = obs.proc_handler_call(ph, proc_name, cd)
+        json_str = obs.calldata_string(cd, "json") if found else None
     finally:
         obs.calldata_destroy(cd)
+    return found, json_str
 
-    return filters
+
+def filter_choice(source_name, source_uuid, filter_name, filter_uuid):
+    return f"{source_name} / {filter_name}", f"{source_uuid}::{filter_uuid}"
+
+
+def parse_output_list(json_str):
+    """Parse a get_output_list response into (label, value) pairs."""
+    if not json_str:
+        return []
+    try:
+        data = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        obs.script_log(obs.LOG_WARNING, f"Failed to parse output list JSON: {e}")
+        return []
+
+    choices = []
+    for item in data.get("outputs", []):
+        output_type = item.get("type", "")
+        if output_type == "filter":
+            source_uuid = item.get("source_uuid", "")
+            filter_uuid = item.get("filter_uuid", "")
+            if source_uuid and filter_uuid:
+                choices.append(filter_choice(item.get("source_name", ""), source_uuid,
+                                             item.get("filter_name", ""), filter_uuid))
+        elif output_type == "program":
+            output_uuid = item.get("output_uuid", "")
+            if output_uuid:
+                choices.append((f"[Program] {item.get('output_name', '')}", f"::{output_uuid}"))
+    return choices
+
+
+def parse_filter_list(json_str):
+    """Parse a get_filter_list response into (label, value) pairs."""
+    if not json_str:
+        return []
+    try:
+        data = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        obs.script_log(obs.LOG_WARNING, f"Failed to parse filter list JSON: {e}")
+        return []
+
+    choices = []
+    for item in data.get("filters", []):
+        source_uuid = item.get("source_uuid", "")
+        filter_uuid = item.get("filter_uuid", "")
+        if source_uuid and filter_uuid:
+            choices.append(filter_choice(item.get("source_name", ""), source_uuid,
+                                         item.get("filter_name", ""), filter_uuid))
+    return choices
+
+
+def get_branch_outputs():
+    """List Branch Outputs as (label, value) pairs.
+
+    Falls back to get_filter_list (filters only) only when get_output_list
+    is not registered, i.e. on plugins older than v1.1.0.
+    """
+    found, json_str = call_global_list_proc("osi_branch_output_get_output_list")
+    if found:
+        return parse_output_list(json_str)
+    found, json_str = call_global_list_proc("osi_branch_output_get_filter_list")
+    if found:
+        return parse_filter_list(json_str)
+    return []
 
 
 def parse_selected_filter(value):
@@ -212,28 +279,30 @@ def read_text_from_source(text_source):
     return result_text, ok
 
 
-def call_override_proc(filter_uuid, format_value):
-    """Call the override proc on the specified Branch Output filter.
+def invoke_override(target_uuid, format_value):
+    """Call the override proc on the specified Branch Output filter or Program Output.
 
-    Verifies that the target is actually a Branch Output filter and logs proc result.
-    Returns True on success, False otherwise.
+    Verifies that the target is actually a Branch Output and logs proc result.
+    Returns (ok, weak, missing). weak is a weak reference to the Program Output
+    instance the proc was called on, or None for a filter or on failure; the
+    caller owns and releases it. missing is True when no source has target_uuid.
     """
-    if not filter_uuid:
-        return False
+    if not target_uuid:
+        return False, None, False
 
-    bo_filter = obs.obs_get_source_by_uuid(filter_uuid)
-    if not bo_filter:
-        obs.script_log(obs.LOG_WARNING, f"Filter (uuid: {filter_uuid}) not found")
-        return False
+    target = obs.obs_get_source_by_uuid(target_uuid)
+    if not target:
+        obs.script_log(obs.LOG_WARNING, f"Branch Output (uuid: {target_uuid}) not found")
+        return False, None, True
 
     try:
-        filter_id = obs.obs_source_get_unversioned_id(bo_filter)
-        if filter_id != BRANCH_OUTPUT_FILTER_ID:
+        target_id = obs.obs_source_get_unversioned_id(target)
+        if target_id not in (BRANCH_OUTPUT_FILTER_ID, BRANCH_OUTPUT_PROGRAM_ID):
             obs.script_log(obs.LOG_WARNING,
-                           f"Source (uuid: {filter_uuid}) is not a Branch Output filter (id: {filter_id})")
-            return False
+                           f"Source (uuid: {target_uuid}) is not a Branch Output (id: {target_id})")
+            return False, None, False
 
-        ph = obs.obs_source_get_proc_handler(bo_filter)
+        ph = obs.obs_source_get_proc_handler(target)
         cd = obs.calldata_create()
         try:
             obs.calldata_set_string(cd, "format", format_value)
@@ -244,21 +313,107 @@ def call_override_proc(filter_uuid, format_value):
         if not result:
             obs.script_log(obs.LOG_WARNING,
                            f"proc_handler_call for {OVERRIDE_PROC} failed — is the Branch Output plugin up to date?")
-            return False
-        return True
+            return False, None, False
+        if target_id == BRANCH_OUTPUT_PROGRAM_ID:
+            return True, obs.obs_source_get_weak_source(target), False
+        return True, None, False
     finally:
-        obs.obs_source_release(bo_filter)
+        obs.obs_source_release(target)
+
+
+def call_override_proc(filter_uuid, format_value):
+    """Call the override proc on the specified Branch Output.
+
+    Returns True on success, False otherwise.
+    """
+    ok, weak, _ = invoke_override(filter_uuid, format_value)
+    if weak is not None:
+        obs.obs_weak_source_release(weak)
+    return ok
+
+
+def reset_apply_state():
+    """Forget the applied format so the next tick sends it again."""
+    global last_text, override_cleared
+
+    last_text = None
+    override_cleared = False
+
+
+def track_program_target(target_uuid):
+    """Return True when the tick may continue with the Program Output target_uuid.
+
+    The override lives on the Program Output instance, so an expired weak
+    reference (the instance was replaced) resets the apply state to send the
+    format again. An instance whose UUID was reassigned in place (duplicating a
+    scene collection on OBS 30.x) gets its override cleared and is no longer
+    followed until the Branch Output is selected again. A target that is not
+    loaded yet is waited for.
+    """
+    global applied_target_weak, missing_target_warned
+
+    applied = None
+    expired = False
+    reassigned_uuid = ""
+    with target_lock:
+        if applied_target_weak is not None:
+            if applied_target_uuid == target_uuid:
+                applied = obs.obs_weak_source_get_source(applied_target_weak)
+                if not applied:
+                    expired = True
+                elif obs.obs_source_get_uuid(applied) != target_uuid:
+                    reassigned_uuid = obs.obs_source_get_uuid(applied)
+            if applied_target_uuid != target_uuid or expired or reassigned_uuid:
+                obs.obs_weak_source_release(applied_target_weak)
+                applied_target_weak = None
+        target_alive = applied_target_weak is not None
+    if applied:
+        obs.obs_source_release(applied)
+
+    if reassigned_uuid:
+        call_override_proc(reassigned_uuid, "")
+        obs.script_log(obs.LOG_WARNING,
+                       f"Program Output (uuid: {target_uuid}) now has uuid {reassigned_uuid}; "
+                       "override cleared. Select the Branch Output again")
+        reset_apply_state()
+        missing_target_warned = True
+        return False
+    if expired:
+        reset_apply_state()
+    if target_alive:
+        return True
+
+    target = obs.obs_get_source_by_uuid(target_uuid)
+    if not target:
+        reset_apply_state()
+        if not missing_target_warned:
+            obs.script_log(obs.LOG_INFO,
+                           f"Program Output (uuid: {target_uuid}) not found; "
+                           "waiting for it to load")
+            missing_target_warned = True
+        return False
+    obs.obs_source_release(target)
+    missing_target_warned = False
+    return True
 
 
 def update_replay_buffer_format():
     """Read text source and update Branch Output replay buffer filename format."""
-    global last_text, override_cleared
+    global applied_target_weak, applied_target_uuid, last_text, override_cleared
 
-    if not text_source_uuid or not selected_filter:
+    with target_lock:
+        generation = target_generation
+        selected = selected_filter
+
+    if not text_source_uuid or not selected:
         return
 
-    _, filter_uuid = parse_selected_filter(selected_filter)
+    source_uuid, filter_uuid = parse_selected_filter(selected)
     if not filter_uuid:
+        return
+
+    # An empty source UUID selects a Program Output.
+    if not source_uuid and not track_program_target(filter_uuid):
         return
 
     # Get text from the text source
@@ -300,17 +455,39 @@ def update_replay_buffer_format():
     if new_format == last_text:
         return
 
-    if call_override_proc(filter_uuid, new_format):
-        last_text = new_format
-        override_cleared = False
+    ok, weak, missing = invoke_override(filter_uuid, new_format)
+    with target_lock:
+        current = target_generation == generation
+        if current:
+            if weak is not None:
+                if applied_target_weak is not None:
+                    obs.obs_weak_source_release(applied_target_weak)
+                applied_target_weak = weak
+                applied_target_uuid = filter_uuid
+                weak = None
+            if ok:
+                last_text = new_format
+                override_cleared = False
+            elif missing and not source_uuid:
+                # The next tick waits in track_program_target() until the Program Output
+                # is loaded again, then resends the format.
+                reset_apply_state()
+            else:
+                # Filter missing or proc call failed: cache new_format so the
+                # "same format" early-return suppresses retries on subsequent ticks
+                # until the text or selection actually changes. Without this the
+                # timer would re-issue the warning every tick at 1 Hz.
+                last_text = new_format
+                override_cleared = True
+
+    if not current:
+        if weak is not None:
+            obs.obs_weak_source_release(weak)
+        if ok:
+            call_override_proc(filter_uuid, "")
+        return
+    if ok:
         obs.script_log(obs.LOG_INFO, f"{LOG_LABEL} updated: {new_format}")
-    else:
-        # Filter missing or proc call failed: cache new_format so the
-        # "same format" early-return suppresses retries on subsequent ticks
-        # until the text or selection actually changes. Without this the
-        # timer would re-issue the warning every tick at 1 Hz.
-        last_text = new_format
-        override_cleared = True
 
 
 def timer_callback():
@@ -326,9 +503,9 @@ def script_description():
         "based on the content of a Text (GDI+) source.<br><br>"
         "The text content is prepended to the base format on every change.<br><br>"
         "<b>Note:</b> This script overrides the filename format at runtime. "
-        "The filter's own property settings are not modified. "
+        "The Branch Output's own property settings are not modified. "
         "When this script is unloaded, the override is cleared and "
-        "the filter reverts to its original filename format setting.<br><br>"
+        "the Branch Output reverts to its original filename format setting.<br><br>"
         "<b>Limitation:</b> Text sources inside Groups are not listed in the dropdown. "
         "Only top-level sources are shown."
     )
@@ -357,15 +534,13 @@ def script_properties():
                 obs.obs_property_list_add_string(p, name, uuid)
         obs.source_list_release(sources)
 
-    # Branch Output filter selector (populated from global proc handler)
+    # Branch Output selector (populated from global proc handler)
     p = obs.obs_properties_add_list(
-        props, "selected_filter", "Branch Output Filter",
+        props, "selected_filter", "Branch Output",
         obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING,
     )
-    obs.obs_property_list_add_string(p, "(Select a filter)", "")
-    for source_name, source_uuid, filter_name, filter_uuid in get_branch_output_filters():
-        label = f"{filter_name}  ({source_name})"
-        value = f"{source_uuid}::{filter_uuid}"
+    obs.obs_property_list_add_string(p, "(Select a Branch Output)", "")
+    for label, value in get_branch_outputs():
         obs.obs_property_list_add_string(p, label, value)
 
     # Base filename format
@@ -383,36 +558,51 @@ def script_defaults(settings):
 
 def script_update(settings):
     global text_source_uuid, selected_filter, base_format, last_text, override_cleared
+    global target_generation, missing_target_warned
 
-    # Remember the previously selected filter so we can clear its override
-    # if the user changed the selection.
-    _, old_filter_uuid = parse_selected_filter(selected_filter)
+    new_text_source_uuid = obs.obs_data_get_string(settings, "text_source")
+    new_selected_filter = obs.obs_data_get_string(settings, "selected_filter")
+    new_base_format = obs.obs_data_get_string(settings, "base_format")
 
-    text_source_uuid = obs.obs_data_get_string(settings, "text_source")
-    selected_filter = obs.obs_data_get_string(settings, "selected_filter")
-    base_format = obs.obs_data_get_string(settings, "base_format")
+    with target_lock:
+        # Remember the previously selected Branch Output so we can clear its
+        # override if the user changed the selection.
+        prev_selected_filter = selected_filter
+        text_source_uuid = new_text_source_uuid
+        selected_filter = new_selected_filter
+        base_format = new_base_format
+        if prev_selected_filter != new_selected_filter or not new_text_source_uuid:
+            target_generation += 1
+        # Reset state to force update on next tick
+        last_text = None
+        override_cleared = False  # reset to "needs re-apply"
 
-    _, new_filter_uuid = parse_selected_filter(selected_filter)
+    if prev_selected_filter != new_selected_filter:
+        missing_target_warned = False
+
+    _, old_filter_uuid = parse_selected_filter(prev_selected_filter)
+    _, new_filter_uuid = parse_selected_filter(new_selected_filter)
     if old_filter_uuid and old_filter_uuid != new_filter_uuid:
-        # Clear override on the previously selected filter so it does not
-        # remain overridden after the user switched to a different filter.
+        # Clear override on the previously selected Branch Output so it does not
+        # remain overridden after the user switched to a different one.
         if call_override_proc(old_filter_uuid, ""):
             obs.script_log(obs.LOG_INFO,
-                           f"{LOG_LABEL} override cleared on previous filter (uuid: {old_filter_uuid})")
+                           f"{LOG_LABEL} override cleared on previous Branch Output "
+                           f"(uuid: {old_filter_uuid})")
 
     # If text source was deselected, clear the override on the current
-    # filter so it reverts to its own setting. clear_override() already
-    # resets last_text.
-    if not text_source_uuid:
+    # Branch Output so it reverts to its own setting.
+    if not new_text_source_uuid:
         clear_override()
-        return
-
-    # Reset state to force update on next tick
-    last_text = None
-    override_cleared = False  # reset to "needs re-apply"
 
 
 def script_load(settings):
+    global missing_target_warned
+
+    # The module object, and with it the state left by script_unload(), is reused
+    # when OBS creates the script again (e.g. on a scene collection switch).
+    missing_target_warned = False
+
     # Defensive timer_remove in case of script reload.
     obs.timer_remove(timer_callback)
     # script_update(settings) is called automatically by OBS after
@@ -448,5 +638,13 @@ def clear_override():
 
 
 def script_unload():
+    global applied_target_weak, target_generation
+
     obs.timer_remove(timer_callback)
+    with target_lock:
+        target_generation += 1
     clear_override()
+    with target_lock:
+        if applied_target_weak is not None:
+            obs.obs_weak_source_release(applied_target_weak)
+            applied_target_weak = None

@@ -15,6 +15,7 @@
 | ID | Case | 32.2 | 31.1 | 30.1.2 | Notes |
 |---|---|---|---|---|---|
 | R01 | Startup and new filter | {result} | {result} | {result} | {short note} |
+| M01 | Add and configure | {result} | {result} | {result} | {short note} |
 
 ## Failures
 
