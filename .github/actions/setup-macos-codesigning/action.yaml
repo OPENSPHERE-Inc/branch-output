@@ -86,6 +86,25 @@ runs:
             -t cert -f pkcs12 -k ${keychain_path} \
             -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcrun
 
+          # On macOS 15 the import can drop certificates of the bundle (seen with two identities
+          # sharing one key). Add the missing ones; the keychain pairs them with the imported key.
+          local -r bundle_dir="${RUNNER_TEMP}/signing-certificates"
+          mkdir -p ${bundle_dir}
+          /usr/bin/openssl pkcs12 -in "${certificate_path}" -nokeys \
+            -passin env:MAOCS_SIGNING_CERT_PASSWORD \
+            | awk -v dir=${bundle_dir} \
+              '/BEGIN CERTIFICATE/ {n++; p=1} p {print > (dir "/" n ".pem")} /END CERTIFICATE/ {p=0}'
+
+          local -r keychain_certs="$(security find-certificate -a -Z ${keychain_path})"
+          local cert_file fingerprint
+          for cert_file (${bundle_dir}/*.pem) {
+            fingerprint="$(/usr/bin/openssl x509 -in ${cert_file} -noout -fingerprint -sha1)"
+            fingerprint="${${fingerprint#*=}//:/}"
+            if [[ ${keychain_certs} != *"SHA-1 hash: ${fingerprint}"* ]] {
+              security add-certificates -k ${keychain_path} ${cert_file}
+            }
+          }
+
           security set-key-partition-list -S 'apple-tool:,apple:' -k "${MACOS_KEYCHAIN_PASSWORD}" \
             ${keychain_path} &> /dev/null
 
