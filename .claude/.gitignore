@@ -1,2 +1,3 @@
 *.local.*
 tmp/
+__pycache__/
