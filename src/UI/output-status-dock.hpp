@@ -28,17 +28,19 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QPointer>
 #include <QList>
 #include <QTimer>
+#include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QLabel>
 #include <QComboBox>
 #include <QToolButton>
 #include <QCheckBox>
+#include <QStyledItemDelegate>
+#include <QPersistentModelIndex>
 
 #include "../utils.hpp"
 
-class QTableWidget;
+class QListWidget;
 class QString;
-class QPushButton;
 class BranchOutput;
 class OutputTableRow;
 
@@ -51,11 +53,12 @@ enum RowOutputType {
     ROW_OUTPUT_REPLAY_BUFFER = 3,
 };
 
-struct BranchOutputFilterInfo {
-    QString sourceName;
-    QString sourceUuid;
-    QString filterName;
-    QString filterUuid;
+struct BranchOutputInfo {
+    bool isFilter = false; // false: Program Output
+    QString sourceName;    // filter: parent source name; Program Output: the dock's input column text
+    QString sourceUuid;    // filter: parent source UUID; Program Output: empty
+    QString outputName;    // context source name (filter name or Program Output name)
+    QString outputUuid;    // context source UUID (filter UUID or Program Output private source UUID)
 };
 
 class OutputTableCellItem : public QTableWidgetItem {
@@ -213,6 +216,39 @@ public:
     inline OutputTableCellItem *item() const { return _item; }
 };
 
+// Q_OBJECT gives this class its own class name, which the accessibility factory matches.
+class OutputStatusTable : public QTableWidget {
+    Q_OBJECT
+
+public:
+    explicit OutputStatusTable(QWidget *parent = nullptr) : QTableWidget(parent) {}
+
+    bool isSorted(int column, Qt::SortOrder order) const;
+
+    static void installAccessibilityFactory();
+    static void removeAccessibilityFactory();
+};
+
+class OutputTableRowDelegate : public QStyledItemDelegate {
+    Q_OBJECT
+
+    QTableWidget *table;
+    QListWidget *styleReference;
+    int hoveredRow = -1;
+    QPersistentModelIndex selectedIndex;
+
+    void updateRow(int row);
+
+public:
+    explicit OutputTableRowDelegate(QTableWidget *table);
+
+    inline int getHoveredRow() const { return hoveredRow; }
+    void setHoveredRow(int row);
+    void setSelectedRow(int row);
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override;
+};
+
 class BranchOutputStatusDock : public QFrame {
     Q_OBJECT
 
@@ -222,12 +258,14 @@ class BranchOutputStatusDock : public QFrame {
     QIcon descendingIcon;
 
     QTimer timer;
-    QTableWidget *outputTable = nullptr;
+    OutputStatusTable *outputTable = nullptr;
+    OutputTableRowDelegate *rowDelegate = nullptr;
     // Invariant: touched only from the Qt UI thread; no mutex is needed.
     // Cross-thread callers use QMetaObject::invokeMethod with QueuedConnection.
     // Same-thread calls (e.g. removeOutput from the update() timer slot) also
     // exist and are intentional.
     QList<OutputTableRow *> outputTableRows;
+    QToolButton *addButton = nullptr;
     QLabel *applyToAllLabel = nullptr;
     QToolButton *enableAllButton = nullptr;
     QToolButton *disableAllButton = nullptr;
@@ -257,8 +295,8 @@ class BranchOutputStatusDock : public QFrame {
 
     void update();
     void updateOutputToggles(BranchOutput *output);
-    QList<BranchOutputFilterInfo> buildFilterListSnapshot() const;
-    void publishFilterListSnapshot();
+    QList<BranchOutputInfo> buildOutputListSnapshot() const;
+    void publishOutputListSnapshot();
     void applyEnableAllButtonEnabled();
     void applyDisableAllButtonEnabled();
     void applySplitRecordingAllButtonEnabled();
@@ -270,6 +308,15 @@ class BranchOutputStatusDock : public QFrame {
     void loadSettings();
     void loadHotkeys();
     void applySettings(obs_data_t *settings);
+    void showAddMenu();
+    void addBranchOutputFilter(obs_source_t *target);
+    void renameProgram(obs_weak_source_t *weak, const QString &currentName);
+    void removeProgram(obs_weak_source_t *weak, const QString &currentName);
+    bool isProgramNameUsed(const QString &filterName, obs_source_t *except) const;
+    void showWarning(const QString &title, const QString &text);
+    int rowUnderPointer() const;
+    void retargetHoveredRow();
+    void resyncHoveredRow();
 
     static void onOBSFrontendEvent(enum obs_frontend_event event, void *param);
     static void onEanbleAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
@@ -280,14 +327,21 @@ class BranchOutputStatusDock : public QFrame {
     static void onAddChapterToRecordingAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
     static void onSaveReplayBufferAllHotkeyPressed(void *data, obs_hotkey_id id, obs_hotkey *hotkey, bool pressed);
 
+signals:
+    void addProgramRequested();
+    void renameProgramRequested(const QString &uuid, const QString &newName);
+    void removeProgramRequested(const QString &uuid);
+
 private slots:
     void onHeaderPressed(int index);
+    void onTableContextMenuRequested(const QPoint &pos);
     void onOutputUserEnabledChanged();
     void onOutputDestroyed(QObject *obj);
 
 protected:
     virtual void showEvent(QShowEvent *event) override;
     virtual void hideEvent(QHideEvent *event) override;
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 public:
     explicit BranchOutputStatusDock(QWidget *parent = (QWidget *)nullptr);
@@ -319,8 +373,7 @@ class OutputTableRow : public QObject {
     // context obs_source_t may already be released, so rows keep their own copies
     // of the identifying data below. Touched only from the Qt UI thread.
     BranchOutput *branchOutput;
-    BranchOutputFilterInfo filterInfo;
-    bool contextIsFilter = false;
+    BranchOutputInfo info;
     OBSWeakSourceAutoRelease contextWeak;
     FilterCell *filterCell;
     ParentCell *parentCell;

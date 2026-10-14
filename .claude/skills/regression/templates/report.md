@@ -8,13 +8,14 @@
 
 ## Summary
 
-{Counts of PASS / FAIL / SKIP / BLOCKED per version, and the conclusion in two or three sentences.}
+{Counts of PASS / FAIL (new, known issue) / SKIP / BLOCKED per version, and the conclusion in two or three sentences.}
 
 ## Results
 
 | ID | Case | 32.2 | 31.1 | 30.1.2 | Notes |
 |---|---|---|---|---|---|
 | R01 | Startup and new filter | {result} | {result} | {result} | {short note} |
+| M01 | Add and configure | {result} | {result} | {result} | {short note} |
 
 ## Failures
 
@@ -25,7 +26,7 @@
 - Actual: {what happened}
 - Evidence: {files in this folder: log excerpts, ffprobe output, crash dump}
 - Reproduced on retry: {yes / no}
-- Related issue: {#N or new}
+- Related issue: {#N, new, or new (regression of #N)}
 
 ## Observations
 
@@ -36,9 +37,9 @@ Behavior worth noting that did not fail a case, grouped as below. Leave out an e
 - OBS
   - {Behavior of OBS itself, and the evidence that OBS shows it without the plugin}
 - Plugin, known issues
-  - {Behavior matching an existing issue, with the case ID and the issue number}
+  - {Behavior matching an open issue or a closed issue labeled wontfix, with the case ID and the issue number}
 - Plugin, no issue
-  - {Behavior not judged a defect, with the case ID and the reason}
+  - {Behavior with no matching known issue, with the case ID and `regression of #N` when it matches a closed issue not labeled wontfix: either not judged a defect, with the reason, or a suspected defect marked as a new issue candidate}
 
 ## Not covered
 

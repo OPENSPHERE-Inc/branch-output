@@ -87,6 +87,109 @@ BranchOutput::~BranchOutput()
     pthread_mutex_destroy(&audioMutex);
 }
 
+void BranchOutput::initializeSettings(obs_data_t *settings, bool initialCreation, bool inheritRecentCrop)
+{
+    if (initialCreation) {
+        // Maybe initial creation
+        loadProfile(settings);
+        loadRecently(settings, inheritRecentCrop);
+
+        // Assit initial settings
+        obs_data_set_bool(settings, "use_profile_recording_path", true);
+    }
+
+    hotkeyBindingsCache = obs_data_create();
+    OBSDataAutoRelease savedHotkeyBindings = obs_data_get_obj(settings, HOTKEY_BINDINGS_KEY);
+    if (savedHotkeyBindings) {
+        obs_data_apply(hotkeyBindingsCache, savedHotkeyBindings);
+    }
+    hotkeyHarvestPending = !obs_data_has_user_value(settings, HOTKEY_BINDINGS_KEY);
+
+    // Migrate audio_source schema
+    auto audioSource = obs_data_get_string(settings, "audio_source");
+    if (!strncmp(audioSource, "master_track_", strlen("master_track_"))) {
+        // Separate out track number
+        size_t trackNo = 0;
+        sscanf(audioSource, "master_track_%zu", &trackNo);
+
+        obs_data_set_string(settings, "audio_source", "master_track");
+        obs_data_set_int(settings, "audio_track", trackNo);
+    }
+
+    // Migrate streaming_enabled (for pre-existing filters without this key)
+    if (!obs_data_has_user_value(settings, "streaming_enabled")) {
+        bool hasAnyServer = countEnabledStreamings(settings) > 0;
+        obs_data_set_bool(settings, "streaming_enabled", hasAnyServer);
+    }
+    pinOutputLineup(settings);
+
+    // FIXME: obs_save_source() / obs_source_duplicate() persist the live settings, so edits never
+    // applied in the properties dialog arrive here and get published as applied. Store the
+    // snapshot under a dedicated settings key in AppliedSettings::replace() and prefer it here; the
+    // live object is shared with the properties view, so saveCallback() must not rewrite its keys.
+    appliedSettings.replace(settings);
+
+    // Fiter activate immediately when "server" or "stream_recording" or "replay_buffer" is exists.
+    initialized = isStreamingGroupEnabled(settings) || obs_data_get_bool(settings, "stream_recording") ||
+                  obs_data_get_bool(settings, "replay_buffer");
+
+    // Register proc handlers for external script access. These handlers
+    // live on contextSource and die with it. A well-behaved script acquires a
+    // strong ref via obs_get_source_by_uuid() before calling; the weak-ref CAS
+    // refuses to bump a count of 0, so the filter cannot be destroyed mid-call.
+    // A misbehaving script that caches a proc_handler_t * past source release
+    // and calls it without holding the strong ref triggers a UAF that the
+    // plugin cannot prevent — that is a script-side bug.
+    //
+    // FIXME: libobs has no proc_handler_remove(). If it gains one, pair
+    // unregistration with ~BranchOutput().
+    proc_handler_t *ph = obs_source_get_proc_handler(contextSource);
+    proc_handler_add(
+        ph, "void override_replay_buffer_filename_format(in string format)", onOverrideReplayBufferFilenameFormat,
+        toCallbackData()
+    );
+    proc_handler_add(
+        ph, "void override_recording_filename_format(in string format)", onOverrideRecordingFilenameFormat,
+        toCallbackData()
+    );
+}
+
+// Discard in the properties dialog restores only the keys that had a user value when it opened,
+// so the keys that decide which outputs run and where they stream keep their current value as a
+// user value.
+void BranchOutput::pinOutputLineup(obs_data_t *settings)
+{
+    auto pinBool = [settings](const char *key) {
+        if (!obs_data_has_user_value(settings, key)) {
+            obs_data_set_bool(settings, key, obs_data_get_bool(settings, key));
+        }
+    };
+    auto pinString = [settings](const char *key) {
+        if (!obs_data_has_user_value(settings, key)) {
+            // Copied first: writing the user value can invalidate the returned pointer
+            QByteArray value = obs_data_get_string(settings, key);
+            obs_data_set_string(settings, key, value.constData());
+        }
+    };
+
+    pinBool("streaming_enabled");
+    pinBool("stream_recording");
+    pinBool("replay_buffer");
+
+    if (!obs_data_has_user_value(settings, "service_count")) {
+        obs_data_set_int(settings, "service_count", obs_data_get_int(settings, "service_count"));
+    }
+
+    for (size_t i = 0; i < MAX_SERVICES; i++) {
+        auto propNameFormat = getIndexedPropNameFormat(i);
+        pinString(qUtf8Printable(propNameFormat.arg("server")));
+        pinString(qUtf8Printable(propNameFormat.arg("key")));
+        pinBool(qUtf8Printable(propNameFormat.arg("use_auth")));
+        pinString(qUtf8Printable(propNameFormat.arg("username")));
+        pinString(qUtf8Printable(propNameFormat.arg("password")));
+    }
+}
+
 BranchOutput::AppliedSettings::AppliedSettings()
 {
     pthread_mutex_init_recursive(&mutex);
@@ -126,6 +229,10 @@ OBSDataAutoRelease BranchOutput::AppliedSettings::get()
 // so that the next call can retry from a clean state.
 bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
 {
+    // FIXME: obs_reset_video() frees the mix of videoOutput (the view's, or the main mix on the direct
+    // path) while no encoder is connected (an output still connecting or reconnecting), leaving videoOutput
+    // and the encoder dangling. Only a Program Output detects a reset, and only one that changed the video
+    // settings, at the next timer tick (issue #216).
     if (infrastructureReady) {
         return true;
     }
@@ -146,8 +253,8 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
         return false;
     }
 
-    bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
-    bool muteWhenHidden = obs_data_get_bool(settings, "mute_audio_when_blank");
+    bool blankWhenHidden = hasFilterPipeline() && obs_data_get_bool(settings, "blank_when_not_visible");
+    bool muteWhenHidden = hasFilterPipeline() && obs_data_get_bool(settings, "mute_audio_when_blank");
 
     obs_video_info ovi = {0};
     if (!obs_get_video_info(&ovi)) {
@@ -275,6 +382,14 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
                 }
 
             } else if (!strcmp(audioSourceUuid, "filter")) {
+                if (!hasFilterPipeline()) {
+                    // Non-stopping error
+                    obs_log(
+                        LOG_WARNING, "%s: Ignore filter audio for track %d (%s)", qUtf8Printable(name), track, audioDest
+                    );
+                    continue;
+                }
+
                 // Filter pipline's audio
                 obs_log(LOG_INFO, "%s: Use filter audio for track %d (%s)", qUtf8Printable(name), track, audioDest);
 
@@ -325,8 +440,11 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
     //--- Setup video encoder ---//
     auto video_encoder_id = obs_data_get_string(settings, "video_encoder");
 
-    // The encoder shares the passed settings object and writes into it (get_defaults, migrations).
-    OBSDataAutoRelease encoderSettings = duplicateSettings(settings);
+    // The encoder shares the settings object it is given and writes into it (get_defaults, migrations).
+    // It gets the user values only: the default layer also holds the defaults of encoders selected
+    // earlier in the properties, and the encoder sets its own defaults.
+    OBSDataAutoRelease encoderSettings = obs_data_create();
+    obs_data_apply(encoderSettings, settings);
     videoEncoder = obs_video_encoder_create(video_encoder_id, qUtf8Printable(name), encoderSettings, nullptr);
     if (!videoEncoder) {
         obs_log(LOG_ERROR, "%s: Video encoder creation failed", qUtf8Printable(name));
@@ -408,6 +526,8 @@ void BranchOutput::startOutput(obs_data_t *settings, int interlockType)
     // Force release references
     stopOutput();
 
+    OBSWeakOutputAutoRelease createdReplayBuffer;
+
     pthread_mutex_lock(&outputMutex);
     {
         OBSMutexAutoUnlock locked(&outputMutex);
@@ -426,6 +546,7 @@ void BranchOutput::startOutput(obs_data_t *settings, int interlockType)
             recordingEligible = recordingEligible && obs_frontend_recording_active();
             replayBufferEligible = replayBufferEligible && obs_frontend_replay_buffer_active();
         }
+        recordingEligible = recordingEligible && validateRecordingFormat(settings);
 
         // Skip infrastructure setup when no output type is eligible, so that interlock modes
         // like ALWAYS_ON do not rebuild and immediately tear down infrastructure every tick.
@@ -442,7 +563,7 @@ void BranchOutput::startOutput(obs_data_t *settings, int interlockType)
             anyStarted |= createAndStartRecordingOutputChecked(settings);
         }
         if (replayBufferEligible) {
-            anyStarted |= createAndStartReplayBufferChecked(settings);
+            anyStarted |= createAndStartReplayBufferChecked(settings, createdReplayBuffer);
         }
         if (streamingEligible) {
             anyStarted |= createAndStartStreamingOutputs(settings);
@@ -453,6 +574,8 @@ void BranchOutput::startOutput(obs_data_t *settings, int interlockType)
             releaseInfrastructureIfIdle();
         }
     }
+
+    unregisterReplayBufferOutputHotkey(createdReplayBuffer);
 }
 
 void BranchOutput::loadProfile(obs_data_t *settings)
@@ -501,7 +624,7 @@ void BranchOutput::loadProfile(obs_data_t *settings)
     obs_log(LOG_INFO, "Profile settings loaded");
 }
 
-void BranchOutput::loadRecently(obs_data_t *settings)
+void BranchOutput::loadRecently(obs_data_t *settings, bool inheritCrop)
 {
     obs_log(LOG_DEBUG, "Recently settings loading");
     OBSString path = obs_module_get_config_path(obs_current_module(), RECENTLY_SETTINGS_JSON_NAME);
@@ -535,6 +658,17 @@ void BranchOutput::loadRecently(obs_data_t *settings)
         obs_data_erase(recently_settings, "custom_height");
         obs_data_erase(recently_settings, "downscale_filter");
         obs_data_erase(recently_settings, "fps_divider");
+        if (!inheritCrop) {
+            obs_data_erase(recently_settings, "crop_type");
+            obs_data_erase(recently_settings, "crop_rel_top");
+            obs_data_erase(recently_settings, "crop_rel_right");
+            obs_data_erase(recently_settings, "crop_rel_bottom");
+            obs_data_erase(recently_settings, "crop_rel_left");
+            obs_data_erase(recently_settings, "crop_abs_x");
+            obs_data_erase(recently_settings, "crop_abs_y");
+            obs_data_erase(recently_settings, "crop_abs_width");
+            obs_data_erase(recently_settings, "crop_abs_height");
+        }
         // Hotkey bindings are keyed by the owning filter's UUID and must not be inherited.
         obs_data_erase(recently_settings, HOTKEY_BINDINGS_KEY);
         obs_data_apply(settings, recently_settings);
@@ -578,11 +712,12 @@ void BranchOutput::releaseInfrastructureIfIdle()
     // Stop the private video_t (joins its worker thread) before releasing the encoder, for
     // the same reason as the audio_t above. obs_view_remove() only flags the mix for removal
     // on the graphics thread, so it is not a synchronization point.
-    // FIXME: This covers the raw video worker only. A GPU video encoder is driven from libobs'
-    // GPU encode thread via the mix's gpu_encoders array, which only obs_encoder_stop() detaches.
-    // obs_output_active() turning false is no boundary: an output whose start is unresolved already
-    // reports false. Resolve every output's start before releasing infrastructure (issue #161).
-    if (videoOutput && videoOutputOwned) {
+    // An outdated video_t has been freed by obs_reset_video(); only video_output_stop() would touch it.
+    // FIXME: This covers the raw worker of an owned video_t only. Neither the main video_t of the direct
+    // path nor libobs' GPU encode thread (detached only by obs_encoder_stop()) can be stopped here, and
+    // an output whose start is unresolved already reports obs_output_active() false. Resolve every
+    // output's start before releasing infrastructure (issue #161).
+    if (videoOutput && videoOutputOwned && !isVideoInputOutdated()) {
         video_output_stop(videoOutput);
     }
 
@@ -761,6 +896,20 @@ void BranchOutput::onIntervalTimerTimeout()
             // helpers and startOutput() use the same copy.
             auto applied = appliedSettings.get();
             obs_data_t *settings = applied;
+
+            // Must run before anything below reuses the infrastructure. The stop is graceful because a
+            // streaming slot is usually reconnecting here; a later idle tick rebuilds the infrastructure.
+            bool videoInputOutdated;
+            pthread_mutex_lock(&outputMutex);
+            {
+                OBSMutexAutoUnlock outputLocked(&outputMutex);
+                videoInputOutdated = isVideoInputOutdated();
+            }
+            if (videoInputOutdated) {
+                obs_log(LOG_INFO, "%s: OBS video settings changed, Attempting restart", qUtf8Printable(name));
+                stopOutputGracefully();
+                return;
+            }
 
             // Start all eligible streaming slots as a single output group.
             // Returns true if any slot was started.
@@ -952,13 +1101,16 @@ void BranchOutput::onIntervalTimerTimeout()
                     if (!sourceCollapsed && !cropCollapse) {
                         if (!obs_data_get_bool(settings, "keep_output_base_resolution")) {
                             // Restart output when source resolution was changed.
-                            obs_log(LOG_INFO, "%s: Attempting restart the streaming output", qUtf8Printable(name));
+                            obs_log(
+                                LOG_INFO, "%s: Source resolution change detected, Attempting restart",
+                                qUtf8Printable(name)
+                            );
                             startOutput(settings, interlockType);
                             return;
                         }
                     } else {
                         // The source is collapsed or crop would produce 0x0
-                        if (!recordingPending && recordingActive &&
+                        if (!recordingPending && recordingActive && hasFilterPipeline() &&
                             obs_data_get_bool(settings, "suspend_recording_when_source_collapsed")) {
                             if (!streamingActive) {
                                 // Recording only -> Pause the recording
@@ -1226,13 +1378,6 @@ std::optional<CropRect> BranchOutput::calculateCrop(uint32_t srcWidth, uint32_t 
         return CropRect{0, 0, srcWidth, srcHeight};
     }
 
-    // Round to multiples of 2 (encoder requirement)
-    crop.left += (crop.left & 1);
-    crop.top += (crop.top & 1);
-    crop.width &= ~1u;
-    crop.height &= ~1u;
-
-    // Rounding can reduce dimensions to 0
     if (crop.width == 0 || crop.height == 0) {
         return std::nullopt;
     }

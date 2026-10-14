@@ -13,7 +13,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 - The plugin build under test: a folder in install layout (`lib64/obs-plugins/osi-branch-output.so`, `share/obs/obs-plugins/osi-branch-output/`). When omitted, build the current checkout (Step 1).
 - Case IDs to run (default all).
-- An existing report to resume: reuse the work folder, the build, and the OBS version recorded in the report, and run only the cases that have no result. When the work folder is gone, redo Step 1 at the recorded work folder path without creating a new report; if the deployed `osi-branch-output.so` then differs from the recorded SHA-256, stop and ask the user. In that rebuilt folder, before a case that relies on an earlier case's setup (R14 on R13's hotkey assignments), redo that setup.
+- An existing report to resume: reuse the work folder, the build, and the OBS version recorded in the report, and run only the cases that have no result. When the work folder is gone, redo Step 1 at the recorded work folder path without creating a new report; if the deployed `osi-branch-output.so` then differs from the recorded SHA-256, stop and ask the user. In that rebuilt folder, before a case that relies on an earlier case's setup (R14 on R13's hotkey assignments, the M cases on M01's Program Output), redo that setup.
 
 ## Layout
 
@@ -39,22 +39,22 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 ## Tools
 
+- Helper scripts in `.claude/scripts/regression/`: `media.py` (test media), `fixture.py` (the `cases.md` fixture, written while OBS is closed), `obsws.py` (obs-websocket requests), `obs-config.py` (scripts and saved hotkey bindings in the scene collection of a closed instance), `probe.py` (recording checks). Each documents its usage at the top of the file. Run them with `python3`; `obsws.py` needs the `obsws-python` package (for example in a virtual environment under `<work>`). Do not edit them during a run: write any other helper under `<work>/scripts/`, and report a defect of a bundled script to the user.
 - Virtual display: `.claude/skills/regression-linux/scripts/display.sh start|stop <work>` runs Xvfb `:99` (1280x800) with openbox. Prefix every X client command with `DISPLAY=:99`: the shell's own `DISPLAY` is the user's desktop.
 - GUI: xdotool and screenshots on `:99`.
-  - Required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button at the bottom of its scrolled properties), the "Branch Output Status" dock, Settings → Hotkeys, Tools → Scripts, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
+  - Required for adding Branch Output filters (one created with obs-websocket `CreateSourceFilter` never starts its outputs, because its timer lives on a thread without an event loop), the filter properties (including the filter's own Apply button at the bottom of its scrolled properties), a Program Output's properties dialog where a case checks it, the "Branch Output Status" dock (including its "+" menu and its rows' context menus), Settings → Hotkeys, Tools → Scripts, and Undo together with the deletion it reverts (Undo reverts only GUI operations).
   - Screenshot with `import -window root <work>/shots/{name}.png` and Read the file; its pixels are screen coordinates. Click with `xdotool mousemove X Y click 1` (`click 3` for a context menu), scroll with `click 4` / `click 5`, type with `xdotool type`.
-  - Take a fresh screenshot before each click: windows move when they reopen, and dialogs re-lay out when a setting changes, so earlier coordinates can hit another control. OBS renders in software (llvmpipe): wait about 1 s after an action before the screenshot; a window that is still black has not painted yet.
+  - Take a fresh screenshot before each click, and again after any obs-websocket change while the filter properties are open: windows move when they reopen, dialogs re-lay out when a setting changes, and an obs-websocket change also scrolls the properties back to the top, so earlier coordinates can hit another control. Set names, numeric values, and paths of the filter settings through obs-websocket rather than by typing into the properties. An obs-websocket change to a filter's settings applies at once, like Apply, together with any unapplied edit in its open properties: in a step that must stay unapplied until Apply (R15), change the value in the properties instead (for the resolution, pick a dropdown entry such as "Half of source (50%)") and send no obs-websocket settings change to that filter until the step's Apply. OBS renders in software (llvmpipe): wait about 1 s after an action before the screenshot; a window that is still black has not painted yet.
   - Take a screenshot of an opened dropdown before choosing an item: Qt opens the list with the current item over the box, so item positions change with the current value.
   - Close windows with their own buttons or Escape, never `xdotool windowclose`: it destroys the window without Qt's close handling.
   - On a new config the main window opens taller than the screen: move and resize it to 1280x776 at 0,0 with `xdotool windowmove` / `windowsize`. OBS restores that geometry at later launches.
   - Widen the dock's Status column (Split / Pause / Unpause / Add chapter / Save) and last column (Reset) before clicking a row's buttons: at the default widths clicks miss them.
-  - Hotkeys: hold the combination for 0.2 s (`xdotool keydown {combo} sleep 0.2 keyup {combo}`). A `xdotool key` tap reaches OBS only while its main window has focus; otherwise OBS samples the key state every 25 ms and misses the tap.
-- obs-websocket: when a client is available (for example `obsws-python` in a virtual environment under `<work>`), allowed for any other change or observation it supports (for example main streaming / recording / replay buffer, scene switching, Studio Mode, source and filter settings, `GetSourceActive`, `GetHotkeyList`).
-  - Enable its server while OBS is closed, in `<config>/plugin_config/obs-websocket/config.json` (`server_enabled`, `server_port`, `auth_required`, `server_password`). Use a port other than 4455, which the user's own OBS may hold.
-  - In Studio Mode, set the Program scene before the Preview scene: setting the Program scene also moves the Preview to it.
+  - Hotkeys: hold the combination for 0.2 s (`xdotool keydown {combo} sleep 0.2 keyup {combo}`). A `xdotool key` tap reaches OBS only while its main window has focus; otherwise OBS samples the key state every 25 ms and misses the tap. Do not assign Ctrl+Alt+F1–F12: on Xvfb they are VT-switch keysyms, and Settings → Hotkeys records only "Control + Alt". Add Shift or use letters.
+- obs-websocket: allowed for any other change or observation it supports (for example main streaming / recording / replay buffer, scene switching, Studio Mode, source and filter settings, `GetSourceActive`, `GetHotkeyList`). `fixture.py` enables its server on the port given with `--ws-port`, with a password it generates on each run: use a port other than 4455, which the user's own OBS may hold. Pass `--config <config>` to every `obsws.py` call: it reads the port and the password from there.
+  - In Studio Mode, set the Preview scene only after the transition to the Program scene has ended: the transition ends by swapping the old Program into the Preview. `obsws.py studio` does both in this order and waits for the transition.
   - The per-output enabled states (the dock checkboxes, also toggled by hotkeys) are runtime state: writing them into the filter settings through obs-websocket has no effect. Change them with the dock or hotkeys.
 - Local receivers: ffmpeg as the RTMP listener, and as the SRT listener or caller. `-listen 1` accepts one connection and exits when it ends, and every restart of a filter's streaming ends the connection: run each RTMP receiver in a loop that restarts ffmpeg, writing a new file per connection. When `ffmpeg -protocols` lists no `srt`, SKIP the SRT items.
-- Output checks: ffprobe / ffmpeg for resolution, frame rate, duration, streams, chapters, pixel colors of a frame, and audio level and frequency.
+- Output checks: ffprobe / ffmpeg for resolution, frame rate, duration, streams, chapters, pixel colors of a frame, and audio level and frequency (`probe.py` covers these).
 - Logs: the newest file in `<config>/logs/`. Plugin lines start with `[osi-branch-output]`; shutdown writes `Number of memory leaks: N`. `pulse-input: Unable to get server info` (the instance has no sound server) and `VAAPI: Failed to initialize display` lines are not failures. OBS writes no crash report on Linux: a crash ends the process without the shutdown lines and adds an entry to `coredumpctl list`.
 
 ## Step 1 — Prepare
@@ -62,13 +62,13 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 1. Set `{version}` and `{YYYYMMDD-HHmmss}`, and create `<work>`.
 2. Run `.claude/skills/regression-linux/scripts/build-obs.sh {version}` in the background: a first build takes several minutes. It builds `<obs>/install/` from the release's `OBS-Studio-{version}-Sources.tar.gz` after verifying the tarball against the release's SHA-256 digest, and reuses a completed build. When it fails, stop and report the error with the log it names.
 3. Once `build-obs.sh` has finished, deploy the build under test with `.claude/skills/regression-linux/scripts/build-plugin.sh <obs>/install <work>`, adding the user's folder as a third argument when one was given (without it, the script builds the current checkout against `<obs>/install`). Record the SHA-256 it prints.
-4. Start the display, launch OBS, run the launch checks, and read `{plugin-version}` from `[osi-branch-output] Plugin loaded successfully (version {plugin-version})`. If the plugin does not load, or it was built from the current checkout and its version differs from `version` in `buildspec.json`, stop and report to the user. Fit the main window to the screen, then quit, and set `MaxLogs` under `[General]` in `<config>/global.ini` to 100: OBS deletes the oldest logs beyond it (default 10).
+4. Start the display, launch OBS, run the launch checks, and read `{plugin-version}` from `[osi-branch-output] Plugin loaded successfully (version {plugin-version})`. If the plugin does not load, or it was built from the current checkout and its version differs from `version` in `buildspec.json`, stop and report to the user. Fit the main window to the screen, then quit.
 5. Create the report at `.claude/tmp/regression-report/{plugin-version}-linux-{YYYYMMDD-HHmmss}/report.md` from the template `.claude/skills/regression-linux/templates/report.md` (read it to learn the report skeleton), filling in the work folder, the build, and the OBS build. Keep evidence files (ffprobe output, log excerpts) in the same folder. Write the report in the language the user converses in.
-6. Build the fixture described in `cases.md`.
+6. Build the fixture described in `cases.md`: generate the media with `media.py <work>/media --h264 <encoder>` (an H.264 encoder that `ffmpeg -encoders` lists), then, with OBS closed, run `fixture.py --config <config> --media <work>/media --rec <work>/rec --obs-version {version} --ws-port <port>` (the obs-websocket port under Tools).
 
 ## Step 2 — Run the cases
 
-- Run the selected cases in ID order; mark the others N/A.
+- Run the selected cases in the order of `cases.md` (R01–R19, then M01–M14); mark the others N/A.
 - Write each result into the report as soon as its case finishes.
 - Result values: PASS, FAIL, SKIP (a prerequisite is missing on this machine; give the reason), BLOCKED (an earlier failure prevents the case; name it), N/A.
 - When a missing prerequisite rules out only some items of a case, judge the case on the remaining items, and list the skipped items in the Notes column and under "Not covered".
@@ -76,8 +76,9 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 - On a failure:
   - Record the operation, the expected and actual results, and the evidence.
   - Retry the failing operation once and record whether it reproduced.
-  - Search the GitHub issues (`gh issue list --state all --search ...`) for a matching report and link it, or mark the failure as new.
+  - Search the GitHub issues (`gh issue list --state all --json number,title,state,stateReason,labels --search ...`) for a matching report and link it, or mark the failure as new. Judge an issue closed as `DUPLICATE` by the issue it duplicates. A FAIL that matches an open issue or a closed issue labeled `wontfix` is a known-issue FAIL; count it apart from new FAILs. A FAIL that matches only closed issues without that label is a regression of a fixed issue, whatever the close reason (`COMPLETED` or `NOT_PLANNED`): count it as new and write `new (regression of #N)` as its related issue.
   - Continue with the next case. After a crash, save `coredumpctl info {PID}` to the report folder, relaunch OBS, and continue.
+- Search the issues the same way for each plugin behavior noted under Observations. One that matches an open issue or a closed issue labeled `wontfix` goes under "Plugin, known issues" with the issue number; any other goes under "Plugin, no issue", with `regression of #N` when it matches a closed issue without that label.
 - Stop and ask the user when the environment blocks most of the remaining cases (the OBS build fails, OBS does not start, the receivers cannot run, the fixture cannot be built).
 
 ## Step 3 — Clean up
@@ -94,6 +95,6 @@ Tell the user:
 
 - The report path.
 - The OBS version tested, and the path and size of `<obs>` (delete it with `.claude/scripts/del-tmp.sh` when no longer needed).
-- The counts of PASS / FAIL / SKIP / BLOCKED.
-- Each failure in one line: case ID, whether it reproduced, and the related issue or "new".
+- The counts of PASS / FAIL / SKIP / BLOCKED, with FAIL split into new and known-issue FAILs.
+- Each failure in one line: case ID, whether it reproduced, and the related issue (`#N`, `new`, or `new (regression of #N)`).
 - What this machine could not cover (skipped cases and the missing prerequisites).

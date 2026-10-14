@@ -1,0 +1,424 @@
+/*
+Branch Output Plugin
+Copyright (C) 2024 OPENSPHERE Inc. info@opensphere.co.jp
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>
+*/
+
+#include <obs-module.h>
+#include <obs-frontend-api.h>
+#include <util/platform.h>
+#include <obs.hpp>
+
+#include <utility>
+
+#include <QCoreApplication>
+#include <QEvent>
+#include <QSet>
+
+#include "plugin-support.h"
+#include "plugin-program.hpp"
+#include "program-manager.hpp"
+#include "UI/output-status-dock.hpp"
+#include "utils.hpp"
+
+BranchOutputProgramManager::BranchOutputProgramManager(BranchOutputStatusDock *dock, QObject *parent) : QObject(parent)
+{
+    obs_frontend_add_event_callback(onFrontendEvent, this);
+    eventCallbackRegistered = true;
+
+    if (dock) {
+        connect(dock, &BranchOutputStatusDock::addProgramRequested, this, &BranchOutputProgramManager::addProgram);
+        connect(dock, &BranchOutputStatusDock::renameProgramRequested, this, &BranchOutputProgramManager::renameProgram);
+        connect(dock, &BranchOutputStatusDock::removeProgramRequested, this, &BranchOutputProgramManager::removeProgram);
+    }
+}
+
+BranchOutputProgramManager::~BranchOutputProgramManager()
+{
+    if (eventCallbackRegistered) {
+        obs_frontend_remove_event_callback(onFrontendEvent, this);
+        eventCallbackRegistered = false;
+    }
+
+    releasePrograms(false);
+}
+
+QString BranchOutputProgramManager::programsJsonPath()
+{
+    OBSString profilePath = obs_frontend_get_current_profile_path();
+    if (!profilePath) {
+        return QString();
+    }
+
+    return QString(profilePath) + "/" PROGRAMS_JSON_NAME;
+}
+
+BranchOutputProgramManager::ReadResult BranchOutputProgramManager::readProgramsFile(OBSDataArrayAutoRelease &outputs
+) const
+{
+    auto path = programsJsonPath();
+    if (path.isEmpty()) {
+        return ReadResult::Unreadable;
+    }
+
+    if (!os_file_exists(qUtf8Printable(path)) && !os_file_exists(qUtf8Printable(path + ".bak"))) {
+        return ReadResult::Absent;
+    }
+
+    OBSDataAutoRelease doc = obs_data_create_from_json_file_safe(qUtf8Printable(path), "bak");
+    if (!doc) {
+        obs_log(LOG_ERROR, "Failed to read %s", qUtf8Printable(path));
+        return ReadResult::Unreadable;
+    }
+
+    auto version = obs_data_get_int(doc, "version");
+    if (version != PROGRAMS_JSON_VERSION) {
+        obs_log(LOG_ERROR, "Unsupported version %lld of %s", version, qUtf8Printable(path));
+        return ReadResult::Unreadable;
+    }
+
+    outputs = obs_data_get_array(doc, "outputs");
+    return ReadResult::Loaded;
+}
+
+void BranchOutputProgramManager::loadPrograms()
+{
+    if (!programs.isEmpty() || !removingPrograms.isEmpty()) {
+        releasePrograms(false);
+    }
+    persistenceReady = false;
+
+    OBSDataArrayAutoRelease outputs;
+    auto result = readProgramsFile(outputs);
+    if (result == ReadResult::Unreadable) {
+        return;
+    }
+
+    if (result == ReadResult::Absent) {
+        persistenceReady = true;
+        return;
+    }
+
+    auto count = obs_data_array_count(outputs);
+    for (size_t i = 0; i < count; i++) {
+        OBSDataAutoRelease item = obs_data_array_item(outputs, i);
+        auto id = obs_data_get_string(item, "id");
+        if (strcmp(id, PROGRAM_SOURCE_ID)) {
+            obs_log(LOG_WARNING, "Skip an entry of unknown type '%s' in %s", id, PROGRAMS_JSON_NAME);
+            continue;
+        }
+
+        OBSSourceAutoRelease source = obs_load_private_source(item);
+        if (!source) {
+            obs_log(LOG_WARNING, "Failed to load Program Output '%s'", obs_data_get_string(item, "name"));
+            continue;
+        }
+
+        adopt(source);
+    }
+
+    persistenceReady = true;
+    obs_log(LOG_INFO, "Loaded %d Program Output(s)", static_cast<int>(programs.size()));
+}
+
+void BranchOutputProgramManager::savePrograms()
+{
+    auto path = programsJsonPath();
+    if (!persistenceReady || path.isEmpty()) {
+        obs_log(LOG_DEBUG, "Skip saving %s", PROGRAMS_JSON_NAME);
+        return;
+    }
+
+    OBSDataAutoRelease doc = obs_data_create();
+    obs_data_set_int(doc, "version", PROGRAMS_JSON_VERSION);
+
+    OBSDataArrayAutoRelease outputs = obs_data_array_create();
+    for (const auto &source : std::as_const(programs)) {
+        // obs_save_source() embeds the live settings object, which must not be serialized itself
+        OBSDataAutoRelease saved = obs_save_source(source);
+        OBSDataAutoRelease copy = obs_data_create();
+        obs_data_apply(copy, saved);
+        obs_data_array_push_back(outputs, copy);
+    }
+    obs_data_set_array(doc, "outputs", outputs);
+
+    if (!obs_data_save_json_safe(doc, qUtf8Printable(path), "tmp", "bak")) {
+        obs_log(LOG_ERROR, "Failed to save %s", qUtf8Printable(path));
+    }
+}
+
+void BranchOutputProgramManager::onProfileChanged()
+{
+    if (programs.isEmpty()) {
+        loadPrograms();
+        return;
+    }
+
+    OBSDataArrayAutoRelease outputs;
+    if (readProgramsFile(outputs) == ReadResult::Loaded) {
+        QSet<QString> fileUuids;
+        auto count = obs_data_array_count(outputs);
+        for (size_t i = 0; i < count; i++) {
+            OBSDataAutoRelease item = obs_data_array_item(outputs, i);
+            if (!strcmp(obs_data_get_string(item, "id"), PROGRAM_SOURCE_ID)) {
+                fileUuids.insert(QString::fromUtf8(obs_data_get_string(item, "uuid")));
+            }
+        }
+
+        QSet<QString> heldUuids;
+        for (const auto &source : std::as_const(programs)) {
+            heldUuids.insert(QString::fromUtf8(obs_source_get_uuid(source)));
+        }
+
+        // The profile was duplicated or renamed: its file mirrors the running outputs
+        if (fileUuids == heldUuids) {
+            obs_log(LOG_INFO, "Keep %d Program Output(s) across the profile change", static_cast<int>(programs.size()));
+            persistenceReady = true;
+            savePrograms();
+            return;
+        }
+    }
+
+    // FIXME: OBS 31+ activates a new profile without PROFILE_CHANGING, so obs_reset_video() runs while
+    // Program Outputs still hold their views. Stop them before the reset once OBS offers a hook for it.
+    releasePrograms(false);
+    loadPrograms();
+}
+
+void BranchOutputProgramManager::releasePrograms(bool drain)
+{
+    // FIXME: An external strong reference (an open properties dialog, a script) keeps its source
+    // alive: dialog edits are lost, and reloading the profile reassigns the UUID. Close the dialogs
+    // first, handling a canceled save prompt, and load the new sources only after the released ones
+    // are destroyed.
+    for (const auto *list : {&programs, &removingPrograms}) {
+        for (const auto &source : *list) {
+            if (auto *program = BranchOutputProgram::fromSource(source)) {
+                program->detach();
+            }
+        }
+    }
+    programs.clear();
+    removingPrograms.clear();
+    persistenceReady = false;
+
+    // Let the graphics and destroy threads drop the released sources, so their UUIDs are free
+    // for an immediate reload. After EXIT no event loop runs, so the deferred deletes are sent here.
+    if (drain) {
+        do {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        } while (obs_wait_for_destroy_queue());
+    } else {
+        obs_wait_for_destroy_queue();
+    }
+}
+
+bool BranchOutputProgramManager::adopt(obs_source_t *source)
+{
+    auto *program = BranchOutputProgram::fromSource(source);
+    if (!program) {
+        obs_log(LOG_WARNING, "Ignore '%s': not a Program Output", obs_source_get_name(source));
+        return false;
+    }
+
+    programs.append(OBSSource(source));
+
+    connect(
+        program, &BranchOutputProgram::persistRequested, this, &BranchOutputProgramManager::savePrograms,
+        Qt::QueuedConnection
+    );
+    connect(
+        program, &BranchOutput::outputUserEnabledChanged, this, &BranchOutputProgramManager::savePrograms,
+        Qt::QueuedConnection
+    );
+
+    program->setSuspended(collectionSwitching);
+    program->attach();
+    return true;
+}
+
+QString BranchOutputProgramManager::nextDefaultName() const
+{
+    QSet<QString> names;
+    for (const auto &source : programs) {
+        names.insert(QString::fromUtf8(obs_source_get_name(source)));
+    }
+
+    auto format = QTStr("Program.DefaultName");
+    if (!format.contains(QStringLiteral("%1"))) {
+        format = QTStr("Program") + " %1";
+    }
+
+    auto count = static_cast<int>(programs.size());
+    for (int number = 1; number <= count; number++) {
+        auto name = format.arg(number);
+        if (!names.contains(name)) {
+            return name;
+        }
+    }
+
+    return format.arg(count + 1);
+}
+
+void BranchOutputProgramManager::addProgram()
+{
+    if (!persistenceReady) {
+        obs_log(LOG_WARNING, "Cannot add a Program Output: %s of the current profile is not loaded", PROGRAMS_JSON_NAME);
+        return;
+    }
+
+    auto defaultName = nextDefaultName();
+    OBSSourceAutoRelease source = obs_source_create_private(PROGRAM_SOURCE_ID, qUtf8Printable(defaultName), nullptr);
+    if (!source) {
+        obs_log(LOG_ERROR, "Failed to create Program Output '%s'", qUtf8Printable(defaultName));
+        return;
+    }
+
+    if (!adopt(source)) {
+        return;
+    }
+    savePrograms();
+
+    BranchOutputProgram::fromSource(source)->openSettings();
+}
+
+int BranchOutputProgramManager::findProgram(const QString &uuid) const
+{
+    for (int i = 0; i < programs.size(); i++) {
+        if (QString::fromUtf8(obs_source_get_uuid(programs.at(i))) == uuid) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+void BranchOutputProgramManager::renameProgram(const QString &uuid, const QString &newName)
+{
+    auto name = newName.trimmed();
+    if (name.isEmpty()) {
+        obs_log(LOG_WARNING, "Cannot rename Program Output: the name is empty");
+        return;
+    }
+
+    auto index = findProgram(uuid);
+    if (index < 0) {
+        obs_log(LOG_DEBUG, "Ignore renaming Program Output %s: not held", qUtf8Printable(uuid));
+        return;
+    }
+
+    OBSSource source = programs.at(index);
+    auto currentName = QString::fromUtf8(obs_source_get_name(source));
+
+    for (int i = 0; i < programs.size(); i++) {
+        if (i != index && QString::fromUtf8(obs_source_get_name(programs.at(i))) == name) {
+            obs_log(
+                LOG_WARNING, "Cannot rename Program Output '%s': '%s' is in use", qUtf8Printable(currentName),
+                qUtf8Printable(name)
+            );
+            return;
+        }
+    }
+
+    if (currentName == name) {
+        return;
+    }
+
+    obs_log(LOG_INFO, "Renamed Program Output '%s' to '%s'", qUtf8Printable(currentName), qUtf8Printable(name));
+    obs_source_set_name(source, qUtf8Printable(name));
+}
+
+void BranchOutputProgramManager::removeProgram(const QString &uuid)
+{
+    auto index = findProgram(uuid);
+    if (index < 0) {
+        obs_log(LOG_DEBUG, "Ignore removing Program Output %s: not held", qUtf8Printable(uuid));
+        return;
+    }
+
+    OBSSource source = programs.takeAt(index);
+    removingPrograms.append(source);
+
+    auto *program = BranchOutputProgram::fromSource(source);
+    obs_log(LOG_INFO, "Removing Program Output '%s'", obs_source_get_name(source));
+
+    // Connected first: beginRemoval() emits removalReady at once when no output is running
+    connect(
+        program, &BranchOutputProgram::removalReady, this, [this, program]() { finishRemoval(program); },
+        Qt::QueuedConnection
+    );
+    program->beginRemoval();
+    savePrograms();
+
+    // Last: closing an open properties dialog may run a nested event loop (unsaved-changes prompt)
+    obs_source_remove(source);
+}
+
+// The program pointer is compared only: a match is alive because removingPrograms holds its source.
+void BranchOutputProgramManager::finishRemoval(BranchOutputProgram *program)
+{
+    for (int i = 0; i < removingPrograms.size(); i++) {
+        if (BranchOutputProgram::fromSource(removingPrograms.at(i)) != program) {
+            continue;
+        }
+
+        OBSSource source = removingPrograms.takeAt(i);
+        program->detach();
+        obs_log(LOG_INFO, "Removed Program Output '%s'", obs_source_get_name(source));
+        return;
+    }
+}
+
+void BranchOutputProgramManager::onFrontendEvent(enum obs_frontend_event event, void *param)
+{
+    auto *manager = static_cast<BranchOutputProgramManager *>(param);
+
+    switch (event) {
+    case OBS_FRONTEND_EVENT_FINISHED_LOADING:
+        manager->collectionSwitching = false;
+        manager->loadPrograms();
+        break;
+    case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGING:
+    case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP:
+        manager->collectionSwitching = true;
+        for (const auto &source : std::as_const(manager->programs)) {
+            BranchOutputProgram::fromSource(source)->setSuspended(true);
+        }
+        break;
+    case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
+        manager->collectionSwitching = false;
+        for (const auto &source : std::as_const(manager->programs)) {
+            BranchOutputProgram::fromSource(source)->setSuspended(false);
+        }
+        // On OBS 30.x, duplicating a scene collection reassigns all UUIDs, private sources included
+        manager->savePrograms();
+        break;
+    case OBS_FRONTEND_EVENT_PROFILE_CHANGING:
+        manager->savePrograms();
+        manager->releasePrograms(false);
+        break;
+    case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
+        manager->onProfileChanged();
+        break;
+    case OBS_FRONTEND_EVENT_EXIT:
+        manager->savePrograms();
+        manager->releasePrograms(true);
+        obs_frontend_remove_event_callback(onFrontendEvent, manager);
+        manager->eventCallbackRegistered = false;
+        break;
+    default:
+        break;
+    }
+}
