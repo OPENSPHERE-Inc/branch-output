@@ -132,6 +132,9 @@ protected:
     // reference keeps its address from being reused, which the pointer comparison against
     // appliedSettings.get() relies on.
     OBSData activeSettings;
+    // Snapshot warnInvalidVideoSettings() last checked; guarded by outputMutex. Held strongly for
+    // the same pointer comparison as activeSettings.
+    OBSData lastCheckedSettings;
     bool outputGracefullyStopping;
     bool streamingIndividualStopping;
 
@@ -313,6 +316,9 @@ protected:
     bool isRecordingUserEnabled() const { return recordingUserEnabled.load(std::memory_order_relaxed); }
     bool isReplayBufferUserEnabled() const { return replayBufferUserEnabled.load(std::memory_order_relaxed); }
     std::optional<CropRect> calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings);
+    // Logs the crop and frame rate divider values that are ignored as invalid, once per snapshot.
+    // Caller must hold outputMutex.
+    void warnInvalidVideoSettings(obs_data_t *settings);
     QString applyFilenameFormatArgs(const QString &format, bool noSpace);
     QString
     resolveFilenameFormat(const QString &formatOverride, obs_data_t *settings, const char *formatKey, bool noSpace);
