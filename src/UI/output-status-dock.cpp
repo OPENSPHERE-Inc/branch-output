@@ -145,6 +145,8 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     outputTable->verticalHeader()->hide();
     outputTable->horizontalHeader()->setSectionsClickable(true);
     outputTable->horizontalHeader()->setMinimumSectionSize(100);
+    // On StyleChange, Qt 6.6.1/6.6.2 resize every section to the style default unless this is set
+    outputTable->horizontalHeader()->setDefaultSectionSize(100);
     outputTable->horizontalHeader()->setStyleSheet("QHeaderView::section { padding: 0 8px; }");
     // A grid shrinks every cell by 1px, which would split the row band at the column borders
     outputTable->setShowGrid(false);
