@@ -1641,6 +1641,8 @@ void OutputTableRow::update()
         kbps = 0.0l;
     }
 
+    // FIXME: this and the first_total / first_dropped check miss a restarted counter that passes the baseline
+    // before update() runs (e.g. dock hidden). Compare per-output start counts saved at Reset (issue #250).
     if (totalBytes < first_bytes) {
         first_bytes = 0;
     }
