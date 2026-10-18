@@ -164,7 +164,7 @@ Do: run outputs on three filters (on `Media`, on `Quad`, and on the scene `Main`
 Pass:
 
 - "Deactivate All" and "Activate All" disable and enable every filter, and the filters' eye icons follow.
-- A row's Reset sets only that row's dropped frames back to 0, also after one filter is deleted and another added. "Reset All" does so on every row (#182). Sent Size returns to the cumulative total at the next refresh (#188).
+- A row's Reset sets only that row's dropped frames back to 0, also after one filter is deleted and another added. "Reset All" does so on every row (#182). Both also set Sent Size back to 0, and later refreshes count it up from there (#188); replay buffer rows leave it empty.
 - Clicking a recording or replay buffer row's folder cell appends a line with its save folder's `file://` URL to `<work>/xdg-open.log`.
 - The Interlock value is kept per profile: set different values in `BORegression` and `BORegression2`; switching profiles shows each profile's own value.
 
