@@ -170,6 +170,7 @@ def sanitize_filename(text):
     3. Replace filesystem-unsafe characters with "-"
     4. Strip trailing dots/spaces (Windows disallows these at end of filename)
     5. Prefix an underscore if the result collides with a Windows reserved name
+    6. Escape "%" as "%%" so the prefix stays literal in the OBS filename format
     """
     if text is None:
         return ""
@@ -203,7 +204,7 @@ def sanitize_filename(text):
     base_before_dot = sanitized.split(".", 1)[0]
     if sanitized.upper() in WINDOWS_RESERVED or base_before_dot.upper() in WINDOWS_RESERVED:
         sanitized = "_" + sanitized
-    return sanitized
+    return sanitized.replace("%", "%%")
 
 
 def read_text_from_source(text_source):

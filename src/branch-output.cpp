@@ -1445,12 +1445,41 @@ void BranchOutput::determineOutputResolution(obs_data_t *settings, obs_video_inf
     }
 }
 
+// The result is still an OBS filename format: "%%" is kept for OBS to unescape, and "%" in the inserted
+// names is doubled so that a name never starts an OBS specifier.
 QString BranchOutput::applyFilenameFormatArgs(const QString &format, bool noSpace)
 {
-    QString sourceName = getInputName();
-    QString filterName = qUtf8Printable(name);
     auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
-    return QString(format).arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
+    auto escapeName = [&re](QString value) {
+        return value.replace(re, "-").replace(u'%', QStringLiteral("%%"));
+    };
+    const QString sourceName = escapeName(getInputName());
+    const QString filterName = escapeName(name);
+
+    QString result;
+    result.reserve(format.size());
+    for (qsizetype i = 0; i < format.size(); i++) {
+        const QChar c = format[i];
+        if (c != u'%' || i + 1 >= format.size()) {
+            result += c;
+            continue;
+        }
+
+        const QChar next = format[i + 1];
+        if (next == u'%') {
+            result += QStringLiteral("%%");
+            i++;
+        } else if (next == u'1') {
+            result += sourceName;
+            i++;
+        } else if (next == u'2') {
+            result += filterName;
+            i++;
+        } else {
+            result += c;
+        }
+    }
+    return result;
 }
 
 QString BranchOutput::resolveFilenameFormat(

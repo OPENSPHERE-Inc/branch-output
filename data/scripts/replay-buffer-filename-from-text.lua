@@ -310,6 +310,7 @@ local function sanitize_filename(text)
     --   5. Truncate to 200 bytes on UTF-8 codepoint boundaries.
     --   6. Re-strip trailing dots/spaces that may appear at the new end.
     --   7. Prefix an underscore if the result collides with a Windows reserved name.
+    --   8. Escape "%" as "%%" so the text stays literal in the OBS filename format.
     if text == nil then
         return ""
     end
@@ -356,6 +357,7 @@ local function sanitize_filename(text)
     if WINDOWS_RESERVED[sanitized:upper()] or WINDOWS_RESERVED[base_before_dot:upper()] then
         sanitized = "_" .. sanitized
     end
+    sanitized = sanitized:gsub("%%", "%%%%")
     return sanitized
 end
 
