@@ -1641,7 +1641,11 @@ void OutputTableRow::update()
         kbps = 0.0l;
     }
 
-    long double num = (long double)totalBytes / (1024.0l * 1024.0l);
+    if (totalBytes < first_bytes) {
+        first_bytes = 0;
+    }
+
+    long double num = (long double)(totalBytes - first_bytes) / (1024.0l * 1024.0l);
     const char *unit = "MiB";
     if (num > 1024) {
         num /= 1024;
@@ -1739,6 +1743,7 @@ void OutputTableRow::reset()
 
     first_total = obs_output_get_total_frames(output);
     first_dropped = obs_output_get_frames_dropped(output);
+    first_bytes = obs_output_get_total_bytes(output);
     droppedFrames->setTextValue(QString("0 / 0 (0)"));
     if (outputType != ROW_OUTPUT_REPLAY_BUFFER) {
         megabytesSent->setTextValue(QString("0 MiB"));

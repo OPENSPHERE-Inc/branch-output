@@ -392,6 +392,7 @@ class OutputTableRow : public QObject {
 
     int first_total = 0;
     int first_dropped = 0;
+    uint64_t first_bytes = 0;
 
     void update();
     void updateOutputToggle();
