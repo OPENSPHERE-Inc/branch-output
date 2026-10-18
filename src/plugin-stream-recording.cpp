@@ -199,8 +199,8 @@ void BranchOutput::createAndStartRecordingOutput(obs_data_t *settings)
     obs_output_set_video_encoder(recordingOutput, videoEncoder);
 
     // Start recording output
-    recordingStartCount++;
     if (obs_output_start(recordingOutput)) {
+        recordingStartCount++;
         recordingActive = true;
         recordingPending = false;
         acquireInputShowing();
@@ -260,8 +260,9 @@ void BranchOutput::restartRecordingOutput()
             // bytes into the dock's Sent Size. Recreate the output object instead of restarting it.
             obs_output_stop(recordingOutput);
 
-            recordingStartCount++;
-            if (!obs_output_start(recordingOutput)) {
+            if (obs_output_start(recordingOutput)) {
+                recordingStartCount++;
+            } else {
                 obs_log(LOG_ERROR, "%s: Restart recording output failed", qUtf8Printable(name));
             }
         }

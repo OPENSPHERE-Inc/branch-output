@@ -181,7 +181,7 @@ protected:
     bool addChapterToRecordingEnabled;
     QString recordingFilenameFormatOverride;
     bool recordingSettingsOverridden;
-    // Incremented before each obs_output_start(recordingOutput) under outputMutex; never reset
+    // Incremented when obs_output_start(recordingOutput) succeeds, under outputMutex; never reset
     std::atomic<uint64_t> recordingStartCount{0};
 
     // Replay buffer context
@@ -189,7 +189,7 @@ protected:
     OBSOutputAutoRelease replayBufferOutput;
     OBSSignal replayBufferSavedSignal;
     QString replayBufferFilenameFormatOverride;
-    // Incremented before each obs_output_start(replayBufferOutput) under outputMutex; never reset
+    // Incremented when obs_output_start(replayBufferOutput) succeeds, under outputMutex; never reset
     std::atomic<uint64_t> replayBufferStartCount{0};
 
     // Streaming context

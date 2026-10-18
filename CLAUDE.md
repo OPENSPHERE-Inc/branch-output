@@ -329,7 +329,7 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - `OutputCell` provides per-output enable/disable checkboxes (eye icon) and folder-open click for recording/replay buffer rows.
 - The `outputUserEnabledChanged` signal provides immediate checkbox sync when state changes from hotkeys or other sources.
 - Thread-safe updates via `QMetaObject::invokeMethod`.
-- Reset records the Drop Frames / Sent Size baselines together with the output's start count, and `OutputTableRow::update()` clears the baselines when the start count has changed. Streaming slots increment `startCount` in the "activate" handler; recording and replay buffer increment `recordingStartCount` / `replayBufferStartCount` right before `obs_output_start()`, in the same `outputMutex` critical section. Any new path that starts a recording or replay buffer output must increment its count the same way.
+- Reset records the Drop Frames / Sent Size baselines together with the output's start count, and `OutputTableRow::update()` clears the baselines when the start count has changed. Streaming slots increment `startCount` in the "activate" handler; recording and replay buffer increment `recordingStartCount` / `replayBufferStartCount` right after a successful `obs_output_start()`, in the same `outputMutex` critical section. Any new path that starts a recording or replay buffer output must increment its count the same way.
 
 ### Modifying Replay Buffer
 
