@@ -134,6 +134,7 @@ void BranchOutput::createAndStartReplayBuffer(obs_data_t *settings, OBSWeakOutpu
     replayBufferSavedSignal.Connect(handler, "saved", onReplayBufferSaved, toCallbackData());
 
     // Start replay buffer output
+    replayBufferStartCount++;
     if (obs_output_start(replayBufferOutput)) {
         replayBufferActive = true;
         acquireInputShowing();

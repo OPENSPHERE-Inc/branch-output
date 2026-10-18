@@ -199,6 +199,7 @@ void BranchOutput::createAndStartRecordingOutput(obs_data_t *settings)
     obs_output_set_video_encoder(recordingOutput, videoEncoder);
 
     // Start recording output
+    recordingStartCount++;
     if (obs_output_start(recordingOutput)) {
         recordingActive = true;
         recordingPending = false;
@@ -255,9 +256,11 @@ void BranchOutput::restartRecordingOutput()
             }
 
             // FIXME: An unconsumed split request survives this stop / start and splits the new run
-            // before its first packet. Recreate the output object instead of restarting it.
+            // before its first packet, and the mp4_output / mov_output byte count carries pre-Reset
+            // bytes into the dock's Sent Size. Recreate the output object instead of restarting it.
             obs_output_stop(recordingOutput);
 
+            recordingStartCount++;
             if (!obs_output_start(recordingOutput)) {
                 obs_log(LOG_ERROR, "%s: Restart recording output failed", qUtf8Printable(name));
             }

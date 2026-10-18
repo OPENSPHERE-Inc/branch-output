@@ -1479,6 +1479,23 @@ void OutputTableRow::updateOutputToggle()
     }
 }
 
+uint64_t OutputTableRow::currentStartCount() const
+{
+    switch (outputType) {
+    case ROW_OUTPUT_STREAMING:
+        if (streamingIndex < MAX_SERVICES) {
+            return branchOutput->streamings[streamingIndex].startCount.load();
+        }
+        return 0;
+    case ROW_OUTPUT_RECORDING:
+        return branchOutput->recordingStartCount.load();
+    case ROW_OUTPUT_REPLAY_BUFFER:
+        return branchOutput->replayBufferStartCount.load();
+    default:
+        return 0;
+    }
+}
+
 // Imitate UI/window-basic-stats.cpp
 void OutputTableRow::update()
 {
@@ -1624,6 +1641,14 @@ void OutputTableRow::update()
         return;
     }
 
+    uint64_t startCount = currentStartCount();
+    if (startCount != baselineStartCount) {
+        first_total = 0;
+        first_dropped = 0;
+        first_bytes = 0;
+        baselineStartCount = startCount;
+    }
+
     uint64_t totalBytes = obs_output_get_total_bytes(output);
     uint64_t curTime = os_gettime_ns();
     uint64_t bytesSent = totalBytes;
@@ -1643,8 +1668,7 @@ void OutputTableRow::update()
         kbps = 0.0l;
     }
 
-    // FIXME: this and the first_total / first_dropped check miss a restarted counter that passes the baseline
-    // before update() runs (e.g. dock hidden). Compare per-output start counts saved at Reset (issue #250).
+    // Counters can also restart without a new start count (e.g. a failed reconnect attempt)
     if (totalBytes < first_bytes) {
         first_bytes = 0;
     }
@@ -1716,6 +1740,7 @@ void OutputTableRow::reset()
     }
 
     OBSOutputAutoRelease output;
+    uint64_t startCount = 0;
 
     pthread_mutex_lock(&branchOutput->outputMutex);
     {
@@ -1736,6 +1761,10 @@ void OutputTableRow::reset()
         default:
             break;
         }
+
+        // Read before the counters: a run starting in between then leaves a stale count here for
+        // update() to detect, never the new count paired with the previous run's counters.
+        startCount = currentStartCount();
     }
 
     if (!output) {
@@ -1745,6 +1774,7 @@ void OutputTableRow::reset()
         return;
     }
 
+    baselineStartCount = startCount;
     first_total = obs_output_get_total_frames(output);
     first_dropped = obs_output_get_frames_dropped(output);
     first_bytes = obs_output_get_total_bytes(output);

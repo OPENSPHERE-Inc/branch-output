@@ -187,7 +187,7 @@ The main class is `BranchOutputFilter` (declared in `plugin-main.hpp`), which is
 - Recursive mutexes (`pthread_mutex_init_recursive()`): `pluginMutex` (module scope) and `outputMutex` / `audioMutex` / `AppliedSettings::mutex` (per filter instance). `filterListSnapshotMutex` (module scope, `PTHREAD_MUTEX_INITIALIZER`, non-recursive, never destroyed) guards only the filter-list snapshot swap and is never nested with the others. Lock ordering: `pluginMutex` → `outputMutex` → `audioMutex` → `AppliedSettings::mutex` (leaf: nothing is acquired while it is held).
 - `audioMutex` protects audio capture pointers against concurrent release in `releaseInfrastructureIfIdle()`.
 - `QMutex` protects audio buffers in `AudioCapture`.
-- Atomic fields (`std::atomic<bool>` for `outputStarting`, `streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`; `std::atomic<uint64_t>` for `reconnectAttemptingAt`) eliminate data races from OBS signal callbacks.
+- Atomic fields (`std::atomic<bool>` for `outputStarting`, `streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`; `std::atomic<uint64_t>` for `reconnectAttemptingAt`, `startCount`, `recordingStartCount`, `replayBufferStartCount`) eliminate data races from OBS signal callbacks.
 - UI updates use `QMetaObject::invokeMethod` with `Qt::QueuedConnection` for thread safety.
 - `AppliedSettings` (`appliedSettings`) holds a copy of the settings as last applied, guarded by its own leaf mutex (taken last). `updateCallback()` only publishes a new copy; the interval timer restarts the output when the copy it reads is not the one the running infrastructure was built from (`activeSettings`).
 
@@ -329,6 +329,7 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 - `OutputCell` provides per-output enable/disable checkboxes (eye icon) and folder-open click for recording/replay buffer rows.
 - The `outputUserEnabledChanged` signal provides immediate checkbox sync when state changes from hotkeys or other sources.
 - Thread-safe updates via `QMetaObject::invokeMethod`.
+- Reset records the Drop Frames / Sent Size baselines together with the output's start count, and `OutputTableRow::update()` clears the baselines when the start count has changed. Streaming slots increment `startCount` in the "activate" handler; recording and replay buffer increment `recordingStartCount` / `replayBufferStartCount` right before `obs_output_start()`, in the same `outputMutex` critical section. Any new path that starts a recording or replay buffer output must increment its count the same way.
 
 ### Modifying Replay Buffer
 
