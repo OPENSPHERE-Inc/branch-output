@@ -1496,6 +1496,14 @@ uint64_t OutputTableRow::currentStartCount() const
     }
 }
 
+uint64_t OutputTableRow::currentBytesStartCount() const
+{
+    if (outputType == ROW_OUTPUT_RECORDING) {
+        return branchOutput->recordingBytesStartCount.load();
+    }
+    return currentStartCount();
+}
+
 // Imitate UI/window-basic-stats.cpp
 void OutputTableRow::update()
 {
@@ -1645,8 +1653,12 @@ void OutputTableRow::update()
     if (startCount != baselineStartCount) {
         first_total = 0;
         first_dropped = 0;
-        first_bytes = 0;
         baselineStartCount = startCount;
+    }
+    uint64_t bytesStartCount = currentBytesStartCount();
+    if (bytesStartCount != baselineBytesStartCount) {
+        first_bytes = 0;
+        baselineBytesStartCount = bytesStartCount;
     }
 
     uint64_t totalBytes = obs_output_get_total_bytes(output);
@@ -1741,6 +1753,7 @@ void OutputTableRow::reset()
 
     OBSOutputAutoRelease output;
     uint64_t startCount = 0;
+    uint64_t bytesStartCount = 0;
 
     pthread_mutex_lock(&branchOutput->outputMutex);
     {
@@ -1765,6 +1778,7 @@ void OutputTableRow::reset()
         // Read before the counters: a run starting in between then leaves a stale count here for
         // update() to detect, never the new count paired with the previous run's counters.
         startCount = currentStartCount();
+        bytesStartCount = currentBytesStartCount();
     }
 
     if (!output) {
@@ -1775,6 +1789,7 @@ void OutputTableRow::reset()
     }
 
     baselineStartCount = startCount;
+    baselineBytesStartCount = bytesStartCount;
     first_total = obs_output_get_total_frames(output);
     first_dropped = obs_output_get_frames_dropped(output);
     first_bytes = obs_output_get_total_bytes(output);

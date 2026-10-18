@@ -183,6 +183,8 @@ protected:
     bool recordingSettingsOverridden;
     // Incremented when obs_output_start(recordingOutput) succeeds, under outputMutex; never reset
     std::atomic<uint64_t> recordingStartCount{0};
+    // Like recordingStartCount, but only for starts that restart the byte count from 0; never reset
+    std::atomic<uint64_t> recordingBytesStartCount{0};
 
     // Replay buffer context
     bool replayBufferActive;
