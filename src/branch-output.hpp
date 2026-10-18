@@ -316,7 +316,7 @@ protected:
     bool isRecordingUserEnabled() const { return recordingUserEnabled.load(std::memory_order_relaxed); }
     bool isReplayBufferUserEnabled() const { return replayBufferUserEnabled.load(std::memory_order_relaxed); }
     std::optional<CropRect> calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings);
-    // Logs the crop and frame rate divider values that are ignored as invalid, once per snapshot.
+    // Logs the crop and frame rate divider values that are not applied as set, once per snapshot.
     // Caller must hold outputMutex.
     void warnInvalidVideoSettings(obs_data_t *settings);
     QString applyFilenameFormatArgs(const QString &format, bool noSpace);

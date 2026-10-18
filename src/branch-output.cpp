@@ -1387,19 +1387,14 @@ std::optional<CropRect> BranchOutput::calculateCrop(uint32_t srcWidth, uint32_t 
         return CropRect{0, 0, srcWidth, srcHeight};
     }
 
-    // A negative value disables cropping as a whole, the same as crop_type "none".
-    if (findNegativeCropKey(settings)) {
-        return CropRect{0, 0, srcWidth, srcHeight};
-    }
-
     CropRect crop = {};
 
-    // The values are non-negative here and are compared in 64 bits, so nothing wraps around.
+    // The bounds are compared in 64 bits, so nothing wraps around.
     if (!strcmp(cropType, "relative")) {
-        auto top = (uint64_t)obs_data_get_int(settings, RELATIVE_CROP_KEYS[0]);
-        auto right = (uint64_t)obs_data_get_int(settings, RELATIVE_CROP_KEYS[1]);
-        auto bottom = (uint64_t)obs_data_get_int(settings, RELATIVE_CROP_KEYS[2]);
-        auto left = (uint64_t)obs_data_get_int(settings, RELATIVE_CROP_KEYS[3]);
+        auto top = (uint64_t)std::max(obs_data_get_int(settings, RELATIVE_CROP_KEYS[0]), 0LL);
+        auto right = (uint64_t)std::max(obs_data_get_int(settings, RELATIVE_CROP_KEYS[1]), 0LL);
+        auto bottom = (uint64_t)std::max(obs_data_get_int(settings, RELATIVE_CROP_KEYS[2]), 0LL);
+        auto left = (uint64_t)std::max(obs_data_get_int(settings, RELATIVE_CROP_KEYS[3]), 0LL);
 
         if (left + right >= srcWidth || top + bottom >= srcHeight) {
             return std::nullopt;
@@ -1411,19 +1406,34 @@ std::optional<CropRect> BranchOutput::calculateCrop(uint32_t srcWidth, uint32_t 
         crop.height = (uint32_t)(srcHeight - top - bottom);
 
     } else if (!strcmp(cropType, "absolute")) {
-        auto x = (uint64_t)obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[0]);
-        auto y = (uint64_t)obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[1]);
-        auto w = (uint64_t)obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[2]);
-        auto h = (uint64_t)obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[3]);
+        long long x = obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[0]);
+        long long y = obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[1]);
+        long long w = obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[2]);
+        long long h = obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[3]);
 
-        if (x >= srcWidth || y >= srcHeight) {
+        // A negative size is an empty rectangle. Checked first, so w + x and h + y cannot overflow.
+        if (w < 0 || h < 0) {
+            return std::nullopt;
+        }
+
+        // Intersect the rectangle with the source.
+        if (x < 0) {
+            w = std::max(w + x, 0LL);
+            x = 0;
+        }
+        if (y < 0) {
+            h = std::max(h + y, 0LL);
+            y = 0;
+        }
+
+        if ((uint64_t)x >= srcWidth || (uint64_t)y >= srcHeight) {
             return std::nullopt;
         }
 
         crop.left = (uint32_t)x;
         crop.top = (uint32_t)y;
-        crop.width = (uint32_t)std::min<uint64_t>(w, srcWidth - x);
-        crop.height = (uint32_t)std::min<uint64_t>(h, srcHeight - y);
+        crop.width = (uint32_t)std::min<uint64_t>((uint64_t)w, srcWidth - (uint64_t)x);
+        crop.height = (uint32_t)std::min<uint64_t>((uint64_t)h, srcHeight - (uint64_t)y);
 
     } else {
         return CropRect{0, 0, srcWidth, srcHeight};
@@ -1446,8 +1456,10 @@ void BranchOutput::warnInvalidVideoSettings(obs_data_t *settings)
     auto cropKey = findNegativeCropKey(settings);
     if (cropKey) {
         obs_log(
-            LOG_WARNING, "%s: Ignoring negative crop value %s=%lld, cropping is disabled", qUtf8Printable(name),
-            cropKey, obs_data_get_int(settings, cropKey)
+            LOG_WARNING,
+            "%s: Negative crop value %s=%lld, the crop rectangle is clipped to the source (empty when its width or "
+            "height is negative)",
+            qUtf8Printable(name), cropKey, obs_data_get_int(settings, cropKey)
         );
     }
 
@@ -1469,7 +1481,7 @@ void BranchOutput::determineOutputResolution(obs_data_t *settings, obs_video_inf
     if (!strcmp(resolution, "custom")) {
         // Custom resolution
         // FIXME: Negative custom_width / custom_height wrap around in these casts. Reject them before
-        // the cast and treat them as unset, as calculateCrop() does for negative crop values.
+        // the cast and treat them as unset.
         ovi->output_width = (uint32_t)obs_data_get_int(settings, "custom_width");
         ovi->output_height = (uint32_t)obs_data_get_int(settings, "custom_height");
 
