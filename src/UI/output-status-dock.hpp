@@ -390,10 +390,16 @@ class OutputTableRow : public QObject {
     uint64_t lastBytesSent = 0;
     uint64_t lastBytesSentTime = 0;
 
+    // Reset baselines: zero, or taken from the run whose start count is baselineStartCount
+    // (first_total / first_dropped) or baselineBytesStartCount (first_bytes)
     int first_total = 0;
     int first_dropped = 0;
     uint64_t first_bytes = 0;
+    uint64_t baselineStartCount = 0;
+    uint64_t baselineBytesStartCount = 0;
 
+    uint64_t currentStartCount() const;
+    uint64_t currentBytesStartCount() const;
     void update();
     void updateOutputToggle();
     void reset();

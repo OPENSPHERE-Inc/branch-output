@@ -200,6 +200,8 @@ void BranchOutput::createAndStartRecordingOutput(obs_data_t *settings)
 
     // Start recording output
     if (obs_output_start(recordingOutput)) {
+        recordingStartCount++;
+        recordingBytesStartCount++;
         recordingActive = true;
         recordingPending = false;
         acquireInputShowing();
@@ -258,7 +260,13 @@ void BranchOutput::restartRecordingOutput()
             // before its first packet. Recreate the output object instead of restarting it.
             obs_output_stop(recordingOutput);
 
-            if (!obs_output_start(recordingOutput)) {
+            if (obs_output_start(recordingOutput)) {
+                recordingStartCount++;
+                // mp4_output / mov_output keep their byte count across stop / start
+                if (!strcmp(obs_output_get_id(recordingOutput), "ffmpeg_muxer")) {
+                    recordingBytesStartCount++;
+                }
+            } else {
                 obs_log(LOG_ERROR, "%s: Restart recording output failed", qUtf8Printable(name));
             }
         }

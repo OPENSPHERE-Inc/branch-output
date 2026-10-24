@@ -93,6 +93,8 @@ protected:
         OBSServiceAutoRelease service;
         std::atomic<uint64_t> reconnectAttemptingAt{0};
         std::atomic<bool> outputStarting{false};
+        // Incremented on each "activate" (start, reconnect); never reset, even on output re-creation
+        std::atomic<uint64_t> startCount{0};
         bool active = false;
         bool stopping = false;
         OBSSignal outputStartingSignal;
@@ -179,12 +181,18 @@ protected:
     bool addChapterToRecordingEnabled;
     QString recordingFilenameFormatOverride;
     bool recordingSettingsOverridden;
+    // Incremented when obs_output_start(recordingOutput) succeeds, under outputMutex; never reset
+    std::atomic<uint64_t> recordingStartCount{0};
+    // Like recordingStartCount, but only for starts that restart the byte count from 0; never reset
+    std::atomic<uint64_t> recordingBytesStartCount{0};
 
     // Replay buffer context
     bool replayBufferActive;
     OBSOutputAutoRelease replayBufferOutput;
     OBSSignal replayBufferSavedSignal;
     QString replayBufferFilenameFormatOverride;
+    // Incremented when obs_output_start(replayBufferOutput) succeeds, under outputMutex; never reset
+    std::atomic<uint64_t> replayBufferStartCount{0};
 
     // Streaming context
     pthread_mutex_t outputMutex; // Recursive mutex — safe to re-lock from same thread
