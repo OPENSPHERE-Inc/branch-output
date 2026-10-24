@@ -23,6 +23,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <util/platform.h>
 #include <obs.hpp>
 
+#include <algorithm>
 #include <utility>
 
 #include <QRegularExpression>
@@ -31,6 +32,58 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "plugin-support.h"
 #include "branch-output.hpp"
 #include "utils.hpp"
+
+static constexpr size_t CROP_KEY_COUNT = 4;
+static const char *const RELATIVE_CROP_KEYS[CROP_KEY_COUNT] = {
+    "crop_rel_top", "crop_rel_right", "crop_rel_bottom", "crop_rel_left"
+};
+static const char *const ABSOLUTE_CROP_KEYS[CROP_KEY_COUNT] = {
+    "crop_abs_x", "crop_abs_y", "crop_abs_width", "crop_abs_height"
+};
+
+// Returns the first negative value's key of the selected crop type, or nullptr when there is none.
+static const char *findNegativeCropKey(obs_data_t *settings)
+{
+    auto cropType = obs_data_get_string(settings, "crop_type");
+    if (!cropType) {
+        return nullptr;
+    }
+
+    const char *const *keys;
+    if (!strcmp(cropType, "relative")) {
+        keys = RELATIVE_CROP_KEYS;
+    } else if (!strcmp(cropType, "absolute")) {
+        keys = ABSOLUTE_CROP_KEYS;
+    } else {
+        return nullptr;
+    }
+
+    for (size_t i = 0; i < CROP_KEY_COUNT; i++) {
+        if (obs_data_get_int(settings, keys[i]) < 0) {
+            return keys[i];
+        }
+    }
+    return nullptr;
+}
+
+// Returns the largest divisor of n that does not exceed limit, or 1 when no divisor above 1 does.
+static uint32_t largestDivisorUpTo(uint32_t n, unsigned long long limit)
+{
+    uint32_t largest = 1;
+    // Divisors pair up as (i, n / i) with i * i <= n, so this loops at most 65536 times.
+    for (uint64_t i = 1; i * i <= n; i++) {
+        if (n % i != 0) {
+            continue;
+        }
+        if (n / i <= limit) {
+            return (uint32_t)(n / i);
+        }
+        if (i <= limit) {
+            largest = (uint32_t)i;
+        }
+    }
+    return largest;
+}
 
 BranchOutput::BranchOutput(obs_data_t *settings, obs_source_t *source, QObject *parent)
     : QObject(parent),
@@ -282,6 +335,8 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
         height = ovi.base_height;
     }
 
+    warnInvalidVideoSettings(settings);
+
     // Treat 0x0 crop result as source collapse — abort silently so that
     // the interval timer can retry when the resolution becomes compatible.
     auto crop = calculateCrop(width, height, settings);
@@ -453,26 +508,16 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
     }
 
     // Apply frame rate divisor
-    auto fpsDivider = (uint32_t)obs_data_get_int(settings, "fps_divider");
-    if (fpsDivider > 1) {
-        // Validate: fps_num must be evenly divisible by the divisor
-        // This ensures clean frame rate for both integer (60, 30, 24) and
-        // NTSC (60000/1001, 30000/1001) source rates.
-        bool valid = (ovi.fps_num % fpsDivider) == 0;
+    long long requestedDivider = obs_data_get_int(settings, "fps_divider");
+    if (requestedDivider > 1) {
+        // fps_num must be evenly divisible by the divisor, which keeps a clean frame rate for both
+        // integer (60, 30, 24) and NTSC (60000/1001, 30000/1001) source rates.
+        uint32_t fpsDivider = largestDivisorUpTo(ovi.fps_num, (unsigned long long)requestedDivider);
 
-        if (!valid) {
-            // Fallback: search downward for nearest valid divisor
-            uint32_t originalDivider = fpsDivider;
-            fpsDivider = 1;
-            for (uint32_t d = originalDivider - 1; d > 1; d--) {
-                if ((ovi.fps_num % d) == 0) {
-                    fpsDivider = d;
-                    break;
-                }
-            }
+        if (fpsDivider != requestedDivider) {
             obs_log(
-                LOG_WARNING, "%s: Frame rate divider 1/%u invalid for %u/%u fps, falling back to 1/%u",
-                qUtf8Printable(name), originalDivider, ovi.fps_num, ovi.fps_den, fpsDivider
+                LOG_WARNING, "%s: Frame rate divider 1/%lld invalid for %u/%u fps, falling back to 1/%u",
+                qUtf8Printable(name), requestedDivider, ovi.fps_num, ovi.fps_den, fpsDivider
             );
         }
 
@@ -1344,35 +1389,51 @@ std::optional<CropRect> BranchOutput::calculateCrop(uint32_t srcWidth, uint32_t 
 
     CropRect crop = {};
 
+    // The bounds are compared in 64 bits, so nothing wraps around.
     if (!strcmp(cropType, "relative")) {
-        auto top = (uint32_t)obs_data_get_int(settings, "crop_rel_top");
-        auto right = (uint32_t)obs_data_get_int(settings, "crop_rel_right");
-        auto bottom = (uint32_t)obs_data_get_int(settings, "crop_rel_bottom");
-        auto left = (uint32_t)obs_data_get_int(settings, "crop_rel_left");
+        auto top = (uint64_t)std::max(obs_data_get_int(settings, RELATIVE_CROP_KEYS[0]), 0LL);
+        auto right = (uint64_t)std::max(obs_data_get_int(settings, RELATIVE_CROP_KEYS[1]), 0LL);
+        auto bottom = (uint64_t)std::max(obs_data_get_int(settings, RELATIVE_CROP_KEYS[2]), 0LL);
+        auto left = (uint64_t)std::max(obs_data_get_int(settings, RELATIVE_CROP_KEYS[3]), 0LL);
 
         if (left + right >= srcWidth || top + bottom >= srcHeight) {
             return std::nullopt;
         }
 
-        crop.left = left;
-        crop.top = top;
-        crop.width = srcWidth - left - right;
-        crop.height = srcHeight - top - bottom;
+        crop.left = (uint32_t)left;
+        crop.top = (uint32_t)top;
+        crop.width = (uint32_t)(srcWidth - left - right);
+        crop.height = (uint32_t)(srcHeight - top - bottom);
 
     } else if (!strcmp(cropType, "absolute")) {
-        auto x = (uint32_t)obs_data_get_int(settings, "crop_abs_x");
-        auto y = (uint32_t)obs_data_get_int(settings, "crop_abs_y");
-        auto w = (uint32_t)obs_data_get_int(settings, "crop_abs_width");
-        auto h = (uint32_t)obs_data_get_int(settings, "crop_abs_height");
+        long long x = obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[0]);
+        long long y = obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[1]);
+        long long w = obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[2]);
+        long long h = obs_data_get_int(settings, ABSOLUTE_CROP_KEYS[3]);
 
-        if (x >= srcWidth || y >= srcHeight) {
+        // A negative size is an empty rectangle. Checked first, so w + x and h + y cannot overflow.
+        if (w < 0 || h < 0) {
             return std::nullopt;
         }
 
-        crop.left = x;
-        crop.top = y;
-        crop.width = (x + w > srcWidth) ? (srcWidth - x) : w;
-        crop.height = (y + h > srcHeight) ? (srcHeight - y) : h;
+        // Intersect the rectangle with the source.
+        if (x < 0) {
+            w = std::max(w + x, 0LL);
+            x = 0;
+        }
+        if (y < 0) {
+            h = std::max(h + y, 0LL);
+            y = 0;
+        }
+
+        if ((uint64_t)x >= srcWidth || (uint64_t)y >= srcHeight) {
+            return std::nullopt;
+        }
+
+        crop.left = (uint32_t)x;
+        crop.top = (uint32_t)y;
+        crop.width = (uint32_t)std::min<uint64_t>((uint64_t)w, srcWidth - (uint64_t)x);
+        crop.height = (uint32_t)std::min<uint64_t>((uint64_t)h, srcHeight - (uint64_t)y);
 
     } else {
         return CropRect{0, 0, srcWidth, srcHeight};
@@ -1385,6 +1446,32 @@ std::optional<CropRect> BranchOutput::calculateCrop(uint32_t srcWidth, uint32_t 
     return crop;
 }
 
+void BranchOutput::warnInvalidVideoSettings(obs_data_t *settings)
+{
+    if (lastCheckedSettings.Get() == settings) {
+        return;
+    }
+    lastCheckedSettings = settings;
+
+    auto cropKey = findNegativeCropKey(settings);
+    if (cropKey) {
+        obs_log(
+            LOG_WARNING,
+            "%s: Negative crop value %s=%lld, the crop rectangle is clipped to the source (empty when its width or "
+            "height is negative)",
+            qUtf8Printable(name), cropKey, obs_data_get_int(settings, cropKey)
+        );
+    }
+
+    auto fpsDivider = obs_data_get_int(settings, "fps_divider");
+    if (fpsDivider < 1) {
+        obs_log(
+            LOG_WARNING, "%s: Ignoring non-positive frame rate divider %lld, frame rate is not divided",
+            qUtf8Printable(name), fpsDivider
+        );
+    }
+}
+
 void BranchOutput::determineOutputResolution(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop)
 {
     uint32_t baseWidth = crop.width;
@@ -1393,6 +1480,8 @@ void BranchOutput::determineOutputResolution(obs_data_t *settings, obs_video_inf
     auto resolution = obs_data_get_string(settings, "resolution");
     if (!strcmp(resolution, "custom")) {
         // Custom resolution
+        // FIXME: Negative custom_width / custom_height wrap around in these casts. Reject them before
+        // the cast and treat them as unset.
         ovi->output_width = (uint32_t)obs_data_get_int(settings, "custom_width");
         ovi->output_height = (uint32_t)obs_data_get_int(settings, "custom_height");
 
@@ -1445,12 +1534,41 @@ void BranchOutput::determineOutputResolution(obs_data_t *settings, obs_video_inf
     }
 }
 
+// The result is still an OBS filename format: "%%" is kept for OBS to unescape, and "%" in the inserted
+// names is doubled so that a name never starts an OBS specifier.
 QString BranchOutput::applyFilenameFormatArgs(const QString &format, bool noSpace)
 {
-    QString sourceName = getInputName();
-    QString filterName = qUtf8Printable(name);
     auto re = noSpace ? QRegularExpression("[\\s/\\\\.:;*?\"<>|&$,]") : QRegularExpression("[/\\\\.:;*?\"<>|&$,]");
-    return QString(format).arg(sourceName.replace(re, "-")).arg(filterName.replace(re, "-"));
+    auto escapeName = [&re](QString value) {
+        return value.replace(re, "-").replace(u'%', QStringLiteral("%%"));
+    };
+    const QString sourceName = escapeName(getInputName());
+    const QString filterName = escapeName(name);
+
+    QString result;
+    result.reserve(format.size());
+    for (qsizetype i = 0; i < format.size(); i++) {
+        const QChar c = format[i];
+        if (c != u'%' || i + 1 >= format.size()) {
+            result += c;
+            continue;
+        }
+
+        const QChar next = format[i + 1];
+        if (next == u'%') {
+            result += QStringLiteral("%%");
+            i++;
+        } else if (next == u'1') {
+            result += sourceName;
+            i++;
+        } else if (next == u'2') {
+            result += filterName;
+            i++;
+        } else {
+            result += c;
+        }
+    }
+    return result;
 }
 
 QString BranchOutput::resolveFilenameFormat(

@@ -135,6 +135,7 @@ void BranchOutput::createAndStartReplayBuffer(obs_data_t *settings, OBSWeakOutpu
 
     // Start replay buffer output
     if (obs_output_start(replayBufferOutput)) {
+        replayBufferStartCount++;
         replayBufferActive = true;
         acquireInputShowing();
         obs_log(LOG_INFO, "%s: Starting replay buffer succeeded", qUtf8Printable(name));

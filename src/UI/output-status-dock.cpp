@@ -145,6 +145,8 @@ BranchOutputStatusDock::BranchOutputStatusDock(QWidget *parent)
     outputTable->verticalHeader()->hide();
     outputTable->horizontalHeader()->setSectionsClickable(true);
     outputTable->horizontalHeader()->setMinimumSectionSize(100);
+    // On StyleChange, Qt 6.6.1/6.6.2 resize every section to the style default unless this is set
+    outputTable->horizontalHeader()->setDefaultSectionSize(100);
     outputTable->horizontalHeader()->setStyleSheet("QHeaderView::section { padding: 0 8px; }");
     // A grid shrinks every cell by 1px, which would split the row band at the column borders
     outputTable->setShowGrid(false);
@@ -1477,6 +1479,31 @@ void OutputTableRow::updateOutputToggle()
     }
 }
 
+uint64_t OutputTableRow::currentStartCount() const
+{
+    switch (outputType) {
+    case ROW_OUTPUT_STREAMING:
+        if (streamingIndex < MAX_SERVICES) {
+            return branchOutput->streamings[streamingIndex].startCount.load();
+        }
+        return 0;
+    case ROW_OUTPUT_RECORDING:
+        return branchOutput->recordingStartCount.load();
+    case ROW_OUTPUT_REPLAY_BUFFER:
+        return branchOutput->replayBufferStartCount.load();
+    default:
+        return 0;
+    }
+}
+
+uint64_t OutputTableRow::currentBytesStartCount() const
+{
+    if (outputType == ROW_OUTPUT_RECORDING) {
+        return branchOutput->recordingBytesStartCount.load();
+    }
+    return currentStartCount();
+}
+
 // Imitate UI/window-basic-stats.cpp
 void OutputTableRow::update()
 {
@@ -1622,6 +1649,18 @@ void OutputTableRow::update()
         return;
     }
 
+    uint64_t startCount = currentStartCount();
+    if (startCount != baselineStartCount) {
+        first_total = 0;
+        first_dropped = 0;
+        baselineStartCount = startCount;
+    }
+    uint64_t bytesStartCount = currentBytesStartCount();
+    if (bytesStartCount != baselineBytesStartCount) {
+        first_bytes = 0;
+        baselineBytesStartCount = bytesStartCount;
+    }
+
     uint64_t totalBytes = obs_output_get_total_bytes(output);
     uint64_t curTime = os_gettime_ns();
     uint64_t bytesSent = totalBytes;
@@ -1641,7 +1680,12 @@ void OutputTableRow::update()
         kbps = 0.0l;
     }
 
-    long double num = (long double)totalBytes / (1024.0l * 1024.0l);
+    // Counters can also restart without a new start count (e.g. a failed reconnect attempt)
+    if (totalBytes < first_bytes) {
+        first_bytes = 0;
+    }
+
+    long double num = (long double)(totalBytes - first_bytes) / (1024.0l * 1024.0l);
     const char *unit = "MiB";
     if (num > 1024) {
         num /= 1024;
@@ -1708,6 +1752,8 @@ void OutputTableRow::reset()
     }
 
     OBSOutputAutoRelease output;
+    uint64_t startCount = 0;
+    uint64_t bytesStartCount = 0;
 
     pthread_mutex_lock(&branchOutput->outputMutex);
     {
@@ -1728,6 +1774,11 @@ void OutputTableRow::reset()
         default:
             break;
         }
+
+        // Read before the counters: a run starting in between then leaves a stale count here for
+        // update() to detect, never the new count paired with the previous run's counters.
+        startCount = currentStartCount();
+        bytesStartCount = currentBytesStartCount();
     }
 
     if (!output) {
@@ -1737,8 +1788,11 @@ void OutputTableRow::reset()
         return;
     }
 
+    baselineStartCount = startCount;
+    baselineBytesStartCount = bytesStartCount;
     first_total = obs_output_get_total_frames(output);
     first_dropped = obs_output_get_frames_dropped(output);
+    first_bytes = obs_output_get_total_bytes(output);
     droppedFrames->setTextValue(QString("0 / 0 (0)"));
     if (outputType != ROW_OUTPUT_REPLAY_BUFFER) {
         megabytesSent->setTextValue(QString("0 MiB"));
