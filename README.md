@@ -38,14 +38,24 @@ More reliable and proper audio handling.
 - Adding chapter markers to recordings（On Hybrid MP4, requires OBS Studio 30.2 or later） (Since 1.0.5)
 - Replay buffer per filter (Since 1.0.8)
 - Filter input mode to capture and output video from the filter chain (Experimental, Since 1.0.8)
-- Blanking and muting when the source is not visible in the program output (Since 1.0.8)
+- Blanking and muting when the source is not visible in Program (Since 1.0.8)
 - Per-profile Status Dock settings (Since 1.0.8)
 - Video cropping with relative (margin) and absolute (region) modes, including a live preview rectangle (Since 1.0.9)
 - Frame rate divider to reduce output frame rate (1/2, 1/3, 1/4, 1/5, 1/6) (Since 1.0.9)
 - Individual start/stop control per output type via "Individual" interlock mode and per-output enable/disable checkboxes in the Status Dock (Since 1.0.9)
 - Proc handler to override recording save file name format from scripts ([API reference](./API.md)) (Since 1.0.9)
 - Proc handler to override replay buffer save file name format from scripts ([API reference](./API.md)) (Since 1.0.9)
-- Hybrid MOV recording format with chapter marker support (Requires OBS Studio 32.0 or later) (Since 1.0.14)
+- Hybrid MOV recording format with chapter marker support (Requires OBS Studio 32.0 or later) (Since 1.1.0)
+- Program Output: stream, record, and run a replay buffer from OBS's Program (what OBS itself
+  streams and records) instead of a source, added from the **+** button of the Status Dock
+  (Since 1.1.0)
+  - Multiple Program Outputs can be added, each with its own settings, outputs, and hotkeys like a
+    filter
+  - Program Outputs are saved per profile
+- Proc handler to list Branch Output filters and Program Outputs from scripts
+  (`osi_branch_output_get_output_list`) ([API reference](./API.md)) (Since 1.1.0)
+- Overriding the recording and replay buffer save file name formats of Program Outputs from
+  scripts, including the bundled sample scripts ([API reference](./API.md)) (Since 1.1.0)
 - Various hotkeys
   - Enable/Disable the filter
   - Manual recording splitting, Pause/Unpause, Adding chapters (Since 1.0.5)
@@ -54,7 +64,9 @@ More reliable and proper audio handling.
   - Save replay buffer, Save all replay buffers (Since 1.0.8)
   - Per-output enable/disable for streaming (all slots / per-slot), recording, and replay buffer (Since 1.0.9)
 - Also available in Studio Mode
-  - **Branch Output ignore studio mode's program out and always outputs preview's one**
+  - **Branch Output filters ignore Studio Mode's Program and always output the Preview's one**
+  - **Program Outputs always output the Program (including transitions), not the Preview**
+    (Since 1.1.0)
 
 ## Requirements
 
@@ -102,21 +114,51 @@ Branch Output will stream even if the scene is not active.
 
 This method should work well except for some sources (e.g., media sources) that will not play unless the scene is active.
 
-## 2. To stream program out to multiple streaming platforms.
+## 2. To stream the Program to multiple streaming platforms
+
+There are two ways, depending on what you need.
+
+- To stream the Program as it is, use a Program Output (method 1).
+- To change the content for each streaming platform, or to apply other filters (such as rotation) to
+  the Program, use the Main View Source plugin with a Branch Output filter (method 2).
+
+### Method 1: Use a Program Output (Since 1.1.0)
+
+1. Click the **+** button in the **Branch Output Status** dock and choose **Program**.
+2. In the window that opens, check **Streaming** and choose the number of platforms in
+   **Stream Count** (up to 8). For each platform, enter the server URL in **Streaming 1 Server**,
+   **Streaming 2 Server**, and so on, and the stream key in the **Stream Key** below it.
+3. Set up the audio and video encoders, and click **OK**.
+
+The streams start according to the Status Dock's **Interlock** setting. Choose **Streaming** to
+start and stop them together with OBS's own stream (this applies to every Branch Output).
+
+The streams of one Program Output share its encoders. To send a different resolution or bitrate to
+each platform, add a Program Output for each of them.
+
+A Program Output sends the Program, including transitions, also in Studio Mode.
+
+### Method 2: Use Main View Source with a Branch Output filter
 
 > **Important note**: Work in studio mode to prevent video loops.
 
-This can be done by using the plugin [Main View Source](https://obsproject.com/forum/resources/main-view-source.1501/) along with it.
+This uses the plugin [Main View Source](https://obsproject.com/forum/resources/main-view-source.1501/) along with Branch Output.
 
 1. Create new blank scene (The scene for streaming)
 2. Add a “Main View Source” to the scene for streaming.
 3. Add Branch Output to the scene's effects filter and set up streaming.
 
-You can also create multiple scenes for streaming and layer additional sources to change the content for each streaming platform.
+This method suits the following cases.
 
-For example, you might want to display Twitch comments on Twitch and YouTube comments on YouTube.
-
-However, this method adds sources but does not reduce them.
+- To change the content for each streaming platform
+  - You can create multiple scenes for streaming and layer additional sources to change the content
+    for each streaming platform.
+  - For example, you might want to display Twitch comments on Twitch and YouTube comments on
+    YouTube.
+  - However, this method adds sources but does not reduce them.
+- To apply other filters (such as rotation) to the Program
+  - Filters added to the scene for streaming or to the Main View Source apply only to the output of
+    that scene's Branch Output, not to OBS's own Program.
 
 ## 3. To dynamically override recording / replay buffer filenames
 
