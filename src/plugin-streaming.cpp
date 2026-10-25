@@ -176,6 +176,9 @@ void BranchOutput::startStreamingOutput(size_t index)
             // Clear any stale reconnect timestamp so a later reconnect episode is not
             // misjudged as stalled by reconnectStallDetected() / reconnectAttemptingTimedOut().
             context->reconnectAttemptingAt = 0;
+            // Count here, not before obs_output_start(): the output clears the new run's counters
+            // asynchronously, before emitting "activate".
+            context->startCount++;
             obs_log(LOG_DEBUG, "%s: Streaming output has activated", obs_output_get_name(context->output));
         },
         &streamings[index]

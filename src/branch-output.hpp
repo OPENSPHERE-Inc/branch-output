@@ -93,6 +93,8 @@ protected:
         OBSServiceAutoRelease service;
         std::atomic<uint64_t> reconnectAttemptingAt{0};
         std::atomic<bool> outputStarting{false};
+        // Incremented on each "activate" (start, reconnect); never reset, even on output re-creation
+        std::atomic<uint64_t> startCount{0};
         bool active = false;
         bool stopping = false;
         OBSSignal outputStartingSignal;
@@ -132,6 +134,9 @@ protected:
     // reference keeps its address from being reused, which the pointer comparison against
     // appliedSettings.get() relies on.
     OBSData activeSettings;
+    // Snapshot warnInvalidVideoSettings() last checked; guarded by outputMutex. Held strongly for
+    // the same pointer comparison as activeSettings.
+    OBSData lastCheckedSettings;
     bool outputGracefullyStopping;
     bool streamingIndividualStopping;
 
@@ -176,12 +181,18 @@ protected:
     bool addChapterToRecordingEnabled;
     QString recordingFilenameFormatOverride;
     bool recordingSettingsOverridden;
+    // Incremented when obs_output_start(recordingOutput) succeeds, under outputMutex; never reset
+    std::atomic<uint64_t> recordingStartCount{0};
+    // Like recordingStartCount, but only for starts that restart the byte count from 0; never reset
+    std::atomic<uint64_t> recordingBytesStartCount{0};
 
     // Replay buffer context
     bool replayBufferActive;
     OBSOutputAutoRelease replayBufferOutput;
     OBSSignal replayBufferSavedSignal;
     QString replayBufferFilenameFormatOverride;
+    // Incremented when obs_output_start(replayBufferOutput) succeeds, under outputMutex; never reset
+    std::atomic<uint64_t> replayBufferStartCount{0};
 
     // Streaming context
     pthread_mutex_t outputMutex; // Recursive mutex — safe to re-lock from same thread
@@ -313,6 +324,9 @@ protected:
     bool isRecordingUserEnabled() const { return recordingUserEnabled.load(std::memory_order_relaxed); }
     bool isReplayBufferUserEnabled() const { return replayBufferUserEnabled.load(std::memory_order_relaxed); }
     std::optional<CropRect> calculateCrop(uint32_t srcWidth, uint32_t srcHeight, obs_data_t *settings);
+    // Logs the crop and frame rate divider values that are not applied as set, once per snapshot.
+    // Caller must hold outputMutex.
+    void warnInvalidVideoSettings(obs_data_t *settings);
     QString applyFilenameFormatArgs(const QString &format, bool noSpace);
     QString
     resolveFilenameFormat(const QString &formatOverride, obs_data_t *settings, const char *formatKey, bool noSpace);
