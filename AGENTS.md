@@ -14,17 +14,24 @@ This file provides a brief overview for AI agents. For detailed project document
 
 | File | Purpose |
 |------|---------|
-| `src/plugin-main.cpp` | Plugin entry point, `BranchOutputFilter` core logic |
+| `src/branch-output.cpp` / `.hpp` | `BranchOutput` base class (shared output logic, virtual hooks) |
+| `src/plugin-main.cpp` | Module entry points, script list procs, `BranchOutputFilter` |
 | `src/plugin-main.hpp` | `BranchOutputFilter` class declaration |
-| `src/plugin-ui.cpp` | OBS properties UI, `getDefaults()`, filter settings |
+| `src/plugin-program.cpp` / `.hpp` | `BranchOutputProgram` (Program Output) |
+| `src/program-manager.cpp` / `.hpp` | `BranchOutputProgramManager` (ownership, `branchOutputPrograms.json`) |
+| `src/plugin-hotkey.cpp` | Hotkey registration sync and binding cache |
 | `src/plugin-streaming.cpp` | Streaming output logic |
 | `src/plugin-stream-recording.cpp` | Recording output logic |
 | `src/plugin-replay-buffer.cpp` | Replay buffer output logic |
+| `src/plugin-ui.cpp` | Shared property groups, `getDefaults()`, filter properties, status dock creation |
 | `src/utils.cpp` / `.hpp` | Utility functions, encoder helpers |
 | `src/audio/audio-capture.cpp` | Audio capture abstraction |
 | `src/video/filter-video-capture.cpp` | Filter input video capture (GPU texrender proxy) |
-| `src/UI/output-status-dock.cpp` | Status dock widget |
+| `src/video/main-texture-proxy.cpp` | Program Output proxy path (main texture proxy source) |
+| `src/UI/output-status-dock.cpp` | Status dock widget ("+" menu, row context menu) |
 | `data/locale/*.ini` | Locale strings (10 languages) |
+| `data/scripts/` | Sample Lua / Python scripts |
+| `API.md` | Script API reference |
 
 ## Essential Rules
 
