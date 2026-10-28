@@ -99,6 +99,7 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
       blankingOutputActive(false),
       blankingAudioMuted(false),
       useFilterInput(false),
+      useAitumSceneInput(false),
       filterVideoCapture(nullptr),
       cropScene(nullptr),
       hotkeyRegistrationTarget(nullptr)
@@ -172,16 +173,46 @@ void BranchOutputFilter::selectVideoInputMode(obs_data_t *settings)
 {
     auto videoSourceType = obs_data_get_string(settings, "video_source_type");
     useFilterInput = videoSourceType && !strcmp(videoSourceType, "filter_input");
+    useAitumSceneInput = videoSourceType && !strcmp(videoSourceType, "aitum_scene");
+
+    if (useAitumSceneInput) {
+        auto *source = obs_filter_get_parent(contextSource);
+        if (!sourceIsAitumVerticalScene(source)) {
+            obs_log(LOG_WARNING, "%s: Aitum scene input selected outside Aitum Vertical; use Source instead",
+                    qUtf8Printable(name));
+        } else {
+            obs_log(LOG_INFO, "%s: Independent Aitum Vertical scene capture: %s",
+                    qUtf8Printable(name), obs_source_get_name(source));
+        }
+        useFilterInput = false;
+    }
 }
 
 // Caller must hold outputMutex.
 // On failure, everything created here has already been cleaned up.
-bool BranchOutputFilter::setupVideoInput(obs_data_t *, obs_video_info *ovi, const CropRect &crop)
+bool BranchOutputFilter::setupVideoInput(obs_data_t *settings, obs_video_info *ovi, const CropRect &crop)
 {
     auto parent = obs_filter_get_parent(contextSource);
     if (!parent) {
         obs_log(LOG_ERROR, "%s: Filter source not found", qUtf8Printable(name));
         return false;
+    }
+
+    // Guard against stale/manual settings selecting Aitum mode on a main-canvas
+    // source. Also refuse the crop proxy, which is currently a main-canvas
+    // private scene and may clip the bottom of a 1080x1920 Aitum scene.
+    const char *mode = obs_data_get_string(settings, "video_source_type");
+    if (mode && !strcmp(mode, "aitum_scene")) {
+        if (!sourceIsAitumVerticalScene(parent)) {
+            obs_log(LOG_ERROR, "%s: Aitum mode requires a scene from the Aitum Vertical canvas",
+                    qUtf8Printable(name));
+            return false;
+        }
+        if (crop.width != width || crop.height != height) {
+            obs_log(LOG_ERROR, "%s: Aitum mode does not support cropping yet. Select None",
+                    qUtf8Printable(name));
+            return false;
+        }
     }
 
     if (useFilterInput) {
@@ -285,15 +316,29 @@ void BranchOutputFilter::teardownVideoInput()
     cropScene = nullptr;
 
     useFilterInput = false;
+    useAitumSceneInput = false;
     blankingOutputActive = false;
     blankingAudioMuted = false;
 }
 
-// FIXME: obs_reset_video() frees the view's mix as well, but no reset is detected for filters.
-// Move the video info comparison of BranchOutputProgram into BranchOutput (issue #216).
+// Detect a vertical canvas being deleted or resized while the output is running.
+// Other modes retain the original Branch Output behavior (see issue #216).
 bool BranchOutputFilter::isVideoInputOutdated() const
 {
-    return false;
+    if (!useAitumSceneInput) {
+        return false;
+    }
+    auto *parent = obs_filter_get_parent(contextSource);
+    if (!sourceIsAitumVerticalScene(parent)) {
+        return true;
+    }
+    OBSCanvasAutoRelease canvas = obs_source_get_canvas(parent);
+    obs_video_info canvasInfo = {};
+    if (!canvas || !obs_canvas_get_video_info(canvas, &canvasInfo) ||
+        canvasInfo.base_width == 0 || canvasInfo.base_height == 0) {
+        return true;
+    }
+    return canvasInfo.base_width != width || canvasInfo.base_height != height;
 }
 
 void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_source_t *parent)
@@ -354,6 +399,14 @@ void BranchOutputFilter::setBlankingActive(bool active, bool muteAudio, obs_sour
 bool BranchOutputFilter::evaluateBlanking(obs_data_t *settings)
 {
     bool blankWhenHidden = obs_data_get_bool(settings, "blank_when_not_visible");
+    const auto *mode = obs_data_get_string(settings, "video_source_type");
+    // Aitum's Program is independent of OBS's main Program.  When an inactive
+    // vertical scene is captured, do not blank it merely because it is not in
+    // the horizontal Program (which it will never be).
+    if (mode && !strcmp(mode, "aitum_scene") &&
+        sourceIsAitumVerticalScene(obs_filter_get_parent(contextSource))) {
+        return false;
+    }
     if (!blankWhenHidden) {
         return false;
     }
@@ -400,8 +453,33 @@ void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHe
         }
     } else {
         obs_source_t *parent = obs_filter_get_parent(contextSource);
+        if (!parent) {
+            outWidth = 0;
+            outHeight = 0;
+            return;
+        }
         outWidth = obs_source_get_width(parent);
         outHeight = obs_source_get_height(parent);
+
+        // The Aitum mode never falls back to the main OBS canvas or a stale
+        // scene size. A missing/removed canvas must suspend this output.
+        if (useAitumSceneInput) {
+            if (!sourceIsAitumVerticalScene(parent)) {
+                outWidth = 0;
+                outHeight = 0;
+                return;
+            }
+            OBSCanvasAutoRelease canvas = obs_source_get_canvas(parent);
+            obs_video_info canvasInfo = {};
+            if (!canvas || !obs_canvas_get_video_info(canvas, &canvasInfo) ||
+                canvasInfo.base_width == 0 || canvasInfo.base_height == 0) {
+                outWidth = 0;
+                outHeight = 0;
+                return;
+            }
+            outWidth = canvasInfo.base_width;
+            outHeight = canvasInfo.base_height;
+        }
     }
 }
 

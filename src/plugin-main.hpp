@@ -49,6 +49,8 @@ class BranchOutputFilter : public BranchOutput {
 
     // Filter input mode flag
     bool useFilterInput;
+    // Track only the opted-in secondary-canvas path; keep the default Source mode untouched.
+    bool useAitumSceneInput;
 
     // Filter input video capture (captures filter input and provides proxy source for obs_view)
     FilterVideoCapture *filterVideoCapture;

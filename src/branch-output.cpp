@@ -326,6 +326,16 @@ bool BranchOutput::ensureInfrastructure(obs_data_t *settings)
     uint32_t sourceHeight;
     getSourceResolution(sourceWidth, sourceHeight);
 
+    // The independent Aitum mode must not fall back to the horizontal OBS
+    // canvas if Aitum's scene resolution is not available yet.
+    const char *inputMode = obs_data_get_string(settings, "video_source_type");
+    if (hasFilterPipeline() && inputMode && !strcmp(inputMode, "aitum_scene") &&
+        (!sourceWidth || !sourceHeight)) {
+        obs_log(LOG_WARNING, "%s: Aitum scene size unavailable; cannot start a native vertical output",
+                qUtf8Printable(name));
+        return false;
+    }
+
     width = sourceWidth;
     height = sourceHeight;
 

@@ -1120,6 +1120,10 @@ void BranchOutput::addVideoEncoderGroup(obs_properties_t *props)
         );
         obs_property_set_long_description(videoSourceType, obs_module_text("VideoSourceType.LongDescription"));
         obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.Source"), "source");
+        if (sourceIsAitumVerticalScene(obs_filter_get_parent(contextSource))) {
+            obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.AitumScene"),
+                                         "aitum_scene");
+        }
         obs_property_list_add_string(videoSourceType, obs_module_text("VideoSourceType.FilterInput"), "filter_input");
     }
 

@@ -92,6 +92,137 @@ inline QString QTStr(const char *lookupVal)
     return QString::fromUtf8(obs_module_text(lookupVal));
 }
 
+// OBS 33 keeps scenes from secondary canvases (such as Aitum Vertical)
+// separate from obs_frontend_get_scenes() / obs_enum_scenes().  These are
+// public scenes, not private sources.  Check canvas registration by pointer
+// rather than by name to avoid matching a scene with the same display name.
+inline bool sourceIsRegisteredCanvasScene(obs_source_t *source)
+{
+    if (!source || !obs_source_is_scene(source)) {
+        return false;
+    }
+
+    OBSCanvasAutoRelease canvas = obs_source_get_canvas(source);
+    if (!canvas || obs_canvas_removed(canvas)) {
+        return false;
+    }
+
+    struct Context {
+        obs_source_t *source;
+        bool found;
+    } ctx = {source, false};
+
+    obs_canvas_enum_scenes(
+        canvas,
+        [](void *param, obs_source_t *candidate) {
+            auto *ctx = static_cast<Context *>(param);
+            if (candidate == ctx->source) {
+                ctx->found = true;
+                return false;
+            }
+            return true;
+        },
+        &ctx
+    );
+    return ctx.found;
+}
+
+// Aitum creates an OBS canvas named 'Aitum Vertical'. Keep this detection
+// deliberately narrow: we must not alter the behaviour of normal OBS scenes.
+inline bool sourceIsAitumVerticalScene(obs_source_t *source)
+{
+    if (!sourceIsRegisteredCanvasScene(source)) {
+        return false;
+    }
+    OBSCanvasAutoRelease canvas = obs_source_get_canvas(source);
+    const char *name = canvas ? obs_canvas_get_name(canvas) : nullptr;
+    return name && strcmp(name, "Aitum Vertical") == 0;
+}
+
+// Compare scene membership by source identity, not by display name. A source can
+// have the same name on another canvas; that must not make it appear available.
+// Include group contents and nested scenes, and cap recursion defensively.
+inline bool sceneContainsSourceByIdentity(obs_scene_t *scene, obs_source_t *target, unsigned depth = 0)
+{
+    if (!scene || !target || depth >= 32) {
+        return false;
+    }
+
+    struct Context {
+        obs_source_t *target;
+        unsigned depth;
+        bool found;
+    } ctx = {target, depth, false};
+
+    obs_scene_enum_items(
+        scene,
+        [](obs_scene_t *, obs_sceneitem_t *item, void *param) {
+            auto *ctx = static_cast<Context *>(param);
+            obs_source_t *itemSource = obs_sceneitem_get_source(item);
+            if (itemSource == ctx->target) {
+                ctx->found = true;
+                return false;
+            }
+            if (obs_sceneitem_is_group(item)) {
+                if (sceneContainsSourceByIdentity(obs_sceneitem_group_get_scene(item), ctx->target, ctx->depth + 1)) {
+                    ctx->found = true;
+                    return false;
+                }
+            } else if (itemSource && obs_source_get_type(itemSource) == OBS_SOURCE_TYPE_SCENE) {
+                if (sceneContainsSourceByIdentity(obs_scene_from_source(itemSource), ctx->target, ctx->depth + 1)) {
+                    ctx->found = true;
+                    return false;
+                }
+            }
+            return true;
+        },
+        &ctx
+    );
+    return ctx.found;
+}
+
+// Check whether a source is present in a scene of any *public* OBS canvas.
+// This includes canvas scenes which are invisible in the main OBS scene list.
+inline bool sourceInCanvasScenes(obs_source_t *source)
+{
+    if (!source) {
+        return false;
+    }
+    struct Context {
+        obs_source_t *source;
+        bool found;
+    } ctx = {source, false};
+
+    obs_enum_canvases(
+        [](void *param, obs_canvas_t *canvas) {
+            auto *ctx = static_cast<Context *>(param);
+            if (obs_canvas_removed(canvas)) {
+                return true;
+            }
+            obs_canvas_enum_scenes(
+                canvas,
+                [](void *param, obs_source_t *sceneSource) {
+                    auto *ctx = static_cast<Context *>(param);
+                    if (sceneSource == ctx->source) {
+                        ctx->found = true;
+                        return false;
+                    }
+                    obs_scene_t *scene = obs_scene_from_source(sceneSource);
+                    if (sceneContainsSourceByIdentity(scene, ctx->source)) {
+                        ctx->found = true;
+                        return false;
+                    }
+                    return true;
+                },
+                ctx
+            );
+            return !ctx->found;
+        },
+        &ctx
+    );
+    return ctx.found;
+}
+
 // Decide source/scene is displayed in frontend or not
 inline bool sourceInFrontend(obs_source_t *source)
 {
@@ -110,17 +241,21 @@ inline bool sourceInFrontend(obs_source_t *source)
                 break;
             }
             obs_scene_t *scene = obs_scene_from_source(lsit.sources.array[i]);
-            found = !!obs_scene_find_source_recursive(scene, obs_source_get_name(source));
+            found = sceneContainsSourceByIdentity(scene, source);
         }
     }
     obs_frontend_source_list_free(&lsit);
 
-    return found;
+    return found || sourceInCanvasScenes(source);
 }
 
 // Decide source/scene is private or not
 inline bool sourceIsPrivate(obs_source_t *source)
 {
+    if (sourceIsRegisteredCanvasScene(source)) {
+        return false;
+    }
+
     auto finder = source;
     auto callback = [](void *param, obs_source_t *_source) {
         auto _finder = (obs_source_t **)param;
