@@ -230,7 +230,7 @@ Rows without a note apply to both the filter and Program Outputs.
 | **Audio** | Takes up to `MAX_AUDIO_MIXES` tracks from `AudioCapture` (silence) or its subclasses, or from OBS's mixes. Without custom audio, the filter uses the filter audio and a Program Output uses master track 1. |
 | **Video** | Each output builds its video input in `setupVideoInput()`, called from `ensureInfrastructure()`. The filter uses an OBS view of its parent source (or of a crop scene or the filter input proxy), and a Program Output uses OBS's main video (direct path) or a view of the main texture proxy (proxy path). |
 | **UI** | Properties are built from the shared groups in `plugin-ui.cpp`, and the filter-specific options appear only when `hasFilterPipeline()` is true. The status dock (`BranchOutputStatusDock`) lists every output of the filters and Program Outputs, including replay buffer save buttons. |
-| **Hotkeys** | Registers hotkeys (pairs and single hotkeys) for enable/disable, split recording, pause/unpause, chapter markers, save replay buffer, and per-output enable/disable (streaming all slots and per slot, recording, replay buffer). `syncHotkeys()` registers/unregisters only the difference between the desired set (derived from settings) and the currently registered set. Bindings are captured into `hotkeyBindingsCache` before unregistering and persisted to the `hotkey_bindings` settings key; on registration they are restored from the cache when libobs restored nothing. Renaming updates descriptions only. The filter registers them on its parent source, and a Program Output registers them as frontend hotkeys and also restores their assignments from the profile's `[Hotkeys]`. |
+| **Hotkeys** | Registers hotkeys (pairs and single hotkeys) for enable/disable, split recording, pause/unpause, chapter markers, save replay buffer, and per-output enable/disable (streaming all slots and per slot, recording, replay buffer). `syncHotkeys()` registers/unregisters only the difference between the desired set (derived from settings) and the currently registered set. Bindings are captured into `hotkeyBindingsCache` before unregistering and persisted to the `hotkey_bindings` settings key; on registration they are restored from the cache when libobs restored nothing. The hotkey names and the cache keys end with the recorded UUID (`hotkeyCacheUuid`); when OBS 30.1 / 30.2 assign new source UUIDs on a scene collection duplication, the next hotkey operation re-keys the cache entries to the new UUID (`rekeyHotkeyBindingsCache()`). Renaming updates descriptions only. The filter registers them on its parent source, and a Program Output registers them as frontend hotkeys and also restores their assignments from the profile's `[Hotkeys]`. |
 | **Interlock** | Can link output activation to OBS streaming, recording, virtual camera, replay buffer, or individual (per-output-type) states. The "Individual" mode maps each Branch Output type to its OBS counterpart independently. |
 | **Individual Start/Stop** | Allows streaming, recording, and replay buffer to be started/stopped independently via `ensureInfrastructure()` / `releaseInfrastructureIfIdle()` to separate shared resource lifecycle from individual output lifecycle. Per-output user intent is tracked via atomic flags (`streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`). |
 | **Cropping** | Supports relative (margin) and absolute (region) video cropping with `CropRect` struct. Live preview via `CropRectPreviewRenderer`. |
@@ -370,6 +370,12 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - Verify that renaming the filter keeps its hotkey assignments and renders the new name in the hotkey descriptions.
 - Verify that deleting the filter and undoing the deletion restores its hotkey assignments.
 - Verify that hotkey assignments are restored in normal mode after OBS has been started and shut down in safe mode.
+- Verify on OBS 30.1 / 30.2, for both a filter and a Program Output, that an assignment of an output
+  type that is turned off survives a scene collection duplication: after turning that output type on
+  in the duplicate, the assignment is still there, and it survives an OBS restart.
+  - The original scene collection keeps its assignments.
+  - A filter made by copying and pasting filters does not inherit the original filter's
+    assignments.
 - Verify on OBS 30.1–32.x that, while the replay buffer is running, Settings → Hotkeys shows no
   "Save Replay" entry under the filter or Program Output name, and that the output's own
   `Save '<name>' Replay Buffer` hotkey saves a replay.
@@ -661,6 +667,10 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
   through `unregisterHotkeyWithCapture()` / `unregisterHotkeyPairWithCapture()`.
   - Only the derived classes' hooks (`registerHotkey()` / `registerHotkeyPair()`) call the libobs
     registration functions (filter: `plugin-hotkey.cpp`, Program Output: `plugin-program.cpp`).
+- Build the hotkey names and the cache keys from `hotkeyCacheUuid`, not from the source each time.
+  - `rekeyHotkeyBindingsCache()` first brings the recorded UUID in line with the source's UUID.
+  - It re-keys only the entries that end with the recorded UUID; entries of another filter are left
+    to `pruneHotkeyBindingsCache()`.
 - The filter registers its hotkeys on its parent source (`obs_hotkey_register_source()` /
   `obs_hotkey_pair_register_source()`).
 - A Program Output registers its hotkeys as frontend hotkeys (`obs_hotkey_register_frontend()` /
@@ -764,6 +774,8 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
     `[Hotkeys]` values are matched by these names as well.
 - **Never call a libobs hotkey API (including `obs_hotkey_update_atomic()`) while holding `pluginMutex` / `outputMutex` / `audioMutex` / `AppliedSettings::mutex`.** libobs invokes hotkey callbacks while holding the hotkey mutex, and some of them take `outputMutex`. Lock order: hotkey mutex → `pluginMutex` → `outputMutex` → `audioMutex` → `AppliedSettings::mutex`. `AppliedSettings::replace()` / `get()` run under the hotkey mutex and under `outputMutex`, so they must not take any other mutex or call a libobs hotkey API.
 - **Hotkey register/unregister/save/load/description updates and every access to `hotkeyBindingsCache` must run inside an `obs_hotkey_update_atomic()` callback.** `obs_hotkey_set_description()` and `obs_hotkey_pair_set_descriptions()` take no lock of their own.
+  - A new callback that builds hotkey names or touches `hotkeyBindingsCache` /
+    `hotkeyCacheOwnedNames` calls `rekeyHotkeyBindingsCache()` first.
 - **`syncHotkeys()` registers nothing while `canRegisterHotkeys()` is false** — do not remove that
   early return or the checks behind it.
   - `BranchOutputFilter::canRegisterHotkeys()` rejects a private parent, because

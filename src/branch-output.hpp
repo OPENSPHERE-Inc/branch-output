@@ -218,6 +218,8 @@ protected:
     // parent's saved hotkey data on registration, and that data lags behind these entries until
     // the parent is saved.
     QSet<QString> hotkeyCacheOwnedNames;
+    // The source UUID that the keys of hotkeyBindingsCache and the hotkey names end with.
+    QString hotkeyCacheUuid;
     // Set when the settings carried no HOTKEY_BINDINGS_KEY: the first sync registers every group
     // once so that bindings still held by the scene collection are harvested into the cache.
     bool hotkeyHarvestPending;
@@ -272,7 +274,9 @@ protected:
     virtual bool hasFilterPipeline() const = 0;
 
     // Hotkey synchronization. After construction, every libobs hotkey call and every access to
-    // hotkeyBindingsCache happens inside an obs_hotkey_update_atomic() callback.
+    // hotkeyBindingsCache, hotkeyCacheOwnedNames and hotkeyCacheUuid happens inside an
+    // obs_hotkey_update_atomic() callback, which first calls rekeyHotkeyBindingsCache() when it
+    // builds hotkey names or touches the cache.
     void syncHotkeys(obs_data_t *settings);
     virtual bool canRegisterHotkeys() = 0;
     void unregisterAllHotkeys();
@@ -288,6 +292,7 @@ protected:
     void syncReplayBufferHotkeys(bool desired);
     void captureRegisteredHotkeyBindings();
     void pruneHotkeyBindingsCache();
+    void rekeyHotkeyBindingsCache();
     virtual bool beginHotkeyRegistration() = 0;
     virtual void endHotkeyRegistration() = 0;
     virtual obs_hotkey_id registerHotkey(const QString &fullName, const QString &description, obs_hotkey_func func) = 0;
