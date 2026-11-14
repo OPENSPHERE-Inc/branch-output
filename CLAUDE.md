@@ -773,7 +773,12 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
   - Program Outputs use the same names with the UUID of their private source, and the profile's
     `[Hotkeys]` values are matched by these names as well.
 - **Never call a libobs hotkey API (including `obs_hotkey_update_atomic()`) while holding `pluginMutex` / `outputMutex` / `audioMutex` / `AppliedSettings::mutex`.** libobs invokes hotkey callbacks while holding the hotkey mutex, and some of them take `outputMutex`. Lock order: hotkey mutex → `pluginMutex` → `outputMutex` → `audioMutex` → `AppliedSettings::mutex`. `AppliedSettings::replace()` / `get()` run under the hotkey mutex and under `outputMutex`, so they must not take any other mutex or call a libobs hotkey API.
-- **Hotkey register/unregister/save/load/description updates and every access to `hotkeyBindingsCache` must run inside an `obs_hotkey_update_atomic()` callback.** `obs_hotkey_set_description()` and `obs_hotkey_pair_set_descriptions()` take no lock of their own.
+- **After construction, hotkey register/unregister/save/load/description updates, every access to
+  `hotkeyBindingsCache` / `hotkeyCacheOwnedNames` / `hotkeyCacheUuid`, and every call to
+  `buildHotkeyName()` / `buildStreamingSlotHotkeyName()` must run inside an
+  `obs_hotkey_update_atomic()` callback.** `obs_hotkey_set_description()` and
+  `obs_hotkey_pair_set_descriptions()` take no lock of their own, and the name builders read
+  `hotkeyCacheUuid`, which `rekeyHotkeyBindingsCache()` rewrites.
   - A new callback that builds hotkey names or touches `hotkeyBindingsCache` /
     `hotkeyCacheOwnedNames` calls `rekeyHotkeyBindingsCache()` first.
 - **`syncHotkeys()` registers nothing while `canRegisterHotkeys()` is false** — do not remove that
