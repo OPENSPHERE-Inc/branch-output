@@ -719,13 +719,19 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 ## Important Warnings
 
 - **Do NOT call `obs_filter_get_parent()` in the `BranchOutputFilter` constructor** — it returns `nullptr` at that point. Use `addCallback()` instead.
-- **`BranchOutputFilter` thread affinity** — `info.create`, `filter_add`, and `filter_remove` run on
-  the thread that creates, adds, or removes the filter, which can be any thread, and `info.destroy`
-  runs on the libobs destroy thread (`obs_source_destroy_defer()`).
+- **`BranchOutputFilter` thread affinity** — the object belongs to the UI thread, but libobs also
+  calls the filter on other threads.
+  - `info.create`, `filter_add`, and `filter_remove` run on the thread that creates, adds, or
+    removes the filter, which can be any thread, and `info.destroy` runs on the libobs destroy
+    thread (`obs_source_destroy_defer()`).
+  - `info.update` (`updateCallback()`) runs on the graphics thread for a deferred update, and the
+    render, tick, and audio callbacks, the hotkey callbacks, the output signal handlers, and the
+    per-output procs can also run off the UI thread.
   - Do not remove the `moveToThread()` at the end of the constructor.
-  - Do not create a QObject child of the filter, such as a `QTimer`, directly in those callbacks.
-    Qt rejects a parent that lives in another thread, so the child would stay on a thread that may
-    process no events. Hand the work to the UI thread with `QMetaObject::invokeMethod(this, ...)`.
+  - Do not create a QObject child of the filter, such as a `QTimer`, in code that can run off the
+    UI thread. Qt rejects a parent that lives in another thread, so the child would stay on a
+    thread that may process no events. Hand the work to the UI thread with
+    `QMetaObject::invokeMethod(this, ...)`.
   - In `destroyCallback()`, read no member after `deleteLater()`, because the UI thread may delete
     the object at once.
 - **Private sources** (not visible in frontend) are intentionally excluded for filters: a filter
