@@ -485,8 +485,8 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
     `addOutput()` with the weak reference of the context source.
     - `addOutput()` resolves the weak reference and does nothing when the source is gone; it holds
       the strong reference while it builds the rows.
-    - A call queued to the UI thread that dereferences an output takes the weak reference of its
-      context source, not a raw `BranchOutput *`.
+    - A call queued to the dock or one of its cells that dereferences an output carries the weak
+      reference of its context source, not a raw `BranchOutput *`.
   - `removeOutput(BranchOutput *)` uses the pointer as a comparison key only.
   - While a row is in the table, the table owns its items.
     - `removeOutput()` calls `detachFromTable()` before `removeRow()`, which moves each item to its
