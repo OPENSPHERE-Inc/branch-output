@@ -295,6 +295,7 @@ class BranchOutputStatusDock : public QFrame {
 
     void update();
     void updateOutputToggles(BranchOutput *output);
+    void refreshOutputUuids();
     QList<BranchOutputInfo> buildOutputListSnapshot() const;
     void publishOutputListSnapshot();
     void applyEnableAllButtonEnabled();
@@ -408,6 +409,7 @@ class OutputTableRow : public QObject {
     void unpauseRecording();
     void addChapterToRecording();
     void openSettings();
+    bool refreshUuids();
     void updateRowId();
 
     long double kbps = 0.0l;
