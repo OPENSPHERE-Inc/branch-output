@@ -585,6 +585,8 @@ void BranchOutputFilter::removeCallback()
     obs_log(LOG_DEBUG, "%s: Filter removing", qUtf8Printable(name));
 
     // Stop interval timer (In proper thread)
+    // FIXME: Off the UI thread this only queues the stop, so onIntervalTimerTimeout() can read
+    // contextSource after libobs frees it. Resolve a weak reference there and hold it for the tick.
     intervalTimerWanted.store(false);
     QMetaObject::invokeMethod(
         this, [this]() { syncIntervalTimer(); }, Qt::AutoConnection
