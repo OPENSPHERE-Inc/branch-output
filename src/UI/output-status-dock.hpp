@@ -23,6 +23,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs.hpp>
 
 #include <atomic>
+#include <memory>
 
 #include <QFrame>
 #include <QPointer>
@@ -81,6 +82,7 @@ class LabelCell : public QLabel {
     Q_OBJECT
 
     OutputTableCellItem *_item;
+    std::unique_ptr<OutputTableCellItem> ownedItem; // Holds _item once taken from the table
 
 public:
     explicit LabelCell(const QString &rowId, QWidget *parent = (QWidget *)nullptr);
@@ -90,14 +92,17 @@ public:
     inline void setTextValue(const QString &textValue);
     inline void setValue(const QVariant &value) { _item->setData(Qt::UserRole, value); }
     inline OutputTableCellItem *item() const { return _item; }
+    void takeItemFromTable();
 };
 
 class FilterCell : public QWidget {
     Q_OBJECT
 
     OutputTableCellItem *_item;
+    std::unique_ptr<OutputTableCellItem> ownedItem; // Holds _item once taken from the table
     QCheckBox *visibilityCheckbox;
     QLabel *name;
+    OBSWeakSourceAutoRelease weakSource;
 
     OBSSignal enableSignal;
     OBSSignal filterRenamedSignal;
@@ -117,6 +122,7 @@ public:
     void setTextValue(const QString &value);
     inline bool isVisibilityChecked() const { return visibilityCheckbox->isChecked(); }
     inline OutputTableCellItem *item() const { return _item; }
+    void takeItemFromTable();
 };
 
 class ParentCell : public LabelCell {
@@ -139,6 +145,7 @@ class OutputCell : public QWidget {
     Q_OBJECT
 
     OutputTableCellItem *_item;
+    std::unique_ptr<OutputTableCellItem> ownedItem; // Holds _item once taken from the table
     QCheckBox *outputToggleCheckbox;
     QLabel *name;
     RowOutputType outputType;
@@ -163,12 +170,14 @@ public:
     void setChecked(bool checked);
     inline bool isChecked() const { return outputToggleCheckbox->isChecked(); }
     inline OutputTableCellItem *item() const { return _item; }
+    void takeItemFromTable();
 };
 
 class StatusCell : public QWidget {
     Q_OBJECT
 
     OutputTableCellItem *_item;
+    std::unique_ptr<OutputTableCellItem> ownedItem; // Holds _item once taken from the table
     QLabel *streamingIcon;
     QLabel *recordingIcon;
     QLabel *recordingPausedIcon;
@@ -214,6 +223,7 @@ public:
     inline void setSaveReplayBufferButtonShow(bool show) { saveReplayBufferButton->setVisible(show); };
     inline bool isSaveReplayBufferButtonShow() const { return saveReplayBufferButton->isVisible(); };
     inline OutputTableCellItem *item() const { return _item; }
+    void takeItemFromTable();
 };
 
 // Q_OBJECT gives this class its own class name, which the accessibility factory matches.
@@ -294,6 +304,8 @@ class BranchOutputStatusDock : public QFrame {
     Qt::SortOrder sortingOrder;
 
     void update();
+    void addRow(BranchOutput *output, size_t streamingIndex, RowOutputType outputType, size_t groupIndex = 0);
+    void addOutput(obs_weak_source_t *contextWeak);
     void updateOutputToggles(BranchOutput *output);
     void refreshOutputUuids();
     QList<BranchOutputInfo> buildOutputListSnapshot() const;
@@ -348,9 +360,10 @@ public:
     explicit BranchOutputStatusDock(QWidget *parent = (QWidget *)nullptr);
     ~BranchOutputStatusDock();
 
+    // Callable from any thread while contextSource is alive
+    void queueAddOutput(obs_source_t *contextSource);
+
 public slots:
-    void addRow(BranchOutput *output, size_t streamingIndex, RowOutputType outputType, size_t groupIndex = 0);
-    void addOutput(BranchOutput *output);
     void removeOutput(BranchOutput *output);
     void setEabnleAll(bool enabled);
     void splitRecordingAll();
@@ -411,6 +424,7 @@ class OutputTableRow : public QObject {
     void openSettings();
     bool refreshUuids();
     void updateRowId();
+    void detachFromTable();
 
     long double kbps = 0.0l;
 
