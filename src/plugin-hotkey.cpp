@@ -82,14 +82,16 @@ captureHotkeyPairBindings(obs_data_t *cache, obs_hotkey_pair_id id, const QStrin
     }
 }
 
+// Caller must hold the libobs hotkey mutex.
 QString BranchOutput::buildHotkeyName(const char *base) const
 {
-    return QString("%1.%2").arg(base).arg(obs_source_get_uuid(contextSource));
+    return QString("%1.%2").arg(base).arg(hotkeyCacheUuid);
 }
 
+// Caller must hold the libobs hotkey mutex.
 QString BranchOutput::buildStreamingSlotHotkeyName(const char *base, size_t index) const
 {
-    return QString("%1%2.%3").arg(base).arg(index).arg(obs_source_get_uuid(contextSource));
+    return QString("%1%2.%3").arg(base).arg(index).arg(hotkeyCacheUuid);
 }
 
 QString BranchOutput::buildHotkeyDescription(const char *textKey) const
@@ -507,7 +509,7 @@ void BranchOutput::captureRegisteredHotkeyBindings()
 // An empty binding array and a missing key mean the same thing on restore.
 void BranchOutput::pruneHotkeyBindingsCache()
 {
-    auto suffix = QString(".%1").arg(obs_source_get_uuid(contextSource));
+    auto suffix = QString(".%1").arg(hotkeyCacheUuid);
     QStringList staleKeys;
 
     for (auto item = obs_data_first(hotkeyBindingsCache); item; obs_data_item_next(&item)) {
@@ -526,6 +528,56 @@ void BranchOutput::pruneHotkeyBindingsCache()
     for (const auto &key : staleKeys) {
         obs_data_erase(hotkeyBindingsCache, qUtf8Printable(key));
     }
+}
+
+// Caller must hold the libobs hotkey mutex.
+// OBS 30.1 / 30.2 assign new UUIDs to every source when duplicating a scene collection. Only the
+// entries ending with the recorded UUID belong to this instance; the others are left to the prune.
+void BranchOutput::rekeyHotkeyBindingsCache()
+{
+    auto sourceUuid = QString::fromUtf8(obs_source_get_uuid(contextSource));
+    if (sourceUuid.isEmpty() || sourceUuid == hotkeyCacheUuid) {
+        return;
+    }
+    if (hotkeyCacheUuid.isEmpty()) {
+        hotkeyCacheUuid = sourceUuid;
+        return;
+    }
+
+    auto oldSuffix = QString(".%1").arg(hotkeyCacheUuid);
+    auto newSuffix = QString(".%1").arg(sourceUuid);
+    auto rekey = [&](const QString &key) {
+        return key.left(key.size() - oldSuffix.size()) + newSuffix;
+    };
+
+    QStringList ownKeys;
+    for (auto item = obs_data_first(hotkeyBindingsCache); item; obs_data_item_next(&item)) {
+        auto key = QString(obs_data_item_get_name(item));
+        if (key.endsWith(oldSuffix) && obs_data_item_gettype(item) == OBS_DATA_ARRAY) {
+            ownKeys.append(key);
+        }
+    }
+
+    for (const auto &key : ownKeys) {
+        OBSDataArrayAutoRelease bindings = obs_data_get_array(hotkeyBindingsCache, qUtf8Printable(key));
+        if (!bindings) {
+            continue;
+        }
+        obs_data_erase(hotkeyBindingsCache, qUtf8Printable(key));
+        obs_data_set_array(hotkeyBindingsCache, qUtf8Printable(rekey(key)), bindings);
+    }
+
+    QSet<QString> ownedNames;
+    for (const auto &fullName : hotkeyCacheOwnedNames) {
+        ownedNames.insert(fullName.endsWith(oldSuffix) ? rekey(fullName) : fullName);
+    }
+    hotkeyCacheOwnedNames.swap(ownedNames);
+
+    obs_log(
+        LOG_INFO, "%s: Hotkey bindings re-keyed from source UUID %s to %s (%lld entries)", qUtf8Printable(name),
+        qUtf8Printable(hotkeyCacheUuid), qUtf8Printable(sourceUuid), (long long)ownKeys.size()
+    );
+    hotkeyCacheUuid = sourceUuid;
 }
 
 // OBS replaces the parent source's hotkey_data with the bindings of the hotkeys that are
@@ -548,6 +600,8 @@ void BranchOutput::syncHotkeys(obs_data_t *settings)
         [](void *param) {
             auto ctx = static_cast<SyncContext *>(param);
             auto filter = ctx->filter;
+
+            filter->rekeyHotkeyBindingsCache();
 
             if (!filter->beginHotkeyRegistration()) {
                 return;
@@ -572,6 +626,7 @@ void BranchOutput::unregisterAllHotkeys()
         [](void *param) {
             auto filter = fromCallbackData(param);
 
+            filter->rekeyHotkeyBindingsCache();
             filter->syncFilterToggleHotkeys(false);
             filter->syncStreamingAllHotkeys(false);
             for (size_t i = 0; i < MAX_SERVICES; i++) {
@@ -653,6 +708,7 @@ void BranchOutput::snapshotHotkeyBindings(obs_data_t *settings)
             auto ctx = static_cast<SnapshotContext *>(param);
             auto filter = ctx->filter;
 
+            filter->rekeyHotkeyBindingsCache();
             filter->captureRegisteredHotkeyBindings();
             filter->pruneHotkeyBindingsCache();
 

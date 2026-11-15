@@ -1,6 +1,6 @@
 ---
 name: regression
-description: Pre-release regression test of the Branch Output plugin on Windows, on portable OBS Studio builds downloaded from the official releases (32.2 latest, 31.1 final, 30.1.2), driving OBS through its GUI with computer use and verifying outputs with ffprobe and OBS logs. Use before a release or when the user asks for a regression or run-through test of Branch Output on Windows.
+description: Pre-release regression test of the Branch Output plugin on Windows, on portable OBS Studio builds downloaded from the official releases (33.0 latest, 32.2 final, 31.1 final, 30.1.2), driving OBS through its GUI with computer use and verifying outputs with ffprobe and OBS logs. Use before a release or when the user asks for a regression or run-through test of Branch Output on Windows.
 ---
 
 # Branch Output Regression Test
@@ -11,7 +11,7 @@ Run the cases in `.claude/skills/regression/cases.md` on each target OBS version
 
 The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
-- A subset of the target versions (default all three).
+- A subset of the target versions (default all four).
 - The plugin build under test: a folder in install layout (`obs-plugins/64bit/osi-branch-output.dll`, `data/obs-plugins/osi-branch-output/`). When omitted, build the current checkout with `build.ps1` and use `release/Package`.
 - Case IDs to run (default all).
 - An existing report to resume: reuse the work folder and the build recorded in the report, and run only the cells that have no result. Before running them, request computer-use access as in Step 1.4 for each version that has cells left. When the work folder is gone, redo Step 1 at the recorded work folder path with the OBS releases recorded in the report, without creating a new report, and before a case that relies on an earlier case's setup (R14 on R13's hotkey assignments, the M cases on M01's Program Output), redo that setup.
@@ -62,15 +62,15 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 ## Step 1 — Prepare
 
 1. Set `{YYYYMMDD-HHmmss}` and create `<work>`. When `%APPDATA%\obs-studio` exists, back it up to `<work>/appdata-obs-studio/`, leaving out the browser cache `plugin_config/obs-browser/`.
-2. For each target version, pick the release (newest non-prerelease 32.2.x, newest non-prerelease 31.1.x, 30.1.2) and download its Windows x64 zip into `<work>`, not the installer or the PDBs: `OBS-Studio-{version}-Windows-x64.zip`, or `OBS-Studio-{version}.zip` on 30.1.2. When the release lists a SHA-256 digest for the asset, verify the download against it. Extract it to `<work>/obs-{version}/`.
-3. Obtain the build under test and deploy it to every instance: put `osi-branch-output.dll` and `.pdb` in `<root>/obs-plugins/64bit/`, and the `data/obs-plugins/osi-branch-output/` folder in `<root>/data/obs-plugins/`. Record the DLL's SHA-256.
+2. For each target version, pick the release (newest non-prerelease 33.0.x, newest non-prerelease 32.2.x, newest non-prerelease 31.1.x, 30.1.2) and download its Windows x64 zip into `<work>`, not the installer or the PDBs: `OBS-Studio-{version}-Windows-x64.zip`, or `OBS-Studio-{version}.zip` on 30.1.2. When the release lists a SHA-256 digest for the asset, verify the download against it. Extract it to `<work>/obs-{version}/`.
+3. Obtain the build under test and deploy it to every instance in the legacy layout, where the release packages install it (#241) and which 33.0 still loads: put `osi-branch-output.dll` and `.pdb` in `<root>/obs-plugins/64bit/`, and the `data/obs-plugins/osi-branch-output/` folder in `<root>/data/obs-plugins/`, creating these folders when the zip lacks them (33.0's zip has neither). Put nothing in 33.0's new plugin folder `<root>/plugins/` or its bundled-module folder `<root>/core/`. Record the DLL's SHA-256.
 4. Launch each instance once. While it runs, request computer-use access to its `obs64.exe`, so that the rest of the run needs no user approval. Read `{plugin-version}` from `[osi-branch-output] Plugin loaded successfully (version {plugin-version})`. If the plugin does not load, or the version is not that of the build under test, stop and report to the user.
 5. Create the report at `.claude/tmp/regression-report/{plugin-version}-{YYYYMMDD-HHmmss}/report.md` from the template `.claude/skills/regression/templates/report.md` (read it to learn the report skeleton), filling in the work folder, the build, and the OBS downloads. Keep evidence files (ffprobe output, log excerpts) in the same folder. Write the report in the language the user converses in.
 6. Build the fixture described in `cases.md` on each instance: generate the media once with `media.py <work>/media`, then, with the instance closed, run `fixture.py --config <root>/config/obs-studio --media <work>/media --rec <root>/work --obs-version {version} --ws-port <port>` (the obs-websocket port under Tools).
 
 ## Step 2 — Run the cases
 
-- Run 32.2 first, then 31.1, then 30.1.2, each with the selected cases in its scope, in the order of `cases.md` (R01–R19, then M01–M14); mark cells out of scope or not selected N/A.
+- Run 33.0 first, then 32.2, then 31.1, then 30.1.2, each with the selected cases in its scope, in the order of `cases.md` (R01–R19, then M01–M14); mark cells out of scope or not selected N/A.
 - Write each result into the report as soon as its case finishes.
 - Result values: PASS, FAIL, SKIP (a prerequisite is missing on this machine; give the reason), BLOCKED (an earlier failure prevents the case; name it), N/A.
 - When a missing prerequisite rules out only some items of a case, judge the case on the remaining items, and list the skipped items in the Notes column and under "Not covered".

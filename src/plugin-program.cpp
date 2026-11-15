@@ -334,8 +334,6 @@ OBSDataArrayAutoRelease BranchOutputProgram::profileBindingsFor(const QString &f
 
 // Caller must hold the libobs hotkey mutex and run on the UI thread.
 // libobs restores no bindings for a frontend hotkey, so the profile's [Hotkeys] is loaded here.
-// FIXME: obs_reset_source_uuids() (OBS 30) changes the UUID these names are built from, so the next
-// save prunes the cache entries of unregistered groups. Re-key the cache before that save (issue #228).
 obs_hotkey_id
 BranchOutputProgram::registerHotkey(const QString &fullName, const QString &description, obs_hotkey_func func)
 {
@@ -433,7 +431,7 @@ void BranchOutputProgram::updateCallback(obs_data_t *settings)
 
     if (attached && !removing) {
         if (auto *dock = loadStatusDock()) {
-            QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
+            dock->queueAddOutput(contextSource);
         }
     }
 
@@ -543,7 +541,7 @@ void BranchOutputProgram::attach()
     attached = true;
 
     if (auto *dock = loadStatusDock()) {
-        QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
+        dock->queueAddOutput(contextSource);
     }
 
     OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
@@ -582,7 +580,7 @@ void BranchOutputProgram::setSuspended(bool suspend)
     } else if (wasSuspended && attached && !removing) {
         // The dock drops the rows of an unavailable input, so register again.
         if (auto *dock = loadStatusDock()) {
-            QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
+            dock->queueAddOutput(contextSource);
         }
     }
 }

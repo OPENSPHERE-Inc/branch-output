@@ -152,6 +152,7 @@ void BranchOutput::initializeSettings(obs_data_t *settings, bool initialCreation
     }
 
     hotkeyBindingsCache = obs_data_create();
+    hotkeyCacheUuid = QString::fromUtf8(obs_source_get_uuid(contextSource));
     OBSDataAutoRelease savedHotkeyBindings = obs_data_get_obj(settings, HOTKEY_BINDINGS_KEY);
     if (savedHotkeyBindings) {
         obs_data_apply(hotkeyBindingsCache, savedHotkeyBindings);
