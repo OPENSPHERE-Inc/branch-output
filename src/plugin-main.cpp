@@ -462,8 +462,7 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
 
     // Register to status dock
     if (auto *dock = statusDock.load()) {
-        // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
+        dock->queueAddOutput(contextSource);
     }
 
     OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
@@ -528,8 +527,7 @@ void BranchOutputFilter::updateCallback(obs_data_t *settings)
 
     // Update status dock
     if (auto *dock = statusDock.load()) {
-        // Show in status dock (Thread-safe way)
-        QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
+        dock->queueAddOutput(contextSource);
     }
 
     obs_log(LOG_INFO, "%s: Filter updated", qUtf8Printable(name));

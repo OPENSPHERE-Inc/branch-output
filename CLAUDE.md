@@ -484,12 +484,26 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
   - Each row is an `OutputTableRow`; the dock and the rows are friends of `BranchOutput` and read
     its protected members.
 - `OutputCell` provides per-output enable/disable checkboxes (eye icon) and folder-open click for recording/replay buffer rows.
+- `FilterCell` and `OutputCell` keep the context source as a weak reference and resolve it before
+  use.
 - The `outputUserEnabledChanged` signal provides immediate checkbox sync when state changes from hotkeys or other sources.
 - Thread-safe updates via `QMetaObject::invokeMethod`.
 - Reset records the Drop Frames / Sent Size baselines together with the output's start counts, and `OutputTableRow::update()` clears a baseline when its start count has changed. Streaming slots increment `startCount` in the "activate" handler; recording and replay buffer increment `recordingStartCount` / `replayBufferStartCount` right after a successful `obs_output_start()`, in the same `outputMutex` critical section. The recording's Sent Size baseline follows `recordingBytesStartCount` instead, which only a start that restarts the byte count from 0 increments (`mp4_output` / `mov_output` keep it across a stop / start of the same object). Any new path that starts a recording or replay buffer output must increment, the same way, each count whose counters that start restarts from 0.
-- `addOutput(BranchOutput *)` creates the rows of an output, and `removeOutput()` removes them.
+- `addOutput()` creates the rows of an output, and `removeOutput()` removes them.
   - An output gets one row for the recording, one for the replay buffer, and one per enabled
     streaming slot, or a single "None" row when none of them is enabled.
+  - Callers use `queueAddOutput(contextSource)`, which can be called from any thread and queues
+    `addOutput()` with the weak reference of the context source.
+    - `addOutput()` resolves the weak reference and does nothing when the source is gone; it holds
+      the strong reference while it builds the rows.
+    - A call queued to the dock or one of its cells that dereferences an output carries the weak
+      reference of its context source, not a raw `BranchOutput *`.
+  - `removeOutput(BranchOutput *)` uses the pointer as a comparison key only.
+  - While a row is in the table, the table owns its items.
+    - `removeOutput()` calls `detachFromTable()` before `removeRow()`, which moves each item to its
+      cell and disconnects the cells from the row.
+    - From then on, each item is deleted together with its cell, which queued calls can still
+      reach until its deferred delete.
 - The input name link calls `openSettings()`: the parent source's filters dialog for a filter, and
   the properties dialog for a Program Output.
   - The Source column of a Program Output row shows "Program" (`getInputName()`).
