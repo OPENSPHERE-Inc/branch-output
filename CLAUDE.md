@@ -249,13 +249,22 @@ Rows without a note apply to both the filter and Program Outputs.
   destroyed) guards only the output-list snapshot swap and is never nested with the others.
 - `audioMutex` protects audio capture pointers against concurrent release in `releaseInfrastructureIfIdle()`.
 - `QMutex` protects audio buffers in `AudioCapture`.
-- Atomic fields (`std::atomic<bool>` for `outputStarting`, `streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`; `std::atomic<uint64_t>` for `reconnectAttemptingAt`, `startCount`, `recordingStartCount`, `recordingBytesStartCount`, `replayBufferStartCount`) eliminate data races from OBS signal callbacks.
+- Atomic fields (`std::atomic<bool>` for `outputStarting`, `streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`, `BranchOutputFilter::intervalTimerWanted`; `std::atomic<uint64_t>` for `reconnectAttemptingAt`, `startCount`, `recordingStartCount`, `recordingBytesStartCount`, `replayBufferStartCount`) eliminate data races from OBS signal callbacks.
 - UI updates use `QMetaObject::invokeMethod` with `Qt::QueuedConnection` for thread safety.
 - UI thread only: `BranchOutputProgramManager`, `attach()` / `detach()` / `setSuspended()` /
-  `beginRemoval()` / `openSettings()` of `BranchOutputProgram`, and the status dock.
+  `beginRemoval()` / `openSettings()` of `BranchOutputProgram`,
+  `BranchOutputFilter::syncIntervalTimer()`, and the status dock.
   - Program Output hotkey registration reads the profile config, so it runs on the UI thread only:
     `BranchOutputProgram::updateCallback()`, which runs on the graphics thread for a deferred
     update, queues `syncHotkeys()` to the UI thread.
+- `BranchOutputFilter` belongs to the UI thread whichever thread creates it: when the creating
+  thread is not the UI thread, the constructor moves the object there with `moveToThread()`.
+  - An example is an obs-websocket `QThreadPool` worker, which processes no events.
+  - Its `deleteLater()` and the calls queued to it are therefore delivered on the UI thread.
+  - Only `syncIntervalTimer()` creates, starts, and stops its interval timer.
+    `addCallback()` / `removeCallback()` write `intervalTimerWanted` and then call it through
+    `QMetaObject::invokeMethod(this, ..., Qt::AutoConnection)`, which runs it at once on the UI
+    thread and queues it to the UI thread from any other thread.
 - `AppliedSettings` (`appliedSettings`) holds a copy of the settings as last applied, guarded by its
   own leaf mutex (taken last).
   - `updateCallback()` publishes a new copy and does not restart the output; a Program Output
@@ -358,6 +367,8 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - Verify that enabling and then disabling the Branch Output filter does not cause a crash.
 - Verify that shutting down OBS does not crash when the Branch Output filter is inactive or active, respectively.
 - Verify that switching scene collections does not crash when the Branch Output filter is inactive or active, respectively.
+- Verify that a filter created with obs-websocket's `CreateSourceFilter` starts its outputs, and
+  that removing it with `RemoveSourceFilter` does not crash and removes its status dock rows.
 - Verify that no memory leaks are logged on OBS shutdown.
 - Verify that mutex does not cause deadlocks.
 - Verify that blanking mode does not leak video or audio unintentionally — when the source is not visible in the main output (Program) and blanking is enabled, the Branch Output must emit a black frame (no source imagery). If audio muting is also enabled, all audio tracks (including master track) must be silenced.
@@ -708,6 +719,15 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 ## Important Warnings
 
 - **Do NOT call `obs_filter_get_parent()` in the `BranchOutputFilter` constructor** — it returns `nullptr` at that point. Use `addCallback()` instead.
+- **`BranchOutputFilter` thread affinity** — `info.create`, `filter_add`, and `filter_remove` run on
+  the thread that creates, adds, or removes the filter, which can be any thread, and `info.destroy`
+  runs on the libobs destroy thread (`obs_source_destroy_defer()`).
+  - Do not remove the `moveToThread()` at the end of the constructor.
+  - Do not create a QObject child of the filter, such as a `QTimer`, directly in those callbacks.
+    Qt rejects a parent that lives in another thread, so the child would stay on a thread that may
+    process no events. Hand the work to the UI thread with `QMetaObject::invokeMethod(this, ...)`.
+  - In `destroyCallback()`, read no member after `deleteLater()`, because the UI thread may delete
+    the object at once.
 - **Private sources** (not visible in frontend) are intentionally excluded for filters: a filter
   whose parent is private starts no timer, is not listed in the status dock, and does not save
   `recently.json` (`addCallback()`, `validateInput()`, `updateCallback()`).

@@ -28,8 +28,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <memory>
 #include <utility>
 
+#include <QCoreApplication>
 #include <QRegularExpression>
 #include <QStringList>
+#include <QThread>
 
 #include "audio/audio-capture.hpp"
 #include "video/filter-video-capture.hpp"
@@ -96,6 +98,7 @@ pthread_mutex_t pluginMutex;
 BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *source, QObject *parent)
     : BranchOutput(settings, source, parent),
       intervalTimer(nullptr),
+      intervalTimerWanted(false),
       blankingOutputActive(false),
       blankingAudioMuted(false),
       useFilterInput(false),
@@ -109,6 +112,11 @@ BranchOutputFilter::BranchOutputFilter(obs_data_t *settings, obs_source_t *sourc
     const char *json = obs_data_get_json(settings);
     bool initialCreation = json && !strcmp(json, "{}");
     initializeSettings(settings, initialCreation, true);
+
+    // The creating thread may process no events (e.g. an obs-websocket request worker).
+    if (thread() != QCoreApplication::instance()->thread()) {
+        moveToThread(QCoreApplication::instance()->thread());
+    }
 
     obs_log(LOG_INFO, "%s: BranchOutputFilter created", qUtf8Printable(name));
 }
@@ -405,6 +413,25 @@ void BranchOutputFilter::getSourceResolution(uint32_t &outWidth, uint32_t &outHe
     }
 }
 
+void BranchOutputFilter::syncIntervalTimer()
+{
+    if (!intervalTimerWanted.load()) {
+        if (intervalTimer) {
+            intervalTimer->stop();
+        }
+        return;
+    }
+
+    if (!intervalTimer) {
+        intervalTimer = new QTimer(this);
+        intervalTimer->setInterval(TASK_INTERVAL_MS);
+        connect(intervalTimer, SIGNAL(timeout()), this, SLOT(onIntervalTimerTimeout()));
+    }
+    if (!intervalTimer->isActive()) {
+        intervalTimer->start();
+    }
+}
+
 void BranchOutputFilter::addCallback(obs_source_t *source)
 {
     // Do not start timer for private sources
@@ -419,10 +446,10 @@ void BranchOutputFilter::addCallback(obs_source_t *source)
     obs_log(LOG_DEBUG, "%s: Filter adding to '%s'", qUtf8Printable(name), obs_source_get_name(source));
 
     // Start interval timer here
-    intervalTimer = new QTimer(this);
-    intervalTimer->setInterval(TASK_INTERVAL_MS);
-    intervalTimer->start();
-    connect(intervalTimer, SIGNAL(timeout()), this, SLOT(onIntervalTimerTimeout()));
+    intervalTimerWanted.store(true);
+    QMetaObject::invokeMethod(
+        this, [this]() { syncIntervalTimer(); }, Qt::AutoConnection
+    );
 
     parentRenamedSignal.Connect(
         obs_source_get_signal_handler(source), "rename",
@@ -557,10 +584,11 @@ void BranchOutputFilter::removeCallback()
 {
     obs_log(LOG_DEBUG, "%s: Filter removing", qUtf8Printable(name));
 
-    if (intervalTimer) {
-        // Stop interval timer (In proper thread)
-        QMetaObject::invokeMethod(intervalTimer, "stop", Qt::QueuedConnection);
-    }
+    // Stop interval timer (In proper thread)
+    intervalTimerWanted.store(false);
+    QMetaObject::invokeMethod(
+        this, [this]() { syncIntervalTimer(); }, Qt::AutoConnection
+    );
 
     // Do not call stopOutput() here as this will cause a crash.
 
@@ -587,10 +615,10 @@ void BranchOutputFilter::destroyCallback()
     // Release all handles
     stopOutput();
 
-    // Delete self in proper thread
-    deleteLater();
-
     obs_log(LOG_INFO, "%s: BranchOutputFilter destroyed", qUtf8Printable(name));
+
+    // Must stay last: the UI thread may delete this object at once.
+    deleteLater();
 }
 
 // Callback from filter audio
