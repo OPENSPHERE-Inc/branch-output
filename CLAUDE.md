@@ -521,6 +521,7 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
     derived again from the pointer position afterwards (`resyncHoveredRow()`), except on Wayland,
     where it stays dropped.
 - `addOutput()` / `removeOutput()`, row renames, and the UUID refresh on
+  `OBS_FRONTEND_EVENT_SCENE_COLLECTION_LIST_CHANGED` /
   `OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED` publish the output-list snapshot through
   `publishOutputListSnapshot()`.
   - The snapshot is built only from the rows' own copies (`BranchOutputInfo`) and never reads

@@ -473,6 +473,9 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
             Qt::QueuedConnection
         );
         break;
+    // LIST_CHANGED follows obs_reset_source_uuids() on a duplication and precedes CHANGED,
+    // which OBS delivers to the callbacks registered after the dock first.
+    case OBS_FRONTEND_EVENT_SCENE_COLLECTION_LIST_CHANGED:
     case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
         dock->refreshOutputUuids();
         break;
