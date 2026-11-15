@@ -410,6 +410,11 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - Verify that `osi_branch_output_get_filter_list` lists no Program Output, that
   `osi_branch_output_get_output_list` lists filters and Program Outputs, and that the bundled
   scripts work with both.
+- Verify on OBS 30.1 / 30.2 that, right after a scene collection duplication and without Apply or
+  a restart, every `source_uuid` / `filter_uuid` / `output_uuid` that the two list procs return
+  resolves with `obs_get_source_by_uuid()`.
+  - Check it also when a script (Tools → Scripts) calls the procs from its
+    `OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED` handler, which OBS calls before the dock's.
 
 ---
 
@@ -542,10 +547,15 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
   - Qt sends no HoverLeave while a context menu is open, so the band is dropped during the menu and
     derived again from the pointer position afterwards (`resyncHoveredRow()`), except on Wayland,
     where it stays dropped.
-- `addOutput()` / `removeOutput()` and row renames publish the output-list snapshot through
+- `addOutput()` / `removeOutput()`, row renames, and the UUID refresh on
+  `OBS_FRONTEND_EVENT_SCENE_COLLECTION_LIST_CHANGED` /
+  `OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED` publish the output-list snapshot through
   `publishOutputListSnapshot()`.
   - The snapshot is built only from the rows' own copies (`BranchOutputInfo`) and never reads
     `row->branchOutput`, which may already be freed.
+  - OBS 30.1 / 30.2 duplicate a scene collection by reassigning the UUIDs of the live sources
+    without recreating them, so `refreshOutputUuids()` reads each row's UUIDs again through its
+    `contextWeak` and publishes the snapshot only when a copy changed.
 
 ### Modifying Replay Buffer
 
