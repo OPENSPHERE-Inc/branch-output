@@ -431,7 +431,7 @@ void BranchOutputProgram::updateCallback(obs_data_t *settings)
 
     if (attached && !removing) {
         if (auto *dock = loadStatusDock()) {
-            QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
+            dock->queueAddOutput(contextSource);
         }
     }
 
@@ -541,7 +541,7 @@ void BranchOutputProgram::attach()
     attached = true;
 
     if (auto *dock = loadStatusDock()) {
-        QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
+        dock->queueAddOutput(contextSource);
     }
 
     OBSDataAutoRelease settings = obs_source_get_settings(contextSource);
@@ -580,7 +580,7 @@ void BranchOutputProgram::setSuspended(bool suspend)
     } else if (wasSuspended && attached && !removing) {
         // The dock drops the rows of an unavailable input, so register again.
         if (auto *dock = loadStatusDock()) {
-            QMetaObject::invokeMethod(dock, "addOutput", Qt::QueuedConnection, Q_ARG(BranchOutput *, this));
+            dock->queueAddOutput(contextSource);
         }
     }
 }
