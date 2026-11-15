@@ -473,6 +473,12 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
             Qt::QueuedConnection
         );
         break;
+    // LIST_CHANGED follows obs_reset_source_uuids() on a duplication and precedes CHANGED,
+    // which OBS delivers to the callbacks registered after the dock first.
+    case OBS_FRONTEND_EVENT_SCENE_COLLECTION_LIST_CHANGED:
+    case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
+        dock->refreshOutputUuids();
+        break;
     default:
         break;
     }
@@ -610,6 +616,25 @@ void BranchOutputStatusDock::updateOutputToggles(BranchOutput *output)
             row->updateOutputToggle();
         }
     }
+}
+
+// OBS 30.1 / 30.2 duplicate a scene collection by reassigning the UUIDs of the live sources
+// (obs_reset_source_uuids()) without recreating them.
+void BranchOutputStatusDock::refreshOutputUuids()
+{
+    int changedRows = 0;
+    foreach (auto row, outputTableRows) {
+        if (row->refreshUuids()) {
+            changedRows++;
+        }
+    }
+
+    if (changedRows == 0) {
+        return;
+    }
+
+    obs_log(LOG_INFO, "Refreshed UUIDs of %d dock rows after scene collection change", changedRows);
+    publishOutputListSnapshot();
 }
 
 void BranchOutputStatusDock::onOutputUserEnabledChanged()
@@ -1882,6 +1907,25 @@ void OutputTableRow::detachFromTable()
     disconnect(status, nullptr, this, nullptr);
 }
 
+bool OutputTableRow::refreshUuids()
+{
+    // The strong ref defers the context source's destroy past the reads below
+    OBSSourceAutoRelease contextSource = obs_weak_source_get_source(contextWeak);
+    if (!contextSource) {
+        return false;
+    }
+
+    auto sourceUuid = branchOutput->getInputUuid();
+    auto outputUuid = QString(obs_source_get_uuid(contextSource));
+    if (sourceUuid == info.sourceUuid && outputUuid == info.outputUuid) {
+        return false;
+    }
+
+    info.sourceUuid = sourceUuid;
+    info.outputUuid = outputUuid;
+    return true;
+}
+
 void OutputTableRow::updateRowId()
 {
     auto rowId = QString("%1_%2_%3")
@@ -2306,7 +2350,8 @@ void StatusCell::takeItemFromTable()
 }
 
 // Snapshot reflects the last state seen by the UI thread; it may lag live OBS
-// state until the next rename signal or add/remove event is processed.
+// state until the next rename signal, add/remove event, or UUID refresh on a
+// scene collection change is processed.
 // Built from the rows' own copies only: this runs from removeOutput(), where the
 // output QObject and its obs_source_t may already be freed, so it must not
 // dereference row->branchOutput or call libobs.
@@ -2320,7 +2365,7 @@ QList<BranchOutputInfo> BranchOutputStatusDock::buildOutputListSnapshot() const
             continue;
         }
 
-        // Row was created after the filter had already left its parent
+        // The filter had no parent when the row was created or its UUIDs were last refreshed
         if (row->info.isFilter && row->info.sourceUuid.isEmpty()) {
             continue;
         }
