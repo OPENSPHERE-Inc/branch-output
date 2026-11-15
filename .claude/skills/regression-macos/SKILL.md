@@ -1,6 +1,6 @@
 ---
 name: regression-macos
-description: Pre-release regression test of the Branch Output plugin on macOS, on OBS Studio app bundles extracted from the official releases (32.2 latest, 31.1 final, 30.1.2) and run with isolated config folders, driving OBS through its GUI with computer use and verifying outputs with ffprobe and OBS logs. Use before a release or when the user asks for a regression or run-through test of Branch Output on macOS.
+description: Pre-release regression test of the Branch Output plugin on macOS, on OBS Studio app bundles extracted from the official releases (33.0 latest, 31.1 final, 30.1.2) and run with isolated config folders, driving OBS through its GUI with computer use and verifying outputs with ffprobe and OBS logs. Use before a release or when the user asks for a regression or run-through test of Branch Output on macOS.
 ---
 
 # Branch Output Regression Test (macOS)
@@ -18,7 +18,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 ## Layout
 
-`{YYYYMMDD-HHmmss}` is the local time at which the run starts; both folders below use the same value. `{version}` is the full release version (for example `32.2.2`).
+`{YYYYMMDD-HHmmss}` is the local time at which the run starts; both folders below use the same value. `{version}` is the full release version (for example `33.0.1`).
 
 - `<work>` = `.claude/tmp/regression-macos-{YYYYMMDD-HHmmss}/`: the working folder of the run.
   - `<root>` = `<work>/obs-{version}/`: holds that version's `OBS.app` and its isolated home `<root>/home/`.
@@ -66,7 +66,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 ## Step 1 — Prepare
 
 1. Set `{YYYYMMDD-HHmmss}` and create `<work>`. When `~/Library/Application Support/obs-studio` exists, back it up to `<work>/appdata-obs-studio/`, leaving out the browser cache `plugin_config/obs-browser/`.
-2. For each target version, pick the release (newest non-prerelease 32.2.x, newest non-prerelease 31.1.x, 30.1.2) and download `OBS-Studio-{version}-macOS-Apple.dmg` on Apple silicon or `OBS-Studio-{version}-macOS-Intel.dmg` on Intel into `<work>`, not the dSYMs. Verify it against the release's SHA-256 digest when one is listed, otherwise against the listed size. Mount it read-only without Finder (`hdiutil attach -nobrowse -readonly -mountpoint …`), copy `OBS.app` to `<root>/` with `ditto`, detach, and confirm `codesign --verify --deep --strict` passes. Never add or change files inside `OBS.app`: that breaks its signature.
+2. For each target version, pick the release (newest non-prerelease 33.0.x, newest non-prerelease 31.1.x, 30.1.2) and download `OBS-Studio-{version}-macOS-Apple.dmg` on Apple silicon or `OBS-Studio-{version}-macOS-Intel.dmg` on Intel into `<work>`, not the dSYMs. Verify it against the release's SHA-256 digest when one is listed, otherwise against the listed size. Mount it read-only without Finder (`hdiutil attach -nobrowse -readonly -mountpoint …`), copy `OBS.app` to `<root>/` with `ditto`, detach, and confirm `codesign --verify --deep --strict` passes. Never add or change files inside `OBS.app`: that breaks its signature.
 3. Obtain the build under test. To build the current checkout, use the `macos` presets (`cmake --preset macos`, then `cmake --build --preset macos`; the bundle is `build_macos/Release/osi-branch-output.plugin`) with Xcode 16.4 or earlier: the project does not build with Xcode 26. When `xcode-select -p` points to a newer Xcode, set `DEVELOPER_DIR` to an older Xcode's `Contents/Developer`; when none is installed, stop and ask the user. Deploy the bundle to every instance with `ditto` as `<config>/plugins/osi-branch-output.plugin`, and record the SHA-256 of its `Contents/MacOS/osi-branch-output`.
 4. Launch each instance once. While the first one runs, request computer-use access to OBS, plus Finder when R12 or M07 is selected, in one request, so that the rest of the run needs no user approval. Read `{plugin-version}` from `[osi-branch-output] Plugin loaded successfully (version {plugin-version})`. With `lsof`, confirm that the loaded `osi-branch-output` binary is the one under `<config>/plugins/`: the user's own OBS config may hold another copy of the plugin. If the plugin does not load, is loaded from elsewhere, or its version is not that of the build under test, stop and report to the user.
 5. Create the report at `.claude/tmp/regression-report/{plugin-version}-macos-{YYYYMMDD-HHmmss}/report.md` from the template `.claude/skills/regression-macos/templates/report.md` (read it to learn the report skeleton), filling in the work folder, the build, and the OBS downloads. Keep evidence files (ffprobe output, log excerpts) in the same folder. Write the report in the language the user converses in.
@@ -74,7 +74,7 @@ The user may specify the following; interpret `$ARGUMENTS` accordingly.
 
 ## Step 2 — Run the cases
 
-- Run 32.2 first, then 31.1, then 30.1.2, each with the selected cases in its scope, in the order of `cases.md` (R01–R19, then M01–M14); mark cells out of scope or not selected N/A.
+- Run 33.0 first, then 31.1, then 30.1.2, each with the selected cases in its scope, in the order of `cases.md` (R01–R19, then M01–M14); mark cells out of scope or not selected N/A.
 - Write each result into the report as soon as its case finishes.
 - Result values: PASS, FAIL, SKIP (a prerequisite is missing on this machine; give the reason), BLOCKED (an earlier failure prevents the case; name it), N/A.
 - When a missing prerequisite rules out only some items of a case, judge the case on the remaining items, and list the skipped items in the Notes column and under "Not covered".
