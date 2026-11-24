@@ -230,7 +230,7 @@ Rows without a note apply to both the filter and Program Outputs.
 | **Audio** | Takes up to `MAX_AUDIO_MIXES` tracks from `AudioCapture` (silence) or its subclasses, or from OBS's mixes. Without custom audio, the filter uses the filter audio and a Program Output uses master track 1. |
 | **Video** | Each output builds its video input in `setupVideoInput()`, called from `ensureInfrastructure()`. The filter uses an OBS view of its parent source (or of a crop scene or the filter input proxy), and a Program Output uses OBS's main video (direct path) or a view of the main texture proxy (proxy path). |
 | **UI** | Properties are built from the shared groups in `plugin-ui.cpp`, and the filter-specific options appear only when `hasFilterPipeline()` is true. The status dock (`BranchOutputStatusDock`) lists every output of the filters and Program Outputs, including replay buffer save buttons. |
-| **Hotkeys** | Registers hotkeys (pairs and single hotkeys) for enable/disable, split recording, pause/unpause, chapter markers, save replay buffer, and per-output enable/disable (streaming all slots and per slot, recording, replay buffer). `syncHotkeys()` registers/unregisters only the difference between the desired set (derived from settings) and the currently registered set. Bindings are captured into `hotkeyBindingsCache` before unregistering and persisted to the `hotkey_bindings` settings key; on registration they are restored from the cache when libobs restored nothing. Renaming updates descriptions only. The filter registers them on its parent source, and a Program Output registers them as frontend hotkeys and also restores their assignments from the profile's `[Hotkeys]`. |
+| **Hotkeys** | Registers hotkeys (pairs and single hotkeys) for enable/disable, split recording, pause/unpause, chapter markers, save replay buffer, and per-output enable/disable (streaming all slots and per slot, recording, replay buffer). `syncHotkeys()` registers/unregisters only the difference between the desired set (derived from settings) and the currently registered set. Bindings are captured into `hotkeyBindingsCache` before unregistering and persisted to the `hotkey_bindings` settings key; on registration they are restored from the cache when libobs restored nothing. The hotkey names and the cache keys end with the recorded UUID (`hotkeyCacheUuid`); when OBS 30.1 / 30.2 assign new source UUIDs on a scene collection duplication, the next hotkey operation re-keys the cache entries to the new UUID (`rekeyHotkeyBindingsCache()`). Renaming updates descriptions only. The filter registers them on its parent source, and a Program Output registers them as frontend hotkeys and also restores their assignments from the profile's `[Hotkeys]`. |
 | **Interlock** | Can link output activation to OBS streaming, recording, virtual camera, replay buffer, or individual (per-output-type) states. The "Individual" mode maps each Branch Output type to its OBS counterpart independently. |
 | **Individual Start/Stop** | Allows streaming, recording, and replay buffer to be started/stopped independently via `ensureInfrastructure()` / `releaseInfrastructureIfIdle()` to separate shared resource lifecycle from individual output lifecycle. Per-output user intent is tracked via atomic flags (`streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`). |
 | **Cropping** | Supports relative (margin) and absolute (region) video cropping with `CropRect` struct. Live preview via `CropRectPreviewRenderer`. |
@@ -249,13 +249,22 @@ Rows without a note apply to both the filter and Program Outputs.
   destroyed) guards only the output-list snapshot swap and is never nested with the others.
 - `audioMutex` protects audio capture pointers against concurrent release in `releaseInfrastructureIfIdle()`.
 - `QMutex` protects audio buffers in `AudioCapture`.
-- Atomic fields (`std::atomic<bool>` for `outputStarting`, `streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`; `std::atomic<uint64_t>` for `reconnectAttemptingAt`, `startCount`, `recordingStartCount`, `recordingBytesStartCount`, `replayBufferStartCount`) eliminate data races from OBS signal callbacks.
+- Atomic fields (`std::atomic<bool>` for `outputStarting`, `streamingUserEnabled[]`, `recordingUserEnabled`, `replayBufferUserEnabled`, `BranchOutputFilter::intervalTimerWanted`; `std::atomic<uint64_t>` for `reconnectAttemptingAt`, `startCount`, `recordingStartCount`, `recordingBytesStartCount`, `replayBufferStartCount`) eliminate data races from OBS signal callbacks.
 - UI updates use `QMetaObject::invokeMethod` with `Qt::QueuedConnection` for thread safety.
 - UI thread only: `BranchOutputProgramManager`, `attach()` / `detach()` / `setSuspended()` /
-  `beginRemoval()` / `openSettings()` of `BranchOutputProgram`, and the status dock.
+  `beginRemoval()` / `openSettings()` of `BranchOutputProgram`,
+  `BranchOutputFilter::syncIntervalTimer()`, and the status dock.
   - Program Output hotkey registration reads the profile config, so it runs on the UI thread only:
     `BranchOutputProgram::updateCallback()`, which runs on the graphics thread for a deferred
     update, queues `syncHotkeys()` to the UI thread.
+- `BranchOutputFilter` belongs to the UI thread whichever thread creates it: when the creating
+  thread is not the UI thread, the constructor moves the object there with `moveToThread()`.
+  - An example is an obs-websocket `QThreadPool` worker, which processes no events.
+  - Its `deleteLater()` and the calls queued to it are therefore delivered on the UI thread.
+  - Only `syncIntervalTimer()` creates, starts, and stops its interval timer.
+    `addCallback()` / `removeCallback()` write `intervalTimerWanted` and then call it through
+    `QMetaObject::invokeMethod(this, ..., Qt::AutoConnection)`, which runs it at once on the UI
+    thread and queues it to the UI thread from any other thread.
 - `AppliedSettings` (`appliedSettings`) holds a copy of the settings as last applied, guarded by its
   own leaf mutex (taken last).
   - `updateCallback()` publishes a new copy and does not restart the output; a Program Output
@@ -358,6 +367,8 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - Verify that enabling and then disabling the Branch Output filter does not cause a crash.
 - Verify that shutting down OBS does not crash when the Branch Output filter is inactive or active, respectively.
 - Verify that switching scene collections does not crash when the Branch Output filter is inactive or active, respectively.
+- Verify that a filter created with obs-websocket's `CreateSourceFilter` starts its outputs, and
+  that removing it with `RemoveSourceFilter` does not crash and removes its status dock rows.
 - Verify that no memory leaks are logged on OBS shutdown.
 - Verify that mutex does not cause deadlocks.
 - Verify that blanking mode does not leak video or audio unintentionally — when the source is not visible in the main output (Program) and blanking is enabled, the Branch Output must emit a black frame (no source imagery). If audio muting is also enabled, all audio tracks (including master track) must be silenced.
@@ -370,6 +381,12 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - Verify that renaming the filter keeps its hotkey assignments and renders the new name in the hotkey descriptions.
 - Verify that deleting the filter and undoing the deletion restores its hotkey assignments.
 - Verify that hotkey assignments are restored in normal mode after OBS has been started and shut down in safe mode.
+- Verify on OBS 30.1 / 30.2, for both a filter and a Program Output, that an assignment of an output
+  type that is turned off survives a scene collection duplication: after turning that output type on
+  in the duplicate, the assignment is still there, and it survives an OBS restart.
+  - The original scene collection keeps its assignments.
+  - A filter made by copying and pasting filters does not inherit the original filter's
+    assignments.
 - Verify on OBS 30.1–32.x that, while the replay buffer is running, Settings → Hotkeys shows no
   "Save Replay" entry under the filter or Program Output name, and that the output's own
   `Save '<name>' Replay Buffer` hotkey saves a replay.
@@ -393,6 +410,11 @@ Format is checked in CI via `.github/workflows/check-format.yaml` using reusable
 - Verify that `osi_branch_output_get_filter_list` lists no Program Output, that
   `osi_branch_output_get_output_list` lists filters and Program Outputs, and that the bundled
   scripts work with both.
+- Verify on OBS 30.1 / 30.2 that, right after a scene collection duplication and without Apply or
+  a restart, every `source_uuid` / `filter_uuid` / `output_uuid` that the two list procs return
+  resolves with `obs_get_source_by_uuid()`.
+  - Check it also when a script (Tools → Scripts) calls the procs from its
+    `OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED` handler, which OBS calls before the dock's.
 
 ---
 
@@ -467,12 +489,26 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
   - Each row is an `OutputTableRow`; the dock and the rows are friends of `BranchOutput` and read
     its protected members.
 - `OutputCell` provides per-output enable/disable checkboxes (eye icon) and folder-open click for recording/replay buffer rows.
+- `FilterCell` and `OutputCell` keep the context source as a weak reference and resolve it before
+  use.
 - The `outputUserEnabledChanged` signal provides immediate checkbox sync when state changes from hotkeys or other sources.
 - Thread-safe updates via `QMetaObject::invokeMethod`.
 - Reset records the Drop Frames / Sent Size baselines together with the output's start counts, and `OutputTableRow::update()` clears a baseline when its start count has changed. Streaming slots increment `startCount` in the "activate" handler; recording and replay buffer increment `recordingStartCount` / `replayBufferStartCount` right after a successful `obs_output_start()`, in the same `outputMutex` critical section. The recording's Sent Size baseline follows `recordingBytesStartCount` instead, which only a start that restarts the byte count from 0 increments (`mp4_output` / `mov_output` keep it across a stop / start of the same object). Any new path that starts a recording or replay buffer output must increment, the same way, each count whose counters that start restarts from 0.
-- `addOutput(BranchOutput *)` creates the rows of an output, and `removeOutput()` removes them.
+- `addOutput()` creates the rows of an output, and `removeOutput()` removes them.
   - An output gets one row for the recording, one for the replay buffer, and one per enabled
     streaming slot, or a single "None" row when none of them is enabled.
+  - Callers use `queueAddOutput(contextSource)`, which can be called from any thread and queues
+    `addOutput()` with the weak reference of the context source.
+    - `addOutput()` resolves the weak reference and does nothing when the source is gone; it holds
+      the strong reference while it builds the rows.
+    - A call queued to the dock or one of its cells that dereferences an output carries the weak
+      reference of its context source, not a raw `BranchOutput *`.
+  - `removeOutput(BranchOutput *)` uses the pointer as a comparison key only.
+  - While a row is in the table, the table owns its items.
+    - `removeOutput()` calls `detachFromTable()` before `removeRow()`, which moves each item to its
+      cell and disconnects the cells from the row.
+    - From then on, each item is deleted together with its cell, which queued calls can still
+      reach until its deferred delete.
 - The input name link calls `openSettings()`: the parent source's filters dialog for a filter, and
   the properties dialog for a Program Output.
   - The Source column of a Program Output row shows "Program" (`getInputName()`).
@@ -511,10 +547,15 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
   - Qt sends no HoverLeave while a context menu is open, so the band is dropped during the menu and
     derived again from the pointer position afterwards (`resyncHoveredRow()`), except on Wayland,
     where it stays dropped.
-- `addOutput()` / `removeOutput()` and row renames publish the output-list snapshot through
+- `addOutput()` / `removeOutput()`, row renames, and the UUID refresh on
+  `OBS_FRONTEND_EVENT_SCENE_COLLECTION_LIST_CHANGED` /
+  `OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED` publish the output-list snapshot through
   `publishOutputListSnapshot()`.
   - The snapshot is built only from the rows' own copies (`BranchOutputInfo`) and never reads
     `row->branchOutput`, which may already be freed.
+  - OBS 30.1 / 30.2 duplicate a scene collection by reassigning the UUIDs of the live sources
+    without recreating them, so `refreshOutputUuids()` reads each row's UUIDs again through its
+    `contextWeak` and publishes the snapshot only when a copy changed.
 
 ### Modifying Replay Buffer
 
@@ -661,6 +702,10 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
   through `unregisterHotkeyWithCapture()` / `unregisterHotkeyPairWithCapture()`.
   - Only the derived classes' hooks (`registerHotkey()` / `registerHotkeyPair()`) call the libobs
     registration functions (filter: `plugin-hotkey.cpp`, Program Output: `plugin-program.cpp`).
+- Build the hotkey names and the cache keys from `hotkeyCacheUuid`, not from the source each time.
+  - `rekeyHotkeyBindingsCache()` first brings the recorded UUID in line with the source's UUID.
+  - It re-keys only the entries that end with the recorded UUID; entries of another filter are left
+    to `pruneHotkeyBindingsCache()`.
 - The filter registers its hotkeys on its parent source (`obs_hotkey_register_source()` /
   `obs_hotkey_pair_register_source()`).
 - A Program Output registers its hotkeys as frontend hotkeys (`obs_hotkey_register_frontend()` /
@@ -698,6 +743,23 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
 ## Important Warnings
 
 - **Do NOT call `obs_filter_get_parent()` in the `BranchOutputFilter` constructor** — it returns `nullptr` at that point. Use `addCallback()` instead.
+- **`BranchOutputFilter` thread affinity** — the object belongs to the UI thread, but libobs also
+  calls the filter on other threads.
+  - `info.create`, `filter_add`, and `filter_remove` run on the thread that creates, adds, or
+    removes the filter, which can be any thread, and `info.destroy` runs on the libobs destroy
+    thread (`obs_source_destroy_defer()`).
+  - `info.update` (`updateCallback()`) runs on the graphics thread for a deferred update.
+  - Every other libobs callback and signal handler can also run off the UI thread, for example the
+    render, tick, and audio callbacks, the hotkey callbacks, the "rename" handlers that
+    `addCallback()` connects to the parent and the filter, the output signal handlers, and the
+    per-output procs.
+  - Do not remove the `moveToThread()` at the end of the constructor.
+  - Do not create a QObject child of the filter, such as a `QTimer`, in code that can run off the
+    UI thread. Qt rejects a parent that lives in another thread, so the child would stay on a
+    thread that may process no events. Hand the work to the UI thread with
+    `QMetaObject::invokeMethod(this, ...)`.
+  - In `destroyCallback()`, read no member after `deleteLater()`, because the UI thread may delete
+    the object at once.
 - **Private sources** (not visible in frontend) are intentionally excluded for filters: a filter
   whose parent is private starts no timer, is not listed in the status dock, and does not save
   `recently.json` (`addCallback()`, `validateInput()`, `updateCallback()`).
@@ -763,7 +825,14 @@ Release tags follow semver: `X.Y.Z` for stable, `X.Y.Z-beta`/`X.Y.Z-rc` for pre-
   - Program Outputs use the same names with the UUID of their private source, and the profile's
     `[Hotkeys]` values are matched by these names as well.
 - **Never call a libobs hotkey API (including `obs_hotkey_update_atomic()`) while holding `pluginMutex` / `outputMutex` / `audioMutex` / `AppliedSettings::mutex`.** libobs invokes hotkey callbacks while holding the hotkey mutex, and some of them take `outputMutex`. Lock order: hotkey mutex → `pluginMutex` → `outputMutex` → `audioMutex` → `AppliedSettings::mutex`. `AppliedSettings::replace()` / `get()` run under the hotkey mutex and under `outputMutex`, so they must not take any other mutex or call a libobs hotkey API.
-- **Hotkey register/unregister/save/load/description updates and every access to `hotkeyBindingsCache` must run inside an `obs_hotkey_update_atomic()` callback.** `obs_hotkey_set_description()` and `obs_hotkey_pair_set_descriptions()` take no lock of their own.
+- **Hotkey register/unregister/save/load/description updates, every access to
+  `hotkeyBindingsCache` / `hotkeyCacheOwnedNames` / `hotkeyCacheUuid` other than the cache
+  initialization in `BranchOutput::initializeSettings()`, and every call to `buildHotkeyName()` /
+  `buildStreamingSlotHotkeyName()` must run inside an `obs_hotkey_update_atomic()` callback.**
+  `obs_hotkey_set_description()` and `obs_hotkey_pair_set_descriptions()` take no lock of their
+  own, and the name builders read `hotkeyCacheUuid`, which `rekeyHotkeyBindingsCache()` rewrites.
+  - A new callback that builds hotkey names or touches `hotkeyBindingsCache` /
+    `hotkeyCacheOwnedNames` calls `rekeyHotkeyBindingsCache()` first.
 - **`syncHotkeys()` registers nothing while `canRegisterHotkeys()` is false** — do not remove that
   early return or the checks behind it.
   - `BranchOutputFilter::canRegisterHotkeys()` rejects a private parent, because

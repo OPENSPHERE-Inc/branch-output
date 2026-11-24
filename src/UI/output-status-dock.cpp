@@ -473,6 +473,12 @@ void BranchOutputStatusDock::onOBSFrontendEvent(enum obs_frontend_event event, v
             Qt::QueuedConnection
         );
         break;
+    // LIST_CHANGED follows obs_reset_source_uuids() on a duplication and precedes CHANGED,
+    // which OBS delivers to the callbacks registered after the dock first.
+    case OBS_FRONTEND_EVENT_SCENE_COLLECTION_LIST_CHANGED:
+    case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
+        dock->refreshOutputUuids();
+        break;
     default:
         break;
     }
@@ -489,11 +495,25 @@ void BranchOutputStatusDock::addRow(
     applyDisableAllButtonEnabled();
 }
 
-void BranchOutputStatusDock::addOutput(BranchOutput *output)
+void BranchOutputStatusDock::queueAddOutput(obs_source_t *contextSource)
 {
-    // FIXME: `output` is a raw pointer queued from addCallback() / updateCallback() and may already
-    // be deleted, leaving no destroyed hook. Post an OBSWeakSource instead and resolve the output
-    // via obs_weak_source_get_source(), obs_obj_get_data() and BranchOutput::fromCallbackData().
+    OBSWeakSource weak = OBSGetWeakRef(contextSource);
+    QMetaObject::invokeMethod(
+        this, [this, weak]() { addOutput(weak); }, Qt::QueuedConnection
+    );
+}
+
+void BranchOutputStatusDock::addOutput(obs_weak_source_t *contextWeak)
+{
+    // The strong reference keeps info.destroy from running, so the output stays alive here.
+    OBSSourceAutoRelease contextSource = obs_weak_source_get_source(contextWeak);
+    if (!contextSource) {
+        return;
+    }
+    auto *output = BranchOutput::fromCallbackData(obs_obj_get_data(contextSource));
+    if (!output) {
+        return;
+    }
 
     // Ensure output removed
     removeOutput(output);
@@ -547,10 +567,11 @@ void BranchOutputStatusDock::removeOutput(BranchOutput *output)
     // (sort() / publishOutputListSnapshot()) may dereference any row->branchOutput.
     foreach (auto row, outputTableRows) {
         if (row->branchOutput == output) {
-            // FIXME: removeRow() deletes the QTableWidgetItems at once while the cells only get
-            // deleteLater(), so an already posted rename metacall can write a freed item. Take the
-            // items over with takeItem() and let OutputTableRow own them.
-            outputTable->removeRow(outputTable->row(row->filterCell->item()));
+            // removeRow() frees the items at once but defers the cells, which queued calls still
+            // reach, so the cells take over their items first.
+            auto rowIndex = outputTable->row(row->filterCell->item());
+            row->detachFromTable();
+            outputTable->removeRow(rowIndex);
             outputTableRows.removeOne(row);
             row->deleteLater();
         }
@@ -595,6 +616,25 @@ void BranchOutputStatusDock::updateOutputToggles(BranchOutput *output)
             row->updateOutputToggle();
         }
     }
+}
+
+// OBS 30.1 / 30.2 duplicate a scene collection by reassigning the UUIDs of the live sources
+// (obs_reset_source_uuids()) without recreating them.
+void BranchOutputStatusDock::refreshOutputUuids()
+{
+    int changedRows = 0;
+    foreach (auto row, outputTableRows) {
+        if (row->refreshUuids()) {
+            changedRows++;
+        }
+    }
+
+    if (changedRows == 0) {
+        return;
+    }
+
+    obs_log(LOG_INFO, "Refreshed UUIDs of %d dock rows after scene collection change", changedRows);
+    publishOutputListSnapshot();
 }
 
 void BranchOutputStatusDock::onOutputUserEnabledChanged()
@@ -1850,6 +1890,42 @@ void OutputTableRow::openSettings()
     branchOutput->openSettings();
 }
 
+bool OutputTableRow::refreshUuids()
+{
+    // The strong ref defers the context source's destroy past the reads below
+    OBSSourceAutoRelease contextSource = obs_weak_source_get_source(contextWeak);
+    if (!contextSource) {
+        return false;
+    }
+
+    auto sourceUuid = branchOutput->getInputUuid();
+    auto outputUuid = QString(obs_source_get_uuid(contextSource));
+    if (sourceUuid == info.sourceUuid && outputUuid == info.outputUuid) {
+        return false;
+    }
+
+    info.sourceUuid = sourceUuid;
+    info.outputUuid = outputUuid;
+    return true;
+}
+
+void OutputTableRow::detachFromTable()
+{
+    filterCell->takeItemFromTable();
+    parentCell->takeItemFromTable();
+    outputName->takeItemFromTable();
+    status->takeItemFromTable();
+    droppedFrames->takeItemFromTable();
+    megabytesSent->takeItemFromTable();
+    bitrate->takeItemFromTable();
+
+    // Queued calls can still reach the cells, and their signals must not run the removed row's code
+    disconnect(filterCell, nullptr, this, nullptr);
+    disconnect(parentCell, nullptr, this, nullptr);
+    disconnect(outputName, nullptr, this, nullptr);
+    disconnect(status, nullptr, this, nullptr);
+}
+
 void OutputTableRow::updateRowId()
 {
     auto rowId = QString("%1_%2_%3")
@@ -1881,6 +1957,18 @@ bool OutputTableCellItem::operator<(const QTableWidgetItem &other) const
     return QVariant::compare(value1, value2) == QPartialOrdering::Less;
 }
 
+static void takeCellItemFromTable(OutputTableCellItem *item, std::unique_ptr<OutputTableCellItem> &ownedItem)
+{
+    if (ownedItem) {
+        return;
+    }
+
+    if (auto table = item->tableWidget()) {
+        table->takeItem(item->row(), item->column());
+    }
+    ownedItem.reset(item);
+}
+
 //--- LabelCell class ---//
 
 LabelCell::LabelCell(const QString &rowId, QWidget *parent) : QLabel(parent), _item(new OutputTableCellItem(rowId, ""))
@@ -1901,11 +1989,17 @@ void LabelCell::setTextValue(const QString &textValue)
     setValue(textValue);
 }
 
+void LabelCell::takeItemFromTable()
+{
+    takeCellItemFromTable(_item, ownedItem);
+}
+
 //--- FilterCell class ---//
 
 FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_source_t *source, QWidget *parent)
     : QWidget(parent),
-      _item(new OutputTableCellItem(rowId, ""))
+      _item(new OutputTableCellItem(rowId, "")),
+      weakSource(obs_source_get_weak_source(source))
 {
     setMinimumHeight(27);
 
@@ -1916,10 +2010,11 @@ FilterCell::FilterCell(const QString &rowId, const QString &textValue, obs_sourc
     visibilityCheckbox->setChecked(obs_source_enabled(source));
     visibilityCheckbox->setCursor(Qt::PointingHandCursor);
 
-    // FIXME: the captured `source` is a raw pointer that libobs may release before the row is removed.
-    // Hold an OBSWeakSource and resolve it before use, as OutputCell does.
-    connect(visibilityCheckbox, &QCheckBox::clicked, this, [source](bool visible) {
-        obs_source_set_enabled(source, visible);
+    connect(visibilityCheckbox, &QCheckBox::clicked, this, [this](bool visible) {
+        OBSSourceAutoRelease contextSource = obs_weak_source_get_source(weakSource);
+        if (contextSource) {
+            obs_source_set_enabled(contextSource, visible);
+        }
     });
 
     name = new QLabel(this);
@@ -1951,6 +2046,11 @@ void FilterCell::setTextValue(const QString &textValue)
     name->setText(textValue);
     _item->setData(Qt::UserRole, textValue);
     emit renamed(textValue);
+}
+
+void FilterCell::takeItemFromTable()
+{
+    takeCellItemFromTable(_item, ownedItem);
 }
 
 void FilterCell::onFilterRenamed(void *data, calldata_t *cd)
@@ -2014,8 +2114,6 @@ OutputCell::OutputCell(
     QWidget *parent
 )
     : QWidget(parent),
-      // _item ownership is transferred to QTableWidget via setItem(); QTableWidget
-      // deletes it when the table is destroyed. Do not delete _item in ~OutputCell().
       _item(new OutputTableCellItem(rowId, "")),
       outputType(_outputType),
       weakSource(obs_source_get_weak_source(_source))
@@ -2066,6 +2164,11 @@ void OutputCell::setTextValue(const QString &value)
         name->setText(value);
     }
     _item->setData(Qt::UserRole, value);
+}
+
+void OutputCell::takeItemFromTable()
+{
+    takeCellItemFromTable(_item, ownedItem);
 }
 
 void OutputCell::setChecked(bool checked)
@@ -2241,8 +2344,14 @@ void StatusCell::setTextValue(const QString &textValue)
     _item->setData(Qt::UserRole, textValue);
 }
 
+void StatusCell::takeItemFromTable()
+{
+    takeCellItemFromTable(_item, ownedItem);
+}
+
 // Snapshot reflects the last state seen by the UI thread; it may lag live OBS
-// state until the next rename signal or add/remove event is processed.
+// state until the next rename signal, add/remove event, or UUID refresh on a
+// scene collection change is processed.
 // Built from the rows' own copies only: this runs from removeOutput(), where the
 // output QObject and its obs_source_t may already be freed, so it must not
 // dereference row->branchOutput or call libobs.
@@ -2256,7 +2365,7 @@ QList<BranchOutputInfo> BranchOutputStatusDock::buildOutputListSnapshot() const
             continue;
         }
 
-        // Row was created after the filter had already left its parent
+        // The filter had no parent when the row was created or its UUIDs were last refreshed
         if (row->info.isFilter && row->info.sourceUuid.isEmpty()) {
             continue;
         }

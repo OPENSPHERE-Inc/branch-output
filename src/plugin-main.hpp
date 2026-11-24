@@ -29,6 +29,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <QObject>
 #include <QSet>
+#include <QTimer>
 
 #include "UI/output-status-dock.hpp"
 #include "audio/audio-capture.hpp"
@@ -40,7 +41,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 class BranchOutputFilter : public BranchOutput {
     Q_OBJECT
 
+    // UI thread only: syncIntervalTimer() creates, starts, and stops it to match intervalTimerWanted.
     QTimer *intervalTimer;
+    std::atomic<bool> intervalTimerWanted;
     bool blankingOutputActive;
     bool blankingAudioMuted;
 
@@ -94,6 +97,7 @@ class BranchOutputFilter : public BranchOutput {
 
     void setBlankingActive(bool active, bool muteAudio, obs_source_t *parent);
 
+    void syncIntervalTimer();
     void addCallback(obs_source_t *source);
     void videoTickCallback(float seconds);
     void videoRenderCallback(gs_effect_t *effect);
